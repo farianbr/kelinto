@@ -33,6 +33,7 @@ import * as auditController from '../controllers/auditController.js';
 import * as credentialController from '../controllers/credentialController.js';
 import * as taxonomyAdminController from '../controllers/taxonomyAdminController.js';
 import * as invoiceStatusController from '../controllers/invoiceStatusController.js';
+import * as invoiceLabelController from '../controllers/invoiceLabelController.js';
 import * as appointmentController from '../controllers/appointmentController.js';
 import * as webQuoteController from '../controllers/webQuoteController.js';
 import * as searchController from '../controllers/searchController.js';
@@ -192,6 +193,10 @@ import {
   providerCredentialSchema,
   taxonomyNodeSchema,
   invoiceStatusRuleSchema,
+  invoiceLabelSchema,
+  invoiceLabelSetSchema,
+  invoiceRefundSchema,
+  invoiceRemindSchema,
   communicationsSettingsSchema,
 } from '../../../shared/schemas/admin.js';
 import { contactSchema } from '../../../shared/schemas/contact.js';
@@ -509,12 +514,25 @@ router.patch('/admin/invoices/:number/tip', ...admin, requirePermission('sales',
 // Voiding forgives the balance and keeps the row: an invoice that vanishes
 // takes its own audit trail with it.
 router.post('/admin/invoices/:number/void', ...admin, requirePermission('sales', 'full'), validate(invoiceVoidSchema), adminController.voidInvoice);
+// Refunding money off the invoice, to cash or to store credit. Distinct from
+// both neighbours: a void forgives a balance nobody paid, a reversal corrects a
+// payment recorded in error, and this returns money that really did arrive.
+// Capped server-side against the invoice own payment rows.
+router.post('/admin/invoices/:number/refund', ...admin, requirePermission('sales', 'full'), validate(invoiceRefundSchema), adminController.refundInvoice);
 // Reversing one payment. Never a delete: the original row and its reversal are
 // both true, and a customer holding a receipt must still find it on the record.
 router.post('/admin/invoices/:number/payments/:index/reverse', ...admin, requirePermission('sales', 'full'), adminController.reverseInvoicePayment);
+// Chasing an unpaid one. NOT the same as emailing it: that sends the document,
+// which a customer being chased already has. Refused on a settled invoice.
+router.post('/admin/invoices/:number/remind', ...admin, requirePermission('sales', 'full'), validate(invoiceRemindSchema), adminController.remindInvoice);
 // Emailing the invoice sends the same document the print route renders, so the
 // copy in the customer's inbox and the copy on screen can never disagree.
 router.post('/admin/invoices/:number/email', ...admin, requirePermission('sales', 'full'), adminController.emailInvoice);
+// The manual status - where this invoice has got to with the customer, which is
+// a different question from whether it has been paid. `sales` rather than
+// `settings`: picking one is counter work. Editing the LIST is not, and lives
+// with the other settings routes below.
+router.patch('/admin/invoices/:number/label', ...admin, requirePermission('sales', 'full'), validate(invoiceLabelSetSchema), invoiceLabelController.setOnInvoice);
 // Clerical corrections only - the amount is not editable; see invoiceUpdateSchema.
 router.patch('/admin/invoices/:number', ...admin, requirePermission('sales', 'full'), validate(invoiceUpdateSchema), adminController.updateInvoice);
 // Refused once a payment exists: that case is a void, which keeps the record.
@@ -1043,6 +1061,17 @@ router.delete('/admin/invoice-rules/:id', ...admin, requirePermission('settings'
 // Running sends real email, so it needs `full` even in dry-run form - the dry
 // run reveals which accounts would be contacted, which is not a `view` fact.
 router.post('/admin/invoice-rules/run', ...admin, requirePermission('settings', 'full'), invoiceStatusController.run);
+
+// The manual invoice status list. A settings write, not a sales one: it changes
+// the vocabulary every invoice is described in, and one of its fields arms an
+// automatic email to customers. Reading it is `view` because every picker needs
+// it.
+router.get('/admin/invoice-labels', ...admin, requirePermission('sales', 'view'), invoiceLabelController.list);
+router.post('/admin/invoice-labels', ...admin, requirePermission('settings', 'full'), validate(invoiceLabelSchema), invoiceLabelController.create);
+router.patch('/admin/invoice-labels/:id', ...admin, requirePermission('settings', 'full'), validate(invoiceLabelSchema), invoiceLabelController.update);
+// Refused while any invoice carries it - retiring is the answer, and it keeps
+// the history readable. See invoiceLabelService.deleteLabel.
+router.delete('/admin/invoice-labels/:id', ...admin, requirePermission('settings', 'full'), invoiceLabelController.remove);
 
 // ---- phase 11e: email settings & the scheduling board -----------------------
 router.patch('/admin/settings/communications', ...admin, requirePermission('settings', 'full'), validate(communicationsSettingsSchema), settingsController.updateCommunications);

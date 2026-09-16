@@ -3,7 +3,6 @@ import { Link, useLocation, useNavigate } from 'react-router';
 import { ArrowRight, Home, Search } from 'lucide-react';
 import Input from '@/components/ui/Input';
 import Button from '@/components/ui/Button';
-import UnpluggedScene from '@/components/ui/UnpluggedScene';
 import { useFilterStore } from '@/store/filterStore';
 
 /**
@@ -18,17 +17,17 @@ import { useFilterStore } from '@/store/filterStore';
  *
  * ## The layout
  *
- * A centred column under a cable that has come apart. The illustration runs the
- * full width of the viewport rather than sitting in the measure, because the
- * break only reads as a break if the two leads leave the frame: boxed in at
- * 640px it stops being a cable that was whole and becomes a picture of a plug.
- * Everything under it is centred on the same axis as the parting, so the eye
- * goes gap, numerals, sentence, action, in that order.
+ * A centred column under a cable that has come apart. The illustration sits in
+ * the same measure as the copy rather than bleeding to the viewport: the artwork
+ * carries its own margin around the subject, so widening the FILE widens the
+ * whitespace and shrinks the plugs relative to the page. Everything is centred
+ * on one axis, so the eye goes parting, numerals, sentence, action, in that
+ * order.
  *
  * The numerals are the biggest type in the app and they are `ink-900`, not the
- * brand ramp. A gradient fill on text is banned outright (§2.2), and the red is
- * already spent on the spark above and the CTA below - a third use would leave
- * the page with no single place to look.
+ * brand ramp. A gradient fill on text is banned outright (§2.2), and with the
+ * artwork now monochrome the CTA below is the only colour on the page - which
+ * is the point: one place to look, and it is the way out.
  *
  * The search field is the point of the page: someone who followed a broken link
  * is looking for a part, and a list of category shortcuts is a slower answer
@@ -56,29 +55,39 @@ export function NotFoundPage() {
 
   return (
     <div className="flex flex-col items-center overflow-hidden pt-8 pb-14 lg:pt-12 lg:pb-20">
-      {/* Genuinely full-bleed - `w-full` with no cap, clipped by the parent's
-          `overflow-hidden` rather than by the viewport, so it never puts a
-          horizontal scrollbar on the page.
+      {/* Sized to the measure, not bled to the viewport.
 
-          Capping it (it was `max-w-[1100px]`) centred the drawing and left the
-          leads ending in mid-air a couple of hundred pixels inside each edge,
-          which turns a cable that was pulled apart into a floating clip-art
-          plug. The whole point is that the line continues past the frame, so
-          the element has to be as wide as the frame is.
+          It WAS full-bleed and pushed to 170% on a phone, which is the right
+          treatment for artwork whose subject runs edge to edge - the earlier
+          inline SVG drew the cable at full width, so clipping the slack lead
+          was free and the plugs stayed large. This file is not that: the
+          subject sits in the middle with a lot of empty margin around it, so
+          scaling the FILE up scales the margin up too. The plugs stayed small,
+          the whitespace grew, and the picture swamped the page while saying
+          less.
 
-          The plugs do not drift apart as the window grows, because they are
-          positioned in `viewBox` units: the SVG scales as one picture rather
-          than stretching, so the gap is a fixed share of the width.
+          So it is capped at the same 640px measure the copy below uses, and it
+          is centred on the same axis. The parting sits directly over the
+          numerals, which is the alignment the page is built around.
 
-          Which is exactly why it is OVER-width on a phone. An SVG that scales
-          as one picture scales its subject down with it, and at 360px the
-          plugs came out about 30px across - a detail, not an illustration, with
-          the numerals crowding it. Pushing the element to 180% and letting the
-          sides clip keeps the plugs at a legible size and crops the slack lead
-          instead, which is the part of the drawing that carries no information. */}
-      <UnpluggedScene className="h-auto w-[170%] max-w-none shrink-0 sm:w-[120%] lg:w-full" />
+          `aspect-745/335` is the file's own ratio, reserved before the image
+          decodes - without it the numerals jump down the page on load, and a
+          404 that moves while somebody is reading it is the one thing this
+          screen must not do.
 
-      <div className="mx-auto -mt-2 flex w-full max-w-[640px] flex-col items-center px-5 text-center sm:px-6 sm:-mt-4">
+          Eager, not lazy: it is the first thing in the viewport, and lazy
+          loading the only picture on the page buys nothing. */}
+      <img
+        src="/404-artwork.png"
+        alt=""
+        width={745}
+        height={335}
+        loading="eager"
+        decoding="async"
+        className="aspect-745/335 h-auto w-full max-w-105 px-5 sm:max-w-130 lg:max-w-150"
+      />
+
+      <div className="mx-auto mt-2 flex w-full max-w-160 flex-col items-center px-5 text-center sm:px-6">
         {/* The numerals ARE the heading - marked up as one, not as decoration
             with a screen-reader label bolted beside it. `tabular-nums` so the
             two 4s and the 0 sit on even widths at this size, where the default

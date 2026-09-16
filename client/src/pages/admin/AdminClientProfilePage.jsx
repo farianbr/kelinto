@@ -2363,7 +2363,7 @@ export function AdminClientProfilePage() {
           emailPortalLink.mutate(undefined, {
             onSuccess: (result) =>
               result.sent
-                ? toast.success(`Portal link sent to ${result.to}.`)
+                ? toast.ok('Portal link sent', `${result.to} has it.`)
                 : // The mailer's own answer, not a confirmation of it: a
                   // `.example` address fails on purpose in development, and
                   // nothing here reports a send that did not happen.

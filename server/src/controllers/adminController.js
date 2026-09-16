@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { asyncHandler } from '../utils/ApiError.js';
 import * as adminService from '../services/adminService.js';
 import auditService from '../services/auditService.js';
+import invoiceRefundService from '../services/invoiceRefundService.js';
 import { db } from '../db/models.js';
 import '../models/User.js';
 import '../models/Invoice.js';
@@ -406,6 +407,70 @@ const voidInvoice = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Refund money off an invoice, to cash or to store credit.
+ *
+ * **Audited with the destination in it**, because the two are different promises
+ * to the customer and "we refunded you" does not say which happened. The cents
+ * and the resulting balance are recorded for the same reason the order refund
+ * records them: "where did $200 go" is a question somebody asks later.
+ */
+/**
+ * Chase an unpaid invoice.
+ *
+ * Audited with what the transport actually said, like every other mail path
+ * here: "reminded" and "tried to remind" are different facts, and only one of
+ * them means the customer has been asked.
+ */
+const remindInvoice = asyncHandler(async (req, res) => {
+  const result = await adminService.remindInvoice(req.params.number, req.body);
+
+  await auditService.record({
+    req,
+    action: 'invoice.remind',
+    entity: { kind: 'invoice', id: req.params.number, label: req.params.number },
+    after: {
+      to: result.to,
+      delivered: result.delivered,
+      balance: result.balance,
+      overdue: result.overdue,
+    },
+    description: result.delivered
+      ? `Reminded ${result.to} about ${req.params.number}.`
+      : `Tried to remind ${result.to} about ${req.params.number}; it did not send.`,
+  });
+
+  res.json(result);
+});
+
+const refundInvoice = asyncHandler(async (req, res) => {
+  const result = await invoiceRefundService.refundInvoice(
+    req.params.number,
+    req.body,
+    req.user._id,
+  );
+
+  await auditService.record({
+    req,
+    action: 'invoice.refund',
+    entity: { kind: 'invoice', id: req.params.number, label: req.params.number },
+    after: {
+      amount: result.refunded,
+      destination: result.toStoreCredit ? 'store credit' : 'cash back',
+      reason: req.body?.reason ?? '',
+      status: result.status,
+      refundableLeft: result.refundable,
+      storeCreditBalance: result.storeCreditBalance,
+    },
+    description:
+      `Refunded ${(result.refunded / 100).toFixed(2)} on ${req.params.number} ` +
+      `${result.toStoreCredit ? 'to store credit' : 'as cash back'}` +
+      `${req.body?.reason ? ` - ${req.body.reason}` : '.'}`,
+  });
+
+  res.status(201).json(result);
+});
+
+/**
  * Email the invoice to its account.
  *
  * The audit line records what the transport actually said, not what was
@@ -560,4 +625,4 @@ const accountStatement = asyncHandler(async (req, res) => {
   );
   res.type('html').send(html);
 });
-export { stats, listUsers, createUser, getUser, userPayments, updateUser, setContactConsent, setTier, addInternalNote, deleteInternalNote, approveUser, rejectUser, setUserStatus, setCredit, listProducts, createProduct, updateProduct, toggleProduct, listOrders, createOrder, getOrder, updateOrderStatus, allocateStoreCredit, storeCreditStatement, refundOrder, listInvoices, createInvoice, getInvoice, recordInvoicePayment, recordInvoiceTip, recordCreditPayment, voidInvoice, emailInvoice, reverseInvoicePayment, updateInvoice, deleteInvoice, userActivity, bulkUpdateOrderStatus, invoiceDocument, accountStatement };
+export { stats, listUsers, createUser, getUser, userPayments, updateUser, setContactConsent, setTier, addInternalNote, deleteInternalNote, approveUser, rejectUser, setUserStatus, setCredit, listProducts, createProduct, updateProduct, toggleProduct, listOrders, createOrder, getOrder, updateOrderStatus, allocateStoreCredit, storeCreditStatement, refundOrder, listInvoices, createInvoice, getInvoice, recordInvoicePayment, recordInvoiceTip, recordCreditPayment, voidInvoice, refundInvoice, remindInvoice, emailInvoice, reverseInvoicePayment, updateInvoice, deleteInvoice, userActivity, bulkUpdateOrderStatus, invoiceDocument, accountStatement };

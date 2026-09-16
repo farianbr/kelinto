@@ -102,6 +102,15 @@ const settingsSchema = new mongoose.Schema(
       website: { type: String, default: 'https://cellvix.ca' },
       // Dummy until the client supplies the real number (§0.15).
       taxNumber: { type: String, default: '12345 6789 RT0001' },
+      /**
+       * Where a happy customer is sent to leave a review.
+       *
+       * No default, and that is the point: the warranty sheet and the warranty
+       * email both omit the whole feedback block when it is empty. A review
+       * button pointing at a placeholder is worse than no button, because the
+       * customer who clicks it lands nowhere and the shop never finds out.
+       */
+      reviewUrl: { type: String, default: '' },
       address: {
         line1: { type: String, default: '2200 Meadowvale Blvd' },
         line2: { type: String, default: 'Unit 12' },
@@ -154,6 +163,16 @@ const settingsSchema = new mongoose.Schema(
        * shop's own mileage claim.
        */
       travelRateCentsPerKm: { type: Number, default: 56.7, min: 0 },
+      /**
+       * The warranty every repair carries before any tier bonus, in days.
+       *
+       * The floor the tier table adds to: Silver's bonus of 30 means 90 + 30,
+       * not 30. Separate from warrantyByGrade, which is the cover a PART
+       * carries by its condition - a shop promising 90 days on its own labour
+       * is a different promise from the one a NEW part comes with, and a
+       * repair invoice makes both.
+       */
+      warrantyBaseDays: { type: Number, default: 90, min: 0 },
 
       // Dummy values until the client confirms (§0.12).
       warrantyByGrade: {

@@ -14,6 +14,8 @@
     "seed:quotes": "node src/seed/quotes.js",
     "seed:expense-categories": "node src/seed/expense-categories.js",
     "seed:service-business": "node src/seed/service-business.js",
+    "seed:invoice-labels": "node src/seed/invoice-labels.js",
+    "seed:invoice-history": "node src/seed/invoice-history.js",
     "seed:service-quotes": "node src/seed/service-quotes.js",
     "seed:tickets": "node src/seed/tickets.js",
     "seed:bids": "node src/seed/purchase-bids.js",

@@ -127,7 +127,13 @@ function channelAllowed(account, channel) {
  *
  * @returns `{ sent, reason, channel }`
  */
-async function notifyStatusChange(ticket, status, actor = null) {
+/**
+ * @param {string[]} [allowed]  channels the staff member permitted for this
+ *   move. Absent means all of them; an EMPTY array means none, which is how a
+ *   status is changed silently. It never widens anything: the customer is
+ *   still only ever messaged on the channel they chose.
+ */
+async function notifyStatusChange(ticket, status, actor = null, allowed = null) {
   const copy = NOTIFIABLE[status];
   if (!copy) return { sent: false, reason: 'status-not-notifiable', channel: null };
 
@@ -141,6 +147,28 @@ async function notifyStatusChange(ticket, status, actor = null) {
     if (!account) return { sent: false, reason: 'no-account', channel: null };
 
     const channel = account.preferredContact;
+
+    /**
+     * The staff member unticked this channel on the confirmation.
+     *
+     * **`call` is exempt unless the list is empty.** The confirmation offers
+     * Email, SMS and WhatsApp - the three things that transmit - so a customer
+     * whose preference is `call` matches none of them and would be silently
+     * dropped by a staff member who unticked nothing. A call is not a message
+     * anyway: it is logged below as a task for somebody to ring them, and the
+     * dialog never offered to switch that off.
+     *
+     * An EMPTY list is different and does suppress it: that is "change the
+     * status silently", which is a decision about the customer rather than
+     * about a transport.
+     */
+    if (Array.isArray(allowed)) {
+      const suppressed = channel === 'call' ? allowed.length === 0 : !allowed.includes(channel);
+      if (suppressed) {
+        return { sent: false, reason: 'channel-skipped-by-staff', channel };
+      }
+    }
+
     if (!channel) {
       // Nobody asked how to reach them. Worth recording rather than silently
       // skipping: it is the prompt to go and ask.

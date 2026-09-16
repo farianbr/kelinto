@@ -36,6 +36,7 @@ const EMPTY = {
   email: '',
   website: '',
   taxNumber: '',
+  reviewUrl: '',
   address: { line1: '', line2: '', city: '', region: 'ON', postal: '', country: 'CA' },
 };
 
@@ -102,7 +103,13 @@ export function AdminBusinessInfoPage() {
           </div>
         </Panel>
 
-        <Panel title="Contact" description="How a customer reaches Cellvix from a document or the footer.">
+        {/* "this business", not "Cellvix": this screen is per business, and a
+            repair shop reading its own settings should not be told whose
+            contact details these are. */}
+        <Panel
+          title="Contact"
+          description="How a customer reaches this business from a document or the footer."
+        >
           <div className="grid gap-4 sm:grid-cols-2">
             <Controller
               name="phone"
@@ -129,6 +136,17 @@ export function AdminBusinessInfoPage() {
               hint="Printed on every invoice. Required for input tax credits."
               error={errors.taxNumber?.message}
               {...register('taxNumber')}
+            />
+            {/* Empty is a real answer: the warranty sheet and the warranty email
+                both drop the whole feedback block rather than show a button that
+                goes nowhere. */}
+            <Input
+              label="Review link"
+              containerClassName="sm:col-span-2"
+              hint="Where a happy customer is sent to leave a review. Shown on the ticket warranty sheet and in the warranty email; leave it empty to show neither."
+              placeholder="https://g.page/r/…"
+              error={errors.reviewUrl?.message}
+              {...register('reviewUrl')}
             />
           </div>
         </Panel>

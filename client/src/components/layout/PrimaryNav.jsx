@@ -39,19 +39,30 @@ const LINKS = [
 ];
 
 /**
- * How far down the page the strip appears.
+ * How far the page must move in one direction before the row reacts.
  *
- * 96px rather than 1px: a strip that animates in on the very first wheel notch
- * reads as a twitch, not as a reveal. By 96px the user has committed to
- * scrolling, so the row arriving is an answer to that rather than a reaction to
- * a stray touchpad graze.
+ * **The row is shown by DEFAULT and hides on the way down**, which is the
+ * opposite of what it used to do: it used to be absent at the top and appear
+ * past 96px. Showing it by default means the nav is there when the page loads,
+ * which is where somebody looks for it first.
  *
- * The hide threshold is lower than the show threshold on purpose. One value
- * would put the boundary exactly where momentum scrolling tends to settle, and
- * the row would flicker in and out across a 1px crossing.
+ * A direction flip needs a dead zone or the row oscillates. Trackpads and
+ * momentum scrolling emit tiny deltas in both directions around a resting
+ * point, so reacting to any non-zero movement would strobe the row through
+ * every settle. 8px of travel is below what a deliberate scroll gesture ever
+ * produces and above what jitter does.
  */
-const SHOW_AT = 96;
-const HIDE_AT = 48;
+const DIRECTION_DEADZONE = 8;
+
+/**
+ * How far down the page hiding is allowed to start at all.
+ *
+ * Near the top the header is still in view and the row is part of it, so
+ * retracting it there reads as the chrome coming apart rather than as making
+ * room. Past this the reader is into the body and the row is genuinely
+ * overlaying content.
+ */
+const HIDE_BELOW = 96;
 
 /**
  * The row's height, in pixels.
@@ -367,7 +378,9 @@ function OffersMenu({ pathname, shown }) {
 }
 
 export function PrimaryNav() {
-  const [shown, setShown] = useState(false);
+  // Shown by default: the nav is there on load, and scrolling DOWN is what
+  // takes it away.
+  const [shown, setShown] = useState(true);
   const { pathname } = useLocation();
 
   useEffect(() => {
@@ -375,13 +388,32 @@ export function PrimaryNav() {
     // scrollY synchronously on every event is the classic way to make a sticky
     // header stutter on a trackpad.
     let frame = 0;
+    // The position the last DECISION was made at, not the last scroll position.
+    // Comparing against the previous frame would make the dead zone meaningless:
+    // a slow drag moves 1-2px per frame and would never cross it, so the row
+    // would never react to a genuine slow scroll.
+    let anchor = window.scrollY;
 
     function onScroll() {
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
         const y = window.scrollY;
-        setShown((current) => (current ? y > HIDE_AT : y > SHOW_AT));
+        const moved = y - anchor;
+
+        // Back at the top, the row belongs to the header again - shown, whatever
+        // direction got us here. Without this a page restored mid-scroll and
+        // flicked to the top could sit with the nav retracted at y=0.
+        if (y <= HIDE_BELOW) {
+          anchor = y;
+          setShown(true);
+          return;
+        }
+
+        if (Math.abs(moved) < DIRECTION_DEADZONE) return;
+        anchor = y;
+        // Down hides, up shows.
+        setShown(moved < 0);
       });
     }
 

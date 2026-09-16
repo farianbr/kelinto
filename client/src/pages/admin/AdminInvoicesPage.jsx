@@ -8,13 +8,16 @@ import {
   Download,
   FileText,
   Info,
+  Mail,
   Plus,
   Receipt,
   Smartphone,
+  RotateCcw,
   StickyNote,
+  Tag,
   Wallet,
 } from 'lucide-react';
-import { money, date, count as formatCount } from '@/lib/format';
+import { money, date, count as formatCount, titleize } from '@/lib/format';
 import { apiUrl } from '@/lib/api';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
 import Modal from '@/components/ui/Modal';
@@ -25,6 +28,7 @@ import SelectField from '@/components/ui/SelectField';
 import Checkbox from '@/components/ui/Checkbox';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
+import SelectMenu from '@/components/ui/SelectMenu';
 import PageHeader from '@/components/admin/PageHeader';
 import BadgeExplainer from '@/components/admin/BadgeExplainer';
 import { TERMS } from '@/components/admin/ApproveClientForm';
@@ -44,10 +48,13 @@ import {
   useAdminInvoices,
   useAdminUsers,
   useAdminTickets,
+  useAdminInvoiceLabels,
   useAdminMutations,
 } from '@/hooks/useAdmin';
 import useCreateParam from '@/hooks/useCreateParam';
 import downloadExport from '@/lib/exportDownload';
+import cn from '@/lib/cn';
+import { toast } from '@/store/toastStore';
 
 /** A device as the invoice form starts it - no condition grid, that is intake. */
 const emptyInvoiceDevice = () => ({
@@ -128,6 +135,22 @@ const PILLS = [
 ];
 
 const STATUS_TONES = { paid: 'ok', partial: 'warn', unpaid: 'neutral', overdue: 'danger' };
+
+/**
+ * The manual status pill, tinted by the token the admin chose for it.
+ *
+ * A separate map from `STATUS_TONES` above, and deliberately so: that one is
+ * payment state, which the shop does not get to colour. These are the shop's
+ * own words and its own choice of six semantic tints (§2b).
+ */
+const LABEL_PILL = {
+  ink: 'bg-surface-2 text-ink-600',
+  brand: 'bg-brand-50 text-brand-700',
+  info: 'bg-info-50 text-info',
+  ok: 'bg-ok-50 text-ok',
+  warn: 'bg-warn-50 text-warn',
+  danger: 'bg-danger-50 text-danger',
+};
 
 const METHODS = [
   { value: 'e-transfer', label: 'e-Transfer' },
@@ -639,7 +662,22 @@ export function AdminInvoicesPage() {
   // Any client can be invoiced - unlike an order, this does not need approval:
   // a pending account can still owe money for a repair.
   const { data: clientData } = useAdminUsers({});
-  const { recordInvoicePayment, voidInvoice, createInvoice } = useAdminMutations();
+  const { recordInvoicePayment, voidInvoice, createInvoice, setInvoiceLabel } =
+    useAdminMutations();
+
+  // Active only: offering a retired status in a picker is how it gets put back
+  // on an invoice. The settings screen is the one place that passes `all`.
+  const { data: labelData } = useAdminInvoiceLabels();
+
+  /**
+   * The status change waiting to be confirmed: `{ invoice, label }`.
+   *
+   * `label` is null for "no status". Confirmed for the same reason a ticket
+   * status is: one of these emails the customer their warranty, and picking the
+   * wrong row from a menu would send it to somebody who did not ask.
+   */
+  const [statusMove, setStatusMove] = useState(null);
+  const labels = labelData?.labels ?? [];
 
   const clients = clientData?.users ?? [];
 
@@ -714,18 +752,45 @@ export function AdminInvoicesPage() {
           <span className="text-xs text-ink-300">-</span>
         ),
     },
-    {
-      key: 'terms',
-      header: 'Terms',
-      priority: 3,
-      render: (invoice) => (
-        <span className="text-sm text-ink-500">{invoice.terms.replace('net', 'Net ')}</span>
-      ),
-    },
+    /**
+     * Terms for a wholesaler, service type for a repair shop.
+     *
+     * One slot, because they answer the same question in the two businesses:
+     * how this sale works. Credit terms are meaningless on a walk-in repair
+     * paid at the counter, and "Pick-up & Drop-off" is meaningless to a parts
+     * wholesaler who ships every order.
+     */
+    isService
+      ? {
+          key: 'serviceType',
+          header: 'Service type',
+          priority: 2,
+          render: (invoice) =>
+            invoice.serviceType ? (
+              <span className="text-sm text-ink-500">
+                {INVOICE_SERVICE_TYPES.find((entry) => entry.value === invoice.serviceType)
+                  ?.label ?? titleize(invoice.serviceType)}
+              </span>
+            ) : (
+              <span className="text-xs text-ink-300">–</span>
+            ),
+        }
+      : {
+          key: 'terms',
+          header: 'Terms',
+          priority: 3,
+          render: (invoice) => (
+            <span className="text-sm text-ink-500">
+              {invoice.terms.replace('net', 'Net ')}
+            </span>
+          ),
+        },
     {
       key: 'status',
-      header: 'Status',
+      header: 'Payment',
       priority: 1,
+      // Headed "Payment", not "Status": the column beside it is also a status,
+      // and two columns both called Status is a table nobody can read twice.
       render: (invoice) => (
         <Badge tone={STATUS_TONES[invoice.status]} size="sm">
           {invoice.status === 'partial' ? 'partly paid' : invoice.status}
@@ -733,19 +798,106 @@ export function AdminInvoicesPage() {
       ),
     },
     {
-      key: 'balance',
-      header: 'Balance',
+      key: 'label',
+      // "Status", not "Manual status": the qualifier was there to tell it apart
+      // from the payment column, which now says "Payment" and does that itself.
+      // A staff member does not think of it as manual, they think of it as the
+      // status - the other one is whether the money arrived.
+      header: 'Status',
+      priority: 2,
+      /**
+       * The status an admin sets, which is NOT the payment status beside it.
+       *
+       * A picker rather than a badge, because setting one is the whole point and
+       * a staff member should not have to open the invoice to do it. Built like
+       * the ticket list's status pill: no border, the tint carries the meaning,
+       * and a chevron to say it opens.
+       */
+      render: (invoice) => {
+        // Nothing to pick from yet. A dead control would read as broken, so the
+        // cell says where the list is made instead.
+        if (labels.length === 0) {
+          return <span className="text-xs text-ink-300">–</span>;
+        }
+
+        return (
+          /* The guard is the control, not the cell - the empty space beside a
+             short status still falls through and opens the invoice, the way
+             every other cell in the row does. */
+          <div className="inline-flex" onClick={(event) => event.stopPropagation()}>
+            <SelectMenu
+              srLabel={`Status for ${invoice.number}`}
+              value={invoice.label?.id ?? ''}
+              options={[
+                { value: '', label: 'No status' },
+                ...labels.map((label) => ({
+                  value: label.id,
+                  label: label.sendsWarrantyEmail ? `${label.name} (emails)` : label.name,
+                })),
+              ]}
+              align="left"
+              buttonClassName={cn(
+                'h-7 w-auto gap-1 rounded-full border-0 px-2.5 text-xs font-semibold',
+                'hover:border-0 focus:border-0 focus:ring-1',
+                invoice.label
+                  ? (LABEL_PILL[invoice.label.colorToken] ?? LABEL_PILL.ink)
+                  : 'bg-transparent text-ink-400',
+              )}
+              menuTitle="Set the manual status"
+              /* The consequence the list cannot show. One of these statuses can
+                 email the customer, and a menu that looks like it only edits a
+                 field is one somebody uses to tidy a board at midnight. */
+              menuFootnote={
+                <>
+                  <Mail className="mt-px size-3 shrink-0" strokeWidth={2} aria-hidden="true" />
+                  <span>
+                    A status marked “emails” sends the warranty and review email once, and only
+                    on a paid invoice.
+                  </span>
+                </>
+              }
+              onChange={(next) => {
+                const current = invoice.label?.id ?? '';
+                if (next === current) return;
+                setStatusMove({
+                  invoice,
+                  label: labels.find((entry) => entry.id === next) ?? null,
+                });
+              }}
+            />
+          </div>
+        );
+      },
+    },
+    {
+      /**
+       * The invoice total, with what is still owed underneath it.
+       *
+       * The two were the other way round - balance in the large type, total in
+       * the small. The total is the figure the invoice IS, the one read out on
+       * the phone and matched against a customer's own copy, so it leads. The
+       * balance is a state that changes as payments land, which is what the
+       * Payment column beside it already says in words.
+       *
+       * A settled invoice says so in words rather than showing "$0.00": a
+       * column of zeroes is a column nobody reads, and "Paid in full" is the
+       * fact anyway.
+       */
+      key: 'amount',
+      header: 'Amount',
       priority: 1,
       align: 'right',
       className: 'tnum',
       render: (invoice) => (
         <>
-          <span
-            className={`text-sm font-medium ${invoice.balance > 0 ? 'text-ink-900' : 'text-ok'}`}
-          >
-            {money(invoice.balance)}
-          </span>
-          <span className="block text-2xs text-ink-400">of {money(invoice.amount)}</span>
+          <span className="text-sm font-medium text-ink-900">{money(invoice.amount)}</span>
+          {invoice.balance > 0 ? (
+            <span className="block text-2xs text-ink-400">
+              {money(invoice.balance)} due
+            </span>
+          ) : (
+            <span className="block text-2xs text-ok">Paid in full</span>
+          )}
         </>
       ),
     },
@@ -767,6 +919,22 @@ export function AdminInvoicesPage() {
       // reads over the phone is exactly what the customer is looking at.
       onSelect: (invoice) =>
         window.open(apiUrl(`/admin/invoices/${invoice.number}/document`), '_blank', 'noopener'),
+    },
+    {
+      /**
+       * Opens the invoice rather than refunding from here.
+       *
+       * A refund needs an amount, a destination and a reason - it is a form, not
+       * a click - and the form already exists on the detail page. Duplicating it
+       * into this list would be a second place for the cap and the
+       * cash-versus-credit copy to drift out of step, on the screen where a
+       * staff member is moving fastest and reading least.
+       */
+      key: 'refund',
+      label: 'Refund…',
+      icon: RotateCcw,
+      disabled: (invoice) => (invoice.refundableCents ?? 0) <= 0,
+      onSelect: (invoice) => navigate(`/admin/invoices/${invoice.number}?refund=1`),
     },
     {
       key: 'void',
@@ -968,6 +1136,75 @@ export function AdminInvoicesPage() {
         )}
       </Modal>
 
+      {/* Confirms, like a ticket status change and for the same reason: one of
+          these statuses emails the customer their warranty, and a picker in a
+          table row is clicked on the wrong line eventually.
+
+          `tone="info"` - it is reversible and moves no money. Red on an ordinary
+          move teaches staff to click through reds. */}
+      <ConfirmDialog
+        open={Boolean(statusMove)}
+        onClose={() => setStatusMove(null)}
+        tone="info"
+        heading="Change status?"
+        title={
+          statusMove ? (
+            <>
+              {statusMove.label ? (
+                <>
+                  Set <strong className="font-semibold text-ink-900">{statusMove.invoice.number}</strong>{' '}
+                  to{' '}
+                  <strong className="font-semibold text-ink-900">{statusMove.label.name}</strong>?
+                </>
+              ) : (
+                <>
+                  Clear the status on{' '}
+                  <strong className="font-semibold text-ink-900">{statusMove.invoice.number}</strong>?
+                </>
+              )}
+            </>
+          ) : (
+            ''
+          )
+        }
+        body={
+          statusMove?.label?.sendsWarrantyEmail ? (
+            <p className="flex items-start gap-2 rounded-md bg-warn-50 px-3 py-2.5 text-sm text-warn">
+              <Mail className="mt-0.5 size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+              <span>
+                {statusMove.invoice.status === 'paid' && !statusMove.invoice.labelEmailSentAt
+                  ? 'This emails the customer their warranty and a review link. It sends once per invoice.'
+                  : statusMove.invoice.labelEmailSentAt
+                    ? 'The warranty email has already gone for this invoice, so it will not send again.'
+                    : 'The warranty email sends only on a paid invoice, so nothing will be sent yet.'}
+              </span>
+            </p>
+          ) : (
+            'This is where the invoice has got to with the customer. It moves no money and changes no balance.'
+          )
+        }
+        confirmLabel="Confirm change"
+        loading={setInvoiceLabel.isPending}
+        error={setInvoiceLabel.error?.message}
+        onConfirm={() =>
+          setInvoiceLabel.mutate(
+            {
+              number: statusMove.invoice.number,
+              labelId: statusMove.label?.id ?? null,
+            },
+            {
+              onSuccess: (result) => {
+                setStatusMove(null);
+                // Whether the email actually went is the half the screen cannot
+                // work out for itself.
+                if (result?.emailed) {
+                  toast.ok('Warranty email sent', `${result.labelName} is set, and the customer has their warranty.`);
+                }
+              },
+            },
+          )
+        }
+      />
       {/* A void cannot be undone from the admin panel: the invoice stays on the
           record as void and a replacement has to be raised by hand. The number
           is retyped so the staff member confirms which invoice they are killing. */}

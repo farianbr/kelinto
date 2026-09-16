@@ -591,14 +591,29 @@ export const ADMIN_ROUTES = {
     description: 'Regional defaults, invoice numbering, warranty by grade and shipping.',
   },
   '/admin/settings/invoice-status': {
-    label: 'Invoice Status',
+    label: 'Invoice Messages',
     parent: 'settings:financial',
     icon: 'FileText',
     section: 'settings',
     phase: 11,
     built: true,
-    title: 'Invoice statuses',
+    // Renamed from "Invoice Status", which collided with the manual status
+    // list below it: two settings screens both called Invoice Status, one
+    // sending timed email and one editing a picker, is a menu a staff member
+    // has to click twice to read. These are messages; those are statuses.
+    title: 'Invoice messages',
     description: 'Time-lapse status messages, each firing once per invoice.',
+  },
+  '/admin/settings/invoice-labels': {
+    label: 'Invoice Statuses',
+    parent: 'settings:financial',
+    icon: 'Tag',
+    section: 'settings',
+    phase: 12,
+    built: true,
+    title: 'Invoice statuses',
+    description:
+      'The manual statuses an admin can set on an invoice, separate from whether it is paid.',
   },
   '/admin/settings/devices': {
     label: 'Devices taken in',

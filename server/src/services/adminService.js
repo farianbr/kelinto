@@ -20,6 +20,7 @@ import { likeRegex } from '../utils/regex.js';
 import { serializeOrder } from './orderService.js';
 import orderBuilder from './orderBuilder.js';
 import invoicePaymentService from './invoicePaymentService.js';
+import { refundableOf, refundedTotalOf } from './invoiceRefundService.js';
 import { activityFeed } from './activityService.js';
 import { AuditLog } from '../models/AuditLog.js';
 import { displayNameOf } from '../utils/displayName.js';
@@ -1617,6 +1618,26 @@ function shapeAdminInvoice(invoice) {
     notes: invoice.notes ?? null,
     status: overdue ? 'overdue' : invoice.status,
 
+    /**
+     * The manual status an admin set, which is NOT the payment status above.
+     *
+     * Populated rather than sent as an id, so a list can draw the pill without
+     * a second request per row. `null` is the ordinary state - most invoices
+     * never get one - so a screen must render the absence as blank rather than
+     * as a missing value.
+     */
+    label: invoice.label
+      ? {
+          id: (invoice.label._id ?? invoice.label).toString(),
+          name: invoice.label.name ?? null,
+          colorToken: invoice.label.colorToken ?? 'ink',
+        }
+      : null,
+    labelSetAt: invoice.labelSetAt ?? null,
+    // Whether the warranty email has already gone, so the picker can say so
+    // instead of implying a second one will send.
+    labelEmailSentAt: invoice.labelEmailSentAt ?? null,
+
     // The work, and how the amount was arrived at. Empty on a flat charge and
     // on every invoice an order raised - the detail screen shows the breakdown
     // only when there is one, rather than a row of zeroes that explains
@@ -1658,7 +1679,22 @@ function shapeAdminInvoice(invoice) {
       at: payment.at,
       method: payment.method ?? null,
       reference: payment.reference ?? null,
+      // So a reversed row can be struck through without pairing rows up by
+      // amount and guessing which reversal belongs to which payment.
+      reversedAt: payment.reversedAt ?? null,
     })),
+
+    /**
+     * What has gone back, and what still could.
+     *
+     * Derived from the rows by `invoiceRefundService`, the one place that
+     * arithmetic lives - the refund form needs the cap, and computing it in the
+     * browser would put a second answer next to the one the server enforces.
+     * `refundable` is money the shop actually still holds, so a reversed
+     * payment is not part of it.
+     */
+    refundedCents: refundedTotalOf(invoice),
+    refundableCents: refundableOf(invoice),
   };
 }
 
@@ -1949,6 +1985,7 @@ async function listInvoices({ status, q, from, to, business, numbers } = {}) {
     .limit(200)
     .populate('order', 'orderNumber')
     .populate('user', 'businessName contactName')
+    .populate('label', 'name colorToken')
     .lean();
 
   // Counts come from the whole collection, not the filtered set - a pill that
@@ -1987,6 +2024,7 @@ async function getInvoice(number) {
       select: 'ticketNumber quote',
       populate: { path: 'quote', select: 'quoteNumber' },
     })
+    .populate('label', 'name colorToken')
     .lean();
 
   if (!invoice) throw ApiError.notFound('Invoice not found.', 'INVOICE_NOT_FOUND');
@@ -2146,14 +2184,92 @@ async function emailInvoice(number) {
   // renderer, and going around it is how the emailed copy starts to differ
   // from the printed one.
   const html = await invoiceDocument(number);
+
+  /**
+   * The shop that raised it, not the house brand.
+   *
+   * `BUSINESS_INFO.name` is "Cellvix", so a CellShoppe customer was receiving
+   * "Invoice INV-… from Cellvix" - a company they have never dealt with, about a
+   * repair they had done somewhere else. The document body was fixed for this
+   * months ago; the subject line was missed, and it is the half that shows in
+   * the inbox before anything is opened.
+   */
+  const { shop } = await resolveInvoiceBrand(invoice.business);
+  const from = shop?.name || BUSINESS_INFO.name;
+
   const result = await sendMail({
     to,
-    subject: `Invoice ${invoice.number} from ${BUSINESS_INFO.name}`,
+    subject: `Invoice ${invoice.number} from ${from}`,
     html,
     text: `Invoice ${invoice.number} - ${(invoice.amount / 100).toFixed(2)} CAD. Open the attached invoice for the full breakdown.`,
   });
 
   return { delivered: result?.delivered !== false, to };
+}
+
+/**
+ * Nudge a customer about an invoice they have not settled.
+ *
+ * **Not `emailInvoice` again.** That sends the document, which is the right
+ * thing when an invoice is first raised and the wrong thing as a chase: a
+ * customer who has already been sent the paperwork does not need a second copy,
+ * they need to be told what is outstanding and by when. So this is a short
+ * message about the BALANCE, with a link to the invoice rather than the invoice
+ * itself.
+ *
+ * **Refused on a settled invoice**, rather than sent politely. Asking somebody
+ * for money they have already paid is the single worst thing this can do, and a
+ * staff member working down a list will click it on the wrong row eventually.
+ *
+ * Manual, unlike `invoiceStatusService`, which fires the timed reminders on its
+ * own schedule. This is somebody deciding to chase one account today.
+ */
+async function remindInvoice(number, { note } = {}) {
+  const invoice = await db().Invoice.findOne({ number }).populate('user').lean();
+  if (!invoice) throw ApiError.notFound('Invoice not found.', 'INVOICE_NOT_FOUND');
+
+  const to = invoice.user?.email;
+  if (!to) {
+    throw ApiError.badRequest('This invoice has no account email to send to.', 'NO_RECIPIENT');
+  }
+
+  const balance = invoice.amount - (invoice.amountPaid ?? 0);
+  if (balance <= 0) {
+    throw ApiError.badRequest(
+      'This invoice is settled, so there is nothing to remind anybody about.',
+      'NOTHING_OUTSTANDING',
+    );
+  }
+
+  const { shop } = await resolveInvoiceBrand(invoice.business);
+  const from = shop?.name || BUSINESS_INFO.name;
+  // The dollar sign is part of the figure, not decoration: "has 240.00
+  // outstanding" is a number with no unit on it, in a message about money.
+  const owed = `$${(balance / 100).toFixed(2)} CAD`;
+  const due = invoice.dueDate ? formatDate(invoice.dueDate) : null;
+  const overdue = Boolean(invoice.dueDate && new Date(invoice.dueDate) < new Date());
+
+  const lines = [
+    invoice.user?.contactName ? `Hi ${invoice.user.contactName.split(' ')[0]},` : 'Hello,',
+    '',
+    overdue
+      ? `Invoice ${invoice.number} has ${owed} outstanding and was due on ${due}.`
+      : `Invoice ${invoice.number} has ${owed} outstanding${due ? `, due on ${due}` : ''}.`,
+  ];
+  if (note) lines.push('', note);
+  lines.push('', `Thank you,`, from);
+
+  const text = lines.join('\n');
+  const result = await sendMail({
+    to,
+    subject: overdue
+      ? `Overdue: invoice ${invoice.number} (${owed})`
+      : `Reminder: invoice ${invoice.number} (${owed})`,
+    html: `<p>${lines.join('<br />')}</p>`,
+    text,
+  });
+
+  return { delivered: result?.delivered !== false, to, balance, overdue };
 }
 
 /**
@@ -2453,4 +2569,4 @@ async function invoiceDocument(number, { nonce } = {}) {
   });
 }
 
-export { stats, listUsers, getUser, userPayments, createUser, updateUser, setContactConsent, setTier, addInternalNote, deleteInternalNote, approveUser, rejectUser, setUserStatus, allocateStoreCredit, storeCreditStatement, refundOrder, setCredit, listProducts, createProduct, updateProduct, deactivateProduct, createOrder, listOrders, getOrder, updateOrderStatus, createInvoice, listInvoices, getInvoice, recordPayment, recordTip, recordCreditPayment, voidInvoice, emailInvoice, reverseInvoicePayment, updateInvoice, deleteInvoice, userActivity, bulkUpdateOrderStatus, invoiceDocument, accountStatement };
+export { stats, listUsers, getUser, userPayments, createUser, updateUser, setContactConsent, setTier, addInternalNote, deleteInternalNote, approveUser, rejectUser, setUserStatus, allocateStoreCredit, storeCreditStatement, refundOrder, setCredit, listProducts, createProduct, updateProduct, deactivateProduct, createOrder, listOrders, getOrder, updateOrderStatus, createInvoice, listInvoices, getInvoice, recordPayment, recordTip, recordCreditPayment, voidInvoice, emailInvoice, remindInvoice, reverseInvoicePayment, updateInvoice, deleteInvoice, userActivity, bulkUpdateOrderStatus, invoiceDocument, accountStatement };

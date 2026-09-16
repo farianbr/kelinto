@@ -31,10 +31,23 @@ const NOTIFY_MESSAGE = {
   'mail-failed': 'The email could not be delivered. It is logged with the reason.',
 };
 
+/**
+ * The one "not sent" that is not a problem.
+ *
+ * The staff member unticked the channel on the confirmation, so this is the
+ * thing they asked for. Reported, because a silent status change and a silent
+ * FAILURE look identical from the outside and somebody has to be able to tell
+ * them apart - but as a neutral note rather than the red "Customer not
+ * notified", which would be the interface arguing with a decision it just took.
+ */
+const SKIPPED_BY_STAFF = 'channel-skipped-by-staff';
+
 export function reportStatusOutcome(payload) {
   const notified = payload?.notified;
 
-  if (notified && !notified.sent) {
+  if (notified && !notified.sent && notified.reason === SKIPPED_BY_STAFF) {
+    toast.info('Status changed quietly', 'The customer was not messaged, as you asked.');
+  } else if (notified && !notified.sent) {
     const message = NOTIFY_MESSAGE[notified.reason];
     // An unrecognised reason is still worth surfacing verbatim rather than
     // swallowing: it is almost always the `error: ...` branch.

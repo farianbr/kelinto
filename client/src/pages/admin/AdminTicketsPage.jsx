@@ -8,6 +8,9 @@ import {
   ClipboardList,
   Download,
   Hourglass,
+  Mail,
+  MessageCircle,
+  MessageSquare,
   Pencil,
   Plus,
   Smartphone,
@@ -25,6 +28,7 @@ import reportStatusOutcome from '@/lib/ticketStatusOutcome';
 import { count as formatCount, titleize } from '@/lib/format';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import Checkbox from '@/components/ui/Checkbox';
 import Input from '@/components/ui/Input';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
@@ -105,6 +109,25 @@ const PRIORITY_TONES = { low: 'neutral', normal: 'neutral', high: 'warn', urgent
  * token tint with its own ink, so the text clears contrast on its own ground
  * rather than relying on a single grey that happens to work on four of them.
  */
+/**
+ * The channels the confirmation offers to suppress.
+ *
+ * **These are permissions, not sends.** The customer is messaged on the ONE
+ * channel recorded on their profile; unticking a row here says "not by that
+ * route this time", and unticking every row changes the status silently. Which
+ * is why all three start ticked: the default is the behaviour the move already
+ * had, and the dialog exists to let somebody opt OUT of it.
+ *
+ * `call` is deliberately absent. It is a task logged for a staff member rather
+ * than a message anything transmits, so offering to switch it off would imply
+ * the system was about to ring somebody.
+ */
+const NOTIFY_CHANNELS = [
+  { value: 'email', label: 'Email', icon: Mail },
+  { value: 'sms', label: 'SMS', icon: MessageSquare },
+  { value: 'whatsapp', label: 'WhatsApp', icon: MessageCircle },
+];
+
 const STATUS_PILL = {
   diagnosis: 'bg-info-50 text-info',
   accepted: 'bg-warn-50 text-warn',
@@ -152,6 +175,17 @@ const SOURCE_OPTIONS = TICKET_SOURCES.map((value) => ({ value, label: titleize(v
 export function AdminTicketsPage() {
   const [query, setQuery] = useState('');
   const [deleting, setDeleting] = useState(null);
+
+  /**
+   * The status move waiting to be confirmed: `{ ticket, status }`.
+   *
+   * A status change messages a customer, so it is a mutation fired from one
+   * click that reaches a third party - which §3.0.1 says confirms. It used to
+   * fire straight off the picker, so picking the wrong row from a nine-item menu
+   * texted somebody that their device was ready.
+   */
+  const [statusMove, setStatusMove] = useState(null);
+  const [notifyVia, setNotifyVia] = useState(() => NOTIFY_CHANNELS.map((c) => c.value));
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -339,16 +373,14 @@ export function AdminTicketsPage() {
                 <span>Changing this messages the customer on their preferred channel.</span>
               </>
             }
-            onChange={(next) =>
-              next !== ticket.status &&
-              setTicketStatus.mutate(
-                { id: ticket.id, status: next },
-                // The move can silently fail to reach the customer - no channel
-                // on file, a declined one, no provider wired - and the staff member
-                // has to learn that now, not when somebody rings to ask.
-                { onSuccess: reportStatusOutcome },
-              )
-            }
+            // Opens the confirmation rather than moving the ticket. Every channel
+            // starts ticked, so confirming with nothing touched is the behaviour
+            // the picker had before.
+            onChange={(next) => {
+              if (next === ticket.status) return;
+              setNotifyVia(NOTIFY_CHANNELS.map((channel) => channel.value));
+              setStatusMove({ ticket, status: next });
+            }}
           />
         </div>
       ),
@@ -591,6 +623,95 @@ export function AdminTicketsPage() {
       </Panel>
 
 
+      {/* A status change messages a customer, so it confirms (§3.0.1) - and the
+          confirmation is where the channels can be unticked, because "move it but
+          do not tell them" is a real thing a counter needs: a device marked ready
+          by mistake, or a customer already standing there being handed it.
+
+          `tone="info"`, not the default danger: this is an ordinary, reversible
+          move a technician makes many times a day, and a red alarm on every one
+          teaches them to click through reds. */}
+      <ConfirmDialog
+        open={Boolean(statusMove)}
+        onClose={() => setStatusMove(null)}
+        tone="info"
+        heading="Change status?"
+        title={
+          statusMove ? (
+            <>
+              Change <strong className="font-semibold text-ink-900">ticket {statusMove.ticket.ticketNumber}</strong>{' '}
+              to{' '}
+              <strong className="font-semibold text-ink-900">
+                {TICKET_STATUS_LABELS[statusMove.status] ?? titleize(statusMove.status)}
+              </strong>
+              ?
+            </>
+          ) : (
+            ''
+          )
+        }
+        body={
+          <div className="rounded-lg border border-line bg-surface-2 p-3.5">
+            <p className="eyebrow mb-2.5 text-ink-400">Notify the customer via:</p>
+
+            <div className="space-y-1">
+              {NOTIFY_CHANNELS.map(({ value, label, icon: Icon }) => (
+                <div key={value} className="flex items-center gap-2">
+                  <Checkbox
+                    checked={notifyVia.includes(value)}
+                    onChange={(event) =>
+                      setNotifyVia((current) =>
+                        event.target.checked
+                          ? [...current, value]
+                          : current.filter((entry) => entry !== value),
+                      )
+                    }
+                    label={
+                      <span className="flex items-center gap-2">
+                        <Icon
+                          className="size-4 shrink-0 text-ink-400"
+                          strokeWidth={2}
+                          aria-hidden="true"
+                        />
+                        {label}
+                      </span>
+                    }
+                    className="flex-1"
+                  />
+                </div>
+              ))}
+            </div>
+
+            {/* Says what unticking DOES, because the checkboxes cannot: the
+                customer is reached on the one channel they chose, so these are
+                permissions rather than three separate messages. */}
+            <p className="mt-3 text-xs leading-relaxed text-ink-400">
+              Uncheck a channel to skip it. Uncheck all to change the status silently.
+            </p>
+          </div>
+        }
+        confirmLabel="Confirm change"
+        loading={setTicketStatus.isPending}
+        error={setTicketStatus.error?.message}
+        onConfirm={() =>
+          setTicketStatus.mutate(
+            {
+              id: statusMove.ticket.id,
+              status: statusMove.status,
+              channels: notifyVia,
+            },
+            {
+              // The move can silently fail to reach the customer - no channel on
+              // file, a declined one, no provider wired - and the staff member has
+              // to learn that now, not when somebody rings to ask.
+              onSuccess: (result) => {
+                reportStatusOutcome(result);
+                setStatusMove(null);
+              },
+            },
+          )
+        }
+      />
       <ConfirmDialog
         open={Boolean(deleting)}
         onClose={() => setDeleting(null)}

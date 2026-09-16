@@ -387,6 +387,23 @@ export function useAdminServices(params = {}) {
   });
 }
 
+/**
+ * The manual invoice status list.
+ *
+ * Pass `status: 'all'` on the settings screen, which is the only place a
+ * retired label should appear - offering one in a picker puts it back on an
+ * invoice. Everywhere else the default (active only) is what you want.
+ */
+export function useAdminInvoiceLabels(params = {}) {
+  const { canUseAdmin } = useAuth();
+  return useQuery({
+    queryKey: ['admin', 'invoice-labels', params],
+    queryFn: () => api.get('/admin/invoice-labels', params),
+    enabled: canUseAdmin,
+    staleTime: 60 * 1000,
+  });
+}
+
 export function useAdminExpenseCategories() {
   const { canUseAdmin } = useAuth();
   return useQuery({
@@ -1407,6 +1424,54 @@ export function useAdminMutations() {
     // error names the count and says to deactivate instead.
     deleteService: useMutation({
       mutationFn: (id) => api.delete(`/admin/services/${id}`),
+      onSuccess: invalidate,
+    }),
+    /**
+     * Refund money off an invoice, to cash or to store credit.
+     *
+     * Resolves to `{ refunded, toStoreCredit, refundable, status, balance,
+     * storeCreditBalance }`. The amount is capped server-side against the
+     * invoice own payment rows, so a stale form cannot over-refund.
+     */
+    /**
+     * Chase an unpaid invoice. Refused server-side on a settled one.
+     *
+     * Resolves to `{ delivered, to, balance, overdue }` - `delivered` is what the
+     * transport said, not what was attempted, so the caller can tell "reminded"
+     * from "tried to remind".
+     */
+    remindInvoice: useMutation({
+      mutationFn: ({ number, ...body }) => api.post(`/admin/invoices/${number}/remind`, body),
+      onSuccess: invalidate,
+    }),
+    refundInvoice: useMutation({
+      mutationFn: ({ number, ...body }) => api.post(`/admin/invoices/${number}/refund`, body),
+      onSuccess: invalidate,
+    }),
+    createInvoiceLabel: useMutation({
+      mutationFn: (body) => api.post('/admin/invoice-labels', body),
+      onSuccess: invalidate,
+    }),
+    updateInvoiceLabel: useMutation({
+      mutationFn: ({ id, ...body }) => api.patch(`/admin/invoice-labels/${id}`, body),
+      onSuccess: invalidate,
+    }),
+    // Refused while any invoice carries it - the error names the count and says
+    // to retire it instead, which keeps those invoices readable.
+    deleteInvoiceLabel: useMutation({
+      mutationFn: (id) => api.delete(`/admin/invoice-labels/${id}`),
+      onSuccess: invalidate,
+    }),
+    /**
+     * Set or clear the manual status on one invoice.
+     *
+     * Resolves to `{ emailed }` - whether the warranty email actually went out,
+     * which is a side effect the person clicking cannot otherwise see. Pass
+     * `labelId: null` to clear.
+     */
+    setInvoiceLabel: useMutation({
+      mutationFn: ({ number, labelId }) =>
+        api.patch(`/admin/invoices/${number}/label`, { labelId }),
       onSuccess: invalidate,
     }),
     createExpenseCategory: useMutation({

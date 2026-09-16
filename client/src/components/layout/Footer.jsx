@@ -312,7 +312,19 @@ export function Footer() {
           surface. The wordmark is cropped BY that panel's rounded bottom edge
           it is a texture the footer ends on, not a logo to be read, and letting
           it run out of the box is what stops it reading as a fifth column. */}
-      <div className="mx-auto max-w-[1400px] rounded-xl bg-surface-2 ring-1 ring-line">
+      {/* `overflow-hidden` is what makes the gradient rule below read as the
+          panel EDGE rather than as a separate line laid across the top of it.
+
+          The rule is a square-ended bar and the panel is `rounded-xl`, so
+          unclipped its two ends overhang the curve by the corner radius - a
+          straight line sticking out past both shoulders, which is exactly what
+          it looked like. Clipped, it takes the corner with the panel and the
+          accent belongs to the box.
+
+          The wordmark lower down is cropped by this same clip, which is
+          deliberate and pre-existing: it is a texture the footer ends on, not a
+          logo to be read. */}
+      <div className="mx-auto max-w-[1400px] overflow-hidden rounded-xl bg-surface-2 ring-1 ring-line">
         {/* The gradient as a hairline rule - accent, not fill. */}
         <div className="rule-brand-gradient h-1" aria-hidden="true" />
 
@@ -332,12 +344,16 @@ export function Footer() {
               {/* No address here: it is the Location row's popover now, and
                   printing it twice on one row is one fact taking two places
                   to say. */}
-              {/* Centred across the column. The pair is a credential rather
-                  than a list to read down, so it sits as one centred block
-                  instead of ranging left against copy it has no relationship
-                  to - and centring is what stops the two unequal badge widths
-                  reading as a ragged edge. */}
-              <ul className="mt-7 flex flex-wrap items-center justify-center gap-5">
+              {/* Ranged left, on the same axis as the statement above and the
+                  social row below.
+
+                  It was centred, on the argument that two unequal badge widths
+                  read as a ragged edge. They do less harm than the centring did:
+                  the column has a left edge that the heading, the "Follow us"
+                  label and every row under it share, and one block floating off
+                  that axis is the thing the eye catches first. A ragged right
+                  edge inside a column is normal; a ragged LEFT edge is a mistake. */}
+              <ul className="mt-7 flex flex-wrap items-center gap-5">
                 {BADGES.map((badge) => (
                   <li key={badge.href}>
                     <a href={badge.href} target="_blank" rel="noopener noreferrer" className="block">

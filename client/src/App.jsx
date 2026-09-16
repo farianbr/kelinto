@@ -132,6 +132,7 @@ const AdminApiKeysPage = lazy(() => import('@/pages/admin/AdminApiKeysPage'));
 const AdminThirdPartyPage = lazy(() => import('@/pages/admin/AdminThirdPartyPage'));
 const AdminTaxonomyPage = lazy(() => import('@/pages/admin/AdminTaxonomyPage'));
 const AdminInvoiceStatusPage = lazy(() => import('@/pages/admin/AdminInvoiceStatusPage'));
+const AdminInvoiceLabelsPage = lazy(() => import('@/pages/admin/AdminInvoiceLabelsPage'));
 const AdminEmailSettingsPage = lazy(() => import('@/pages/admin/AdminEmailSettingsPage'));
 const AdminTemplatesPage = lazy(() => import('@/pages/admin/AdminTemplatesPage'));
 const AdminCalendarPage = lazy(() => import('@/pages/admin/AdminCalendarPage'));
@@ -291,6 +292,7 @@ export function App() {
         <Route path="settings/devices" element={<AdminDevicesPage />} />
         <Route path="settings/taxonomy" element={<AdminTaxonomyPage />} />
         <Route path="settings/invoice-status" element={<AdminInvoiceStatusPage />} />
+        <Route path="settings/invoice-labels" element={<AdminInvoiceLabelsPage />} />
         <Route path="settings/email" element={<AdminEmailSettingsPage />} />
         <Route path="settings/templates" element={<AdminTemplatesPage />} />
         <Route path="settings/calendar" element={<AdminCalendarPage />} />

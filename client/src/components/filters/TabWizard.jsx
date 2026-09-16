@@ -39,8 +39,20 @@ const LEVEL_KEYS = FILTER_LEVELS.map((l) => l.key);
  *
  * It writes to the same store the sidebar and mega menu write to - it is a third
  * face on one filter, not a filter of its own.
+ *
+ * ## `onComplete`
+ *
+ * **Optional, and only the homepage passes it.** On the Shop page the wizard
+ * needs no such thing: the store IS the page's state, `useFilterUrlSync` mirrors
+ * it into the URL and the grid re-renders under it, so a pick is visibly
+ * answered where the buyer is standing.
+ *
+ * The homepage has no grid and no sync, so a pick there wrote the store and
+ * appeared to do nothing. Rather than teach the wizard to navigate - which would
+ * make it a router-aware component on every screen that shows it - the caller
+ * says what a completed choice means where it sits.
  */
-export function TabWizard() {
+export function TabWizard({ onComplete }) {
   const [openLevel, setOpenLevel] = useState(null);
 
   // True while the user is walking the steps in order. A non-linear edit clears
@@ -138,22 +150,35 @@ export function TabWizard() {
       const index = LEVEL_KEYS.indexOf(level);
       const nextLevel = LEVEL_KEYS[index + 1];
 
-      if (!inSequence.current || !nextLevel) {
+      /**
+       * The wizard is FINISHED, so the caller may act on it.
+       *
+       * Finished means every level answered, or a level with nothing under it
+       * to ask next - some branches genuinely stop at a series. It fired on
+       * every pick before, which on the homepage navigated away the moment a
+       * device type was chosen and left the buyer to find the remaining four
+       * steps on another page. A wizard that walks somebody out of itself
+       * halfway through is not a wizard.
+       *
+       * Deferred a frame: the store has only just cascaded, and the caller reads
+       * it to build the query. Acting inside this tick would serialise the state
+       * as it was one level ago.
+       */
+      const leafReached = (option.children ?? []).length === 0;
+      if (!nextLevel || leafReached) {
         setOpenLevel(null);
+        if (onComplete) queueMicrotask(onComplete);
         return;
       }
 
-      // The store has just cascaded, so the next level's options hang off the
-      // node we picked.
-      const nextOptions = option.children ?? [];
-      if (nextOptions.length === 0) {
+      if (!inSequence.current) {
         setOpenLevel(null);
         return;
       }
 
       setOpenLevel(nextLevel);
     },
-    [openLevel, setPathLevel, wizardComponentType],
+    [openLevel, setPathLevel, wizardComponentType, onComplete],
   );
 
   function openStep(level, index) {
@@ -176,6 +201,7 @@ export function TabWizard() {
   }
 
   const anySelected = LEVEL_KEYS.some((level) => answers[level]);
+
 
   // The one step the mobile layout leaves open: the first that is neither
   // answered nor locked. Null once every level has an answer.
@@ -202,6 +228,15 @@ export function TabWizard() {
     >
       <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
         <p className="eyebrow text-ink-400">Find your part</p>
+
+        {/* No "See parts" shortcut.
+
+            One existed, and it contradicted the rule the wizard now follows: the
+            caller is told once, when every step is answered. A button offering to
+            leave early is a second, quieter way out that makes the finished state
+            meaningless - and on the homepage it would navigate with half a filter,
+            which is the thing being fixed. Somebody who wants the unfiltered
+            catalogue has "All parts" in the section header above. */}
         {anySelected && (
           <button
             type="button"
@@ -425,8 +460,30 @@ export function TabWizard() {
       <WizardOverlay
         open={Boolean(openLevel)}
         onClose={() => {
+          const wasWalking = inSequence.current;
           setOpenLevel(null);
           inSequence.current = false;
+
+          /**
+           * Abandoning a run clears what it had gathered - but only where the
+           * wizard is a one-shot form.
+           *
+           * On the HOMEPAGE (`onComplete` passed) the steps are a single
+           * question asked in five parts, and nothing acts on them until the last
+           * one. Half an answer left behind is a filter the buyer cannot see the
+           * effect of, sitting in a module-level store that outlives this mount -
+           * so their next visit to /shop would open a narrowed catalogue with
+           * nothing on screen explaining why.
+           *
+           * On the SHOP page it is the opposite: the grid is filtering live, a
+           * partial path is a perfectly good filter somebody is reading results
+           * from, and clearing it because they closed a panel would throw away
+           * work they can see. `resetAll` there is the explicit "Start over".
+           *
+           * Only on an abandoned WALK, not on closing a panel that was reopened
+           * to edit one finished step.
+           */
+          if (onComplete && wasWalking) resetAll();
         }}
         // Step 1's Next: carry the walk into step 2 rather than just dismissing
         // the panel. The tree is refetching against the new component ticks, so

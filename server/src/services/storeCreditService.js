@@ -34,6 +34,8 @@ async function post({
   note,
   order,
   orderNumber,
+  invoice,
+  invoiceNumber,
   createdBy,
   paymentRef,
   referral,
@@ -69,6 +71,8 @@ async function post({
     note,
     order,
     orderNumber,
+    invoice,
+    invoiceNumber,
     createdBy,
     paymentRef,
     referral,
@@ -187,6 +191,7 @@ function serialize(entry) {
     type: doc.type,
     note: doc.note ?? '',
     orderNumber: doc.orderNumber ?? null,
+    invoiceNumber: doc.invoiceNumber ?? null,
     createdAt: doc.createdAt,
   };
 }
@@ -373,6 +378,36 @@ async function refundOrder(orderNumber, { amount, note }, adminId) {
 }
 
 /**
+ * Credits a refund against an INVOICE rather than an order.
+ *
+ * **A named operation, because `post` stays private.** Every movement in this
+ * ledger goes through a function that says what the movement IS - allocate,
+ * recharge, refund, redeem - so that the set of reasons a balance can change is
+ * a list somebody can read, rather than whatever callers happened to pass. An
+ * exported `post` would make that list open-ended.
+ *
+ * This does **not** touch the invoice: `invoiceRefundService` owns the negative
+ * payment row and calls this for the ledger half. Splitting it that way keeps
+ * the rule intact that this file is the only place a store-credit balance moves,
+ * without this file also deciding what a refund does to an invoice.
+ *
+ * Commission is NOT reversed here, for the same reason: whether this refund was
+ * the one that emptied the invoice is a fact about the invoice, which the caller
+ * has and this does not.
+ */
+async function refundInvoice({ userId, amount, invoiceId, invoiceNumber, note, adminId }) {
+  return post({
+    userId,
+    amount,
+    type: 'refund',
+    // Written for the customer reading their own statement, not for us.
+    note: note || `Refund for ${invoiceNumber}`,
+    invoice: invoiceId,
+    invoiceNumber,
+    createdBy: adminId,
+  });
+}
+/**
  * Spends credit against an order being placed.
  *
  * The caller passes the order total; how much credit is applied is decided here
@@ -410,7 +445,8 @@ export default {
   recharge,
   redeemForOrder,
   refundOrder,
+  refundInvoice,
   statement,
 };
 
-export { serialize, balanceOf, statement, allocate, creditReferral, recharge, refundOrder, redeemForOrder, previewForTotal };
+export { serialize, balanceOf, statement, allocate, creditReferral, recharge, refundOrder, refundInvoice, redeemForOrder, previewForTotal };

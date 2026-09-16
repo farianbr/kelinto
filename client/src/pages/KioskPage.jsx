@@ -446,11 +446,19 @@ function KioskFlow() {
   const current = steps[step];
   const total = steps.length;
 
-  // The prompt is spoken when it appears, and a confirmation instead of it
-  // while one is showing - the customer is being told something either way.
+  /**
+   * The prompt is spoken when it appears.
+   *
+   * **Confirmations are NOT spoken here.** `advance` says them itself and waits
+   * for the voice to finish before moving on, which is the whole reason it can
+   * stop cutting them off. Speaking one here too would be the same line reaching
+   * `speak` twice: the duplicate guard would swallow the second call and resolve
+   * it instantly, so `advance` would think the voice had finished before it had
+   * started - reintroducing the truncation from the other side.
+   */
   useEffect(() => {
-    if (!started || done) return;
-    speak(confirmation ?? current?.prompt);
+    if (!started || done || confirmation) return;
+    speak(current?.prompt);
   }, [started, done, confirmation, current?.prompt, speak]);
 
   useEffect(() => {
@@ -460,17 +468,27 @@ function KioskFlow() {
   /**
    * Move on, showing the confirmation first where the step has one.
    *
-   * The pause is deliberate and short: long enough to read four words, not long
-   * enough that somebody starts wondering whether it has frozen.
+   * **The pause is however long the confirmation takes to SAY**, not a fixed
+   * 1400ms. It was fixed, and a line any longer than the guess got cut off
+   * mid-word as the next screen replaced it and cancelled the voice: "Thanks,
+   * Mohamm-". Long first names and long device names did it every time.
+   *
+   * With read-aloud off, `speak` resolves immediately and the minimum below is
+   * the whole wait - which is the original behaviour, and right: a reader does
+   * not need four words held on screen for as long as a voice needs to say them.
    */
-  function advance() {
+  async function advance() {
     const message = current?.confirm?.(answers[current.key]);
     if (message) {
       setConfirmation(message);
-      setTimeout(() => {
-        setConfirmation(null);
-        setStep((value) => Math.min(value + 1, total - 1));
-      }, 1400);
+
+      // Both, not either: the voice must finish AND the words must be on screen
+      // long enough to read. Whichever is longer wins, so a silent kiosk still
+      // pauses and a slow voice is never talked over.
+      await Promise.all([speak(message), new Promise((done) => setTimeout(done, 1400))]);
+
+      setConfirmation(null);
+      setStep((value) => Math.min(value + 1, total - 1));
       return;
     }
     setStep((value) => Math.min(value + 1, total - 1));

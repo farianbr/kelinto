@@ -92,6 +92,8 @@ export function AdminSaleSettingsPage() {
       rmaSlaDays: 14,
       // Cents, not dollars: the CRA rate carries a tenth of a cent.
       travelRateCentsPerKm: 56.7,
+      // The floor the tier bonuses add to. 90 matches the schema default.
+      warrantyBaseDays: 90,
       warrantyByGrade: {},
       warrantyBonusByTier: {},
     },
@@ -111,6 +113,7 @@ export function AdminSaleSettingsPage() {
       defaultDueDays: data.financial.defaultDueDays,
       rmaSlaDays: data.operations?.rmaSlaDays ?? 14,
       travelRateCentsPerKm: data.financial?.travelRateCentsPerKm ?? 56.7,
+      warrantyBaseDays: data.financial?.warrantyBaseDays ?? 90,
       warrantyByGrade: Object.fromEntries(
         GRADE_ORDER.map((grade) => [grade, data.financial.warrantyByGrade?.[grade] ?? 0]),
       ),
@@ -151,6 +154,7 @@ export function AdminSaleSettingsPage() {
         defaultDueDays: next.financial.defaultDueDays,
         rmaSlaDays: next.operations?.rmaSlaDays ?? 14,
         travelRateCentsPerKm: next.financial?.travelRateCentsPerKm ?? 56.7,
+        warrantyBaseDays: next.financial?.warrantyBaseDays ?? 90,
         warrantyByGrade: Object.fromEntries(
           GRADE_ORDER.map((grade) => [grade, next.financial.warrantyByGrade?.[grade] ?? 0]),
         ),
@@ -360,7 +364,23 @@ export function AdminSaleSettingsPage() {
           title="Warranty bonus by membership tier"
           description="Extra days a tier adds on top of the grade above. Standard is the baseline, so it is zero."
         >
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {/* The floor, above the bonuses that add to it - the arithmetic reads
+              top to bottom, which is the order the footnote below explains it in.
+              It is what a REPAIR is covered for; the grade table above is what a
+              PART is covered for, and a repair invoice makes both promises. */}
+          <Input
+            type="number"
+            min="0"
+            max="3650"
+            suffix="days"
+            label="Base warranty on a repair"
+            hint="What every repair carries before any tier bonus. Printed on the ticket and in the warranty email."
+            containerClassName="sm:max-w-64"
+            error={errors.warrantyBaseDays?.message}
+            {...register('warrantyBaseDays')}
+          />
+
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {MEMBERSHIP_TIERS.map((tier) => (
               <Input
                 key={tier.value}

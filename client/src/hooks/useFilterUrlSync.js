@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router';
-import { useFilterStore, toQueryParams } from '@/store/filterStore';
+import { useFilterStore, toSearchParams } from '@/store/filterStore';
 
 /**
  * Mirrors the filter store into the URL, and hydrates it from the URL on mount.
@@ -76,21 +76,28 @@ export function useFilterUrlSync() {
 
   // ---- store -> URL, on every change -------------------------------------
   useEffect(() => {
-    return useFilterStore.subscribe((state) => {
-      if (!hydrated.current) return;
+    /**
+     * Stops this writing the URL of a page it no longer belongs to.
+     *
+     * **This trapped the reader on /shop.** React runs an arriving page's layout
+     * effects BEFORE the leaving page's cleanup, so a layout effect on the
+     * homepage that cleared the store fired while this subscription was still
+     * attached. `setSearchParams` by then addressed the route just navigated TO,
+     * writing catalogue parameters onto `/` - and `HomeOrShop` forwards any `/`
+     * carrying one straight back to `/shop`. Home became unreachable from the
+     * shop.
+     *
+     * The unsubscribe below was already correct; the window is the ordering, not
+     * a leak. A flag closes it, because a store change arriving in that window
+     * is by definition not about this page any more.
+     */
+    let live = true;
 
-      const params = toQueryParams(state);
-      const next = new URLSearchParams();
+    const unsubscribe = useFilterStore.subscribe((state) => {
+      if (!live || !hydrated.current) return;
 
-      for (const [key, value] of Object.entries(params)) {
-        if (value === null || value === undefined || value === '') continue;
-        if (Array.isArray(value)) {
-          if (value.length) next.set(key, value.join(','));
-        } else {
-          next.set(key, String(value));
-        }
-      }
-
+      // Shared with the homepage, which builds its `/shop` link the same way.
+      const next = toSearchParams(state);
       const serialised = next.toString();
       // Remember what we are about to write, so the hydrating effect above
       // recognises the resulting `searchParams` change as our own.
@@ -99,6 +106,56 @@ export function useFilterUrlSync() {
       // replace: filtering should not stack fifty history entries.
       setSearchParams(next, { replace: true });
     });
+
+    return () => {
+      live = false;
+      unsubscribe();
+
+      /**
+       * The filter dies with the page that owned it.
+       *
+       * The store is a module singleton, so without this it survives into
+       * every later screen - and the homepage's part finder opened with all
+       * five steps already answered from the last visit to the shop, a
+       * section headed "Find your part" with nothing left to ask.
+       *
+       * **It is cleared HERE rather than on the homepage**, and the ordering is
+       * the whole reason. React runs an arriving page's layout effects before
+       * the leaving page's cleanup, so a reset on the homepage fired while this
+       * subscription was still attached: `setSearchParams` then addressed the
+       * route just navigated TO, writing catalogue parameters onto `/`, and
+       * `HomeOrShop` forwards any `/` carrying one straight back to `/shop`.
+       * Home became unreachable from the shop. Clearing after `unsubscribe()`
+       * means nothing is listening when it happens.
+       *
+       * Nothing is lost on a return trip: the hydrating effect above re-reads
+       * the whole filter from the URL on every mount, so Back into
+       * `/shop?deviceType=…` restores exactly what the link says.
+       */
+      useFilterStore.getState().resetAll();
+
+      /**
+       * **Cleared WITH the store, or the next mount reads a filter that is gone.**
+       *
+       * These two refs are what tells one of our own URL writes apart from a
+       * real navigation, and they are only meaningful while the store still
+       * holds what they describe. `resetAll()` above has just emptied it, so
+       * leaving them set says "the store already holds this query string" about
+       * a store that holds nothing.
+       *
+       * StrictMode is where that became a bug rather than a theory: it mounts,
+       * unmounts and remounts every effect, so the reset fires BETWEEN two
+       * mounts of the same page. The second mount then found `hydrated` true and
+       * `lastWritten` equal to the URL it was about to hydrate from, took the
+       * early return, and left the store empty - `/shop?deviceType=…` rendered
+       * the whole catalogue with no chips, and so did every shared filter link.
+       *
+       * The same window exists without StrictMode on any remount at the same
+       * URL, which is exactly what the wizard's "see parts" navigation is.
+       */
+      hydrated.current = false;
+      lastWritten.current = null;
+    };
   }, [setSearchParams]);
 }
 

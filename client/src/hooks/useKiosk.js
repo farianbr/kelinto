@@ -105,25 +105,92 @@ export function useSpeech(enabled) {
     [],
   );
 
+  /**
+   * Speak a line, and resolve when it has actually finished.
+   *
+   * **The promise is what stops the kiosk cutting itself off.** A screen that
+   * advances on a fixed timer talks over its own confirmation the moment the
+   * line is longer than the timer guessed - which is every long device name, and
+   * every sentence on a slower voice. The caller awaits this instead of
+   * guessing.
+   *
+   * It resolves rather than rejects on every failure path - unsupported, muted,
+   * throwing, or never firing an event - because the flow must carry on either
+   * way. A customer is never blocked by a voice that did not work.
+   */
   const speak = useCallback(
-    (text) => {
-      if (!enabled || !supported || !text) return;
-      // The same screen re-rendering must not restart the sentence.
-      if (lastSpoken.current === text) return;
-      lastSpoken.current = text;
+    (text) =>
+      new Promise((resolve) => {
+        if (!enabled || !supported || !text) {
+          resolve();
+          return;
+        }
+        /**
+         * The same screen re-rendering must not restart the sentence.
+         *
+         * Guarded on "still speaking this line", not "ever spoke this line".
+         * Remembering it forever means a customer who goes BACK a step hears
+         * nothing, because the prompt they are returning to was already said
+         * once - and several prompts legitimately repeat across a check-in.
+         *
+         * Resolved rather than left hanging: the line is already in flight, and
+         * a caller awaiting a duplicate would wait for an utterance that will
+         * never fire a second `end`.
+         */
+        const speaking = (() => {
+          try {
+            return window.speechSynthesis.speaking || window.speechSynthesis.pending;
+          } catch {
+            return false;
+          }
+        })();
 
-      try {
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(text);
-        // Slightly under default: a customer hearing a question for the first
-        // time is not skimming it.
-        utterance.rate = 0.95;
-        utterance.pitch = 1;
-        window.speechSynthesis.speak(utterance);
-      } catch {
-        // Swallowed on purpose - see the note above.
-      }
-    },
+        if (lastSpoken.current === text && speaking) {
+          resolve();
+          return;
+        }
+        lastSpoken.current = text;
+
+        try {
+          window.speechSynthesis.cancel();
+          const utterance = new SpeechSynthesisUtterance(text);
+          // Slightly under default: a customer hearing a question for the first
+          // time is not skimming it.
+          utterance.rate = 0.95;
+          utterance.pitch = 1;
+
+          /**
+           * Resolved once, whichever of the three arrives first.
+           *
+           * `end` is the normal path and `error` covers a voice that refuses to
+           * start. The timeout is the one that matters in practice: several
+           * browsers simply never fire either event if the utterance is cancelled
+           * mid-flight or the tab loses focus, and without it the kiosk would
+           * sit on one question forever waiting for a promise nobody will settle.
+           *
+           * Budgeted from the text rather than fixed, because the whole bug being
+           * fixed here was a fixed number guessing wrong: ~12 characters a second
+           * at rate 0.95, doubled for headroom, with a floor for short lines.
+           */
+          let settled = false;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            resolve();
+          };
+
+          const budget = Math.max(2500, Math.round((text.length / 12) * 1000 * 2));
+          const timer = setTimeout(finish, budget);
+
+          utterance.onend = finish;
+          utterance.onerror = finish;
+          window.speechSynthesis.speak(utterance);
+        } catch {
+          // Swallowed on purpose - see the note above.
+          resolve();
+        }
+      }),
     [enabled, supported],
   );
 

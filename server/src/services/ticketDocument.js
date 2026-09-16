@@ -1,6 +1,7 @@
 import { paletteFor, migrateColorToken } from '../../../shared/businessPalette.js';
 import { TICKET_STATUS_LABELS } from '../../../shared/schemas/admin.js';
 import SettingsModel from '../models/Settings.js';
+import { warrantyTerms, unlessDefault } from './warrantyTerms.js';
 
 /**
  * The two pieces of paper a repair counter prints (Sales § Ticket).
@@ -65,22 +66,13 @@ function brandOf(business) {
 }
 
 /**
- * A settings value, unless it is still the schema's untouched default.
+ * `unlessDefault` and the warranty ladder both live in `warrantyTerms.js`.
  *
- * `Settings.business` defaults to Cellvix's own details, and a business nobody
- * has filled that section in for still carries them - CellShoppe does. Printing
- * a default phone number on a repair shop's ticket is worse than printing none,
- * because a customer will ring it and reach the wrong company.
- *
- * The defaults are read off the schema rather than copied as literals, so
- * changing one there cannot leave this comparing against a string that no
- * longer exists.
+ * The warranty email states the same promise this sheet prints, so the ladder
+ * and the "is that still Cellvix's placeholder phone number" guard are
+ * computed in one place. Two copies would let a customer be handed a sheet
+ * saying 120 days and an email saying 90.
  */
-function unlessDefault(value, field) {
-  if (!value) return null;
-  const fallback = SettingsModel?.schema?.path(`business.${field}`)?.defaultValue;
-  return value === fallback ? null : value;
-}
 
 /**
  * The label sizes a repair shop actually owns.
@@ -95,21 +87,6 @@ const LABEL_SIZES = [
   { value: '62x100', label: '62 × 100 mm', width: '62mm', height: '100mm' },
 ];
 
-/**
- * The membership ladder the warranty table prints.
- *
- * `standard` is deliberately absent: it is the baseline every repair already
- * carries, so a row saying "Standard, 90 days" beside "Silver, 120 days" makes
- * the table look like an upsell rather than a record of what was promised. A
- * standard customer sees the three tiers above them and no row marked as theirs,
- * which is the honest version - they are on the base cover the copy above
- * already states.
- */
-const TIERS = [
-  { key: 'silver', label: 'Silver' },
-  { key: 'gold', label: 'Gold' },
-  { key: 'platinum', label: 'Platinum' },
-];
 
 /**
  * The job label.
@@ -483,21 +460,10 @@ function renderTicketHtml({ ticket, business, settings, customerTier, nonce = ''
    *
    * Base days plus the tier bonus, so the table prints what this business
    * actually promises rather than numbers written into a template. A shop that
-   * changes its bonus in Settings changes every ticket printed afterwards.
+   * changes its bonus in Settings changes every ticket printed afterwards -
+   * and changes the warranty email with it, which reads the same function.
    */
-  const baseDays = Number(settings?.financial?.warrantyBaseDays ?? 90);
-  const bonuses = settings?.financial?.warrantyBonusByTier ?? {};
-  const bonusOf = (key) =>
-    Number(bonuses instanceof Map ? bonuses.get(key) : bonuses?.[key]) || 0;
-
-  const tiers = TIERS.map((tier) => ({
-    key: tier.key,
-    label: tier.label,
-    days: baseDays + bonusOf(tier.key),
-    isCustomer: (customerTier ?? 'standard') === tier.key,
-  }));
-
-  const review = settings?.business?.reviewUrl || null;
+  const { tiers, review } = warrantyTerms(settings, customerTier);
 
   return `<!doctype html>
 <html lang="en-CA">

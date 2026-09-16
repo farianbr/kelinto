@@ -271,4 +271,32 @@ export function toQueryParams(state) {
   };
 }
 
+/**
+ * The filter state as a query string.
+ *
+ * **One serialiser, two callers**, and they must not drift: `useFilterUrlSync`
+ * writes the URL with it while the Shop page is open, and the homepage builds
+ * the link it navigates to with it. A second copy that spelled one facet
+ * differently would produce a URL the hook then re-hydrates into a DIFFERENT
+ * filter - and because that hook treats the URL as the whole state, the
+ * difference would not be a missing filter but a silently wrong one.
+ *
+ * Empty string is dropped alongside null: an absent value and a blank one mean
+ * the same thing to every facet here, and `?q=` in a shared link is noise.
+ */
+export function toSearchParams(state) {
+  const params = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(toQueryParams(state))) {
+    if (value === null || value === undefined || value === '') continue;
+    if (Array.isArray(value)) {
+      if (value.length) params.set(key, value.join(','));
+      continue;
+    }
+    params.set(key, String(value));
+  }
+
+  return params;
+}
+
 export default useFilterStore;

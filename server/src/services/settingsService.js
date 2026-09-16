@@ -134,6 +134,11 @@ async function get() {
        * A read shape that whitelists fields has to default each one it adds.
        */
       travelRateCentsPerKm: doc.financial?.travelRateCentsPerKm ?? 56.7,
+
+      // Same reason as the rate above: the schema default never ran for a
+      // settings document that already existed, so the warranty sheet read it
+      // as undefined and silently fell back to a literal 90.
+      warrantyBaseDays: doc.financial?.warrantyBaseDays ?? 90,
     },
     inventory: {
       defaultMarkupPercent: doc.inventory?.defaultMarkupPercent ?? 40,
@@ -186,6 +191,7 @@ async function updateBusiness(input) {
     'business.email': input.email ?? '',
     'business.website': input.website ?? '',
     'business.taxNumber': input.taxNumber ?? '',
+    'business.reviewUrl': input.reviewUrl ?? '',
     'business.address': input.address,
   });
 }
@@ -266,6 +272,9 @@ async function updateSale(input) {
     ...(input.travelRateCentsPerKm === undefined
       ? {}
       : { 'financial.travelRateCentsPerKm': input.travelRateCentsPerKm }),
+    ...(input.warrantyBaseDays === undefined
+      ? {}
+      : { 'financial.warrantyBaseDays': input.warrantyBaseDays }),
   });
 }
 

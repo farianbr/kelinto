@@ -1911,6 +1911,20 @@ const ticketUpdateSchema = ticketSchema
 const ticketStatusSchema = z.object({
   status: z.enum(TICKET_STATUSES),
   note: z.string().trim().max(300).optional(),
+
+  /**
+   * Which channels the staff member allowed for this one move.
+   *
+   * **A permission list, not a send list.** The customer is messaged on the ONE
+   * channel they chose (`User.preferredContact`); this says which channels are
+   * allowed to carry it. So unticking SMS means "do not text them this time",
+   * and unticking everything means "change the status silently" - which is the
+   * case the confirmation exists to make possible.
+   *
+   * Absent means all of them, so an older client, a script or the bulk path
+   * keeps the behaviour it had before this field existed.
+   */
+  channels: z.array(z.enum(['email', 'sms', 'whatsapp', 'call'])).optional(),
 });
 
 // ---- phase 8: businesses, roles and staff --------------------------------------
@@ -2164,6 +2178,16 @@ const businessInfoSchema = z.object({
   email: z.string().trim().email('Enter a valid email address.').optional().or(z.literal('')),
   website: z.string().trim().url('Enter a valid URL.').optional().or(z.literal('')),
   taxNumber: z.string().trim().max(40).optional().or(z.literal('')),
+
+  /**
+   * Where a happy customer is sent to leave a review.
+   *
+   * A real URL or nothing. Validated rather than free text because it is
+   * printed as a link on the warranty sheet and mailed as a button: a typo
+   * here is a dead end the shop never sees, since the customer who hits it
+   * has no reason to report it.
+   */
+  reviewUrl: z.string().trim().url('Enter a valid URL.').optional().or(z.literal('')),
   address: z.object({
     line1: z.string().trim().max(160).optional().or(z.literal('')),
     line2: z.string().trim().max(160).optional().or(z.literal('')),
@@ -2242,6 +2266,20 @@ const saleSettingsSchema = z.object({
     .number()
     .min(0, 'A rate cannot be negative.')
     .max(1000, 'That is more than $10 a kilometre.')
+    .optional(),
+
+  /**
+   * The warranty every repair carries before any tier bonus, in days.
+   *
+   * The floor the bonus table adds to, which is why it sits beside it here.
+   * Optional so an older payload cannot write undefined over a figure a shop
+   * has already set.
+   */
+  warrantyBaseDays: z.coerce
+    .number()
+    .int()
+    .min(0, 'A warranty cannot be negative.')
+    .max(3650, 'Use 3650 days or fewer.')
     .optional(),
 });
 
@@ -2471,6 +2509,92 @@ const invoiceStatusRuleSchema = z.object({
   subject: z.string().trim().max(200).optional(),
   message: z.string().trim().min(1, 'Write the message.').max(5000),
   isActive: z.boolean().default(false),
+});
+
+
+/**
+ * The semantic palette an admin-authored label picks from (§2b).
+ *
+ * **A meaning, not a colour.** These are the same six the expense categories
+ * offer, and the reason they are an enum rather than free text is that a hex
+ * typed into a form is how a screen ends up off-brand - and nothing about a
+ * colour input guarantees the text on it stays readable.
+ */
+const LABEL_COLOR_TOKENS = ['ink', 'brand', 'info', 'ok', 'warn', 'danger'];
+
+const LABEL_COLOR_OPTIONS = [
+  { value: 'ink', label: 'Neutral' },
+  { value: 'brand', label: 'Brand' },
+  { value: 'info', label: 'Info' },
+  { value: 'ok', label: 'Positive' },
+  { value: 'warn', label: 'Warning' },
+  { value: 'danger', label: 'Critical' },
+];
+
+/**
+ * One entry on the manual invoice status list (Sales § Invoice).
+ *
+ * **`sendsWarrantyEmail` is the field to be careful with.** Ticking it arms an
+ * automatic email to a customer the first time this label lands on a paid
+ * invoice, so the form has to say so plainly and the route needs `full` on
+ * settings rather than on sales. Defaults to false: a label that mails somebody
+ * the moment it is picked from a menu is a side effect nobody asked for.
+ */
+const invoiceLabelSchema = z.object({
+  name: z.string().trim().min(1, 'Name this status.').max(60),
+  colorToken: z.enum(LABEL_COLOR_TOKENS).default('ink'),
+  sendsWarrantyEmail: z.boolean().default(false),
+  isActive: z.boolean().default(true),
+  order: z.coerce.number().int().min(0).max(999).default(0),
+});
+
+/**
+ * Setting the manual status on one invoice, or clearing it.
+ *
+ * `null` clears - and it is `nullable()` rather than `optional()` on purpose:
+ * an absent key would be indistinguishable from a form that forgot to send the
+ * field, whereas an explicit null is somebody choosing "no status".
+ */
+const invoiceLabelSetSchema = z.object({
+  // Length-checked rather than pattern-matched, matching how every other id
+  // field here is written; `invoiceLabelService` is what answers 404 for an id
+  // that is well-formed but names nothing.
+  labelId: z.string().trim().length(24).nullable().or(z.literal('')),
+});
+
+
+/**
+ * Refunding money off an invoice (Sales § Invoice).
+ *
+ * **Cents, not dollars, and the client does not decide the cap.** The form
+ * shows what is left to refund so a staff member can see it, but
+ * `invoiceRefundService` reads the invoice's own payment rows and refuses
+ * anything larger - a browser that could name the amount is a browser that
+ * could name a larger one.
+ *
+ * `toStoreCredit` is the choice that changes what gets written, so it is
+ * required rather than defaulted: "keep the money and owe them goods" and "hand
+ * the cash back" are different promises to the customer, and a default would
+ * make one of them happen by accident.
+ */
+const invoiceRefundSchema = z.object({
+  amountCents: cents.refine((value) => value > 0, 'Enter an amount to refund.'),
+  toStoreCredit: z.boolean(),
+  // How the cash went back. Meaningless on a store-credit refund, which records
+  // its own method, so it is optional either way.
+  method: z.string().trim().max(40).optional().or(z.literal('')),
+  reason: z.string().trim().max(240).optional().or(z.literal('')),
+});
+
+/**
+ * Chasing an unpaid invoice.
+ *
+ * The note is optional and free text because a chase is a human message - "as
+ * discussed on the phone", "before the end of the month" - and the alternative
+ * is a fixed sentence that fits nobody.
+ */
+const invoiceRemindSchema = z.object({
+  note: z.string().trim().max(500).optional().or(z.literal('')),
 });
 
 // ---- phase 11e: email settings ----------------------------------------------
@@ -2856,4 +2980,4 @@ const serviceQuoteConvertSchema = z.object({
   priority: z.enum(TICKET_PRIORITIES).default('normal'),
 });
 
-export { quoteToTicketSchema, ticketDepositSchema, ticketConvertSchema, TAX_RATES, INVOICE_SERVICE_TYPES, SERVICE_INVOICE_TYPES, ORDER_OPEN_STATUSES, ORDER_UNFULFILLED_STATUSES, approveUserSchema, rejectUserSchema, creditSchema, clientSchema, clientFormSchema, clientCreateFormSchema, clientUpdateSchema, CONSENT_CHANNELS, PREFERRED_CONTACT_OPTIONS, CUSTOMER_SOURCE_OPTIONS, contactConsentSchema, MEMBERSHIP_TIERS, tierSchema, internalNoteSchema, storeCreditSchema, refundSchema, userStatusSchema, productSchema, ORDER_STATUS_FLOW, orderStatusSchema, CARRIERS, ADMIN_NAV, ADMIN_LEGACY_REDIRECTS, invoicePaymentSchema, invoiceTipSchema, invoiceVoidSchema, webQuoteStatusSchema, creditPaymentSchema, invoiceUpdateSchema, bulkOrderStatusSchema, supplierSchema, purchaseOrderSchema, purchaseOrderStatusSchema, purchaseReceiveSchema, purchasePaymentSchema, purchaseInviteSchema, purchaseSendSchema, purchaseNegotiateSchema, purchaseConfirmSchema, proformaRevisionSchema, supplierQuoteSchema, supplierDeclineSchema, supplierProformaSchema, supplierDeliverySchema, superAdminLoginSchema, tenantSchema, tenantSlotsSchema, superAdminBusinessSchema, businessAssignSchema, businessFeatureSchema, impersonationSchema, tenantOwnerSchema, supportMessageSchema, planSchema, planFeatureSchema, businessStatusSchema, supplierLoginSchema, supplierForgotSchema, supplierResetSchema, supplierPasswordSchema, expenseSchema, expenseCategorySchema, stockAdjustSchema, productOpsSchema, quoteSchema, quoteStatusSchema, quoteConvertSchema, adminOrderSchema, adminInvoiceSchema, RMA_ITEM_DISPOSITIONS, rmaSchema, TICKET_STATUSES, TICKET_PRIORITIES, TICKET_SOURCES, TICKET_STATUS_LABELS, CONDITION_GRADES, CONDITION_PARTS, ticketSchema, ticketDeviceSchema, ticketLineSchema, ticketUpdateSchema, ticketStatusSchema, rmaStatusSchema, rmaInspectSchema, rmaResolveSchema, PERMISSION_AREAS, PERMISSION_LEVELS, PERMISSION_LEVEL_LABELS, BUSINESS_STATUSES, BUSINESS_COLOR_TOKENS, businessSchema, roleSchema, staffUserSchema, staffUserUpdateSchema, MESSAGE_CHANNELS, TEMPLATE_DOCUMENTS, CAMPAIGN_AUDIENCES, CAMPAIGN_AUDIENCE_LABELS, messageSchema, callLogSchema, messageTemplateSchema, campaignSchema, unsubscribeSchema, referralRateSchema, businessInfoSchema, saleSettingsSchema, shippingSettingsSchema, paymentMethodsSettingsSchema, inventorySettingsSchema, agreementTemplateSchema, agreementSignSchema, providerCredentialSchema, taxonomyNodeSchema, invoiceStatusRuleSchema, communicationsSettingsSchema, SUPPLIER_RETURN_REASON_VALUES, supplierReturnSchema, supplierReturnStatusSchema, supplierCreditSchema, SUPPLIER_BILLING_CYCLES, supplierServiceSchema, supplierServiceUpdateSchema, supplierChargeSchema, SERVICE_CATEGORIES, SERVICE_CATEGORY_LABELS, serviceCatalogSchema, serviceCatalogUpdateSchema, DEVICE_KINDS, DEVICE_KIND_LABELS, deviceCatalogSchema, deviceCatalogUpdateSchema, kioskCheckInSchema, kioskUnlockSchema, kioskPinSchema, SERVICE_QUOTE_STATUSES, SERVICE_QUOTE_SOURCES, SERVICE_QUOTE_STATUS_LABELS, serviceQuoteLineSchema, serviceQuoteDeviceSchema, serviceQuoteSchema, serviceQuoteUpdateSchema, serviceQuoteStatusSchema, serviceQuoteConvertSchema };
+export { quoteToTicketSchema, ticketDepositSchema, ticketConvertSchema, TAX_RATES, INVOICE_SERVICE_TYPES, SERVICE_INVOICE_TYPES, ORDER_OPEN_STATUSES, ORDER_UNFULFILLED_STATUSES, approveUserSchema, rejectUserSchema, creditSchema, clientSchema, clientFormSchema, clientCreateFormSchema, clientUpdateSchema, CONSENT_CHANNELS, PREFERRED_CONTACT_OPTIONS, CUSTOMER_SOURCE_OPTIONS, contactConsentSchema, MEMBERSHIP_TIERS, tierSchema, internalNoteSchema, storeCreditSchema, refundSchema, userStatusSchema, productSchema, ORDER_STATUS_FLOW, orderStatusSchema, CARRIERS, ADMIN_NAV, ADMIN_LEGACY_REDIRECTS, invoicePaymentSchema, invoiceTipSchema, invoiceVoidSchema, webQuoteStatusSchema, creditPaymentSchema, invoiceUpdateSchema, bulkOrderStatusSchema, supplierSchema, purchaseOrderSchema, purchaseOrderStatusSchema, purchaseReceiveSchema, purchasePaymentSchema, purchaseInviteSchema, purchaseSendSchema, purchaseNegotiateSchema, purchaseConfirmSchema, proformaRevisionSchema, supplierQuoteSchema, supplierDeclineSchema, supplierProformaSchema, supplierDeliverySchema, superAdminLoginSchema, tenantSchema, tenantSlotsSchema, superAdminBusinessSchema, businessAssignSchema, businessFeatureSchema, impersonationSchema, tenantOwnerSchema, supportMessageSchema, planSchema, planFeatureSchema, businessStatusSchema, supplierLoginSchema, supplierForgotSchema, supplierResetSchema, supplierPasswordSchema, expenseSchema, expenseCategorySchema, stockAdjustSchema, productOpsSchema, quoteSchema, quoteStatusSchema, quoteConvertSchema, adminOrderSchema, adminInvoiceSchema, RMA_ITEM_DISPOSITIONS, rmaSchema, TICKET_STATUSES, TICKET_PRIORITIES, TICKET_SOURCES, TICKET_STATUS_LABELS, CONDITION_GRADES, CONDITION_PARTS, ticketSchema, ticketDeviceSchema, ticketLineSchema, ticketUpdateSchema, ticketStatusSchema, rmaStatusSchema, rmaInspectSchema, rmaResolveSchema, PERMISSION_AREAS, PERMISSION_LEVELS, PERMISSION_LEVEL_LABELS, BUSINESS_STATUSES, BUSINESS_COLOR_TOKENS, businessSchema, roleSchema, staffUserSchema, staffUserUpdateSchema, MESSAGE_CHANNELS, TEMPLATE_DOCUMENTS, CAMPAIGN_AUDIENCES, CAMPAIGN_AUDIENCE_LABELS, messageSchema, callLogSchema, messageTemplateSchema, campaignSchema, unsubscribeSchema, referralRateSchema, businessInfoSchema, saleSettingsSchema, shippingSettingsSchema, paymentMethodsSettingsSchema, inventorySettingsSchema, agreementTemplateSchema, agreementSignSchema, providerCredentialSchema, taxonomyNodeSchema, invoiceStatusRuleSchema, LABEL_COLOR_TOKENS, LABEL_COLOR_OPTIONS, invoiceLabelSchema, invoiceLabelSetSchema, invoiceRefundSchema, invoiceRemindSchema, communicationsSettingsSchema, SUPPLIER_RETURN_REASON_VALUES, supplierReturnSchema, supplierReturnStatusSchema, supplierCreditSchema, SUPPLIER_BILLING_CYCLES, supplierServiceSchema, supplierServiceUpdateSchema, supplierChargeSchema, SERVICE_CATEGORIES, SERVICE_CATEGORY_LABELS, serviceCatalogSchema, serviceCatalogUpdateSchema, DEVICE_KINDS, DEVICE_KIND_LABELS, deviceCatalogSchema, deviceCatalogUpdateSchema, kioskCheckInSchema, kioskUnlockSchema, kioskPinSchema, SERVICE_QUOTE_STATUSES, SERVICE_QUOTE_SOURCES, SERVICE_QUOTE_STATUS_LABELS, serviceQuoteLineSchema, serviceQuoteDeviceSchema, serviceQuoteSchema, serviceQuoteUpdateSchema, serviceQuoteStatusSchema, serviceQuoteConvertSchema };

@@ -61,6 +61,18 @@ const creditTransactionSchema = new mongoose.Schema(
     order: { type: mongoose.Schema.Types.ObjectId, ref: 'Order' },
     orderNumber: String,
 
+    /**
+     * Set when the movement belongs to an INVOICE rather than an order.
+     *
+     * A repair invoice has no order behind it, so `orderNumber` above cannot
+     * describe a refund against one - a statement row reading only "Refund"
+     * with nothing to trace it to is the thing this prevents. Both fields
+     * exist because an invoice raised from an order can be refunded either
+     * way round, and the row should say which document the money came off.
+     */
+    invoice: { type: mongoose.Schema.Types.ObjectId, ref: 'Invoice' },
+    invoiceNumber: String,
+
     // Who made it happen. Absent for buyer-initiated top-ups and redemptions.
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 

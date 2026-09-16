@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import useDocumentTitle from '@/hooks/useDocumentTitle';
-import { Link, useNavigate, useParams } from 'react-router';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useForm } from 'react-hook-form';
 import {
   AlertCircle,
@@ -15,7 +15,10 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
+  BellRing,
   Printer,
+  RotateCcw,
+  Tag,
   Trash2,
   Undo2,
   Wallet,
@@ -29,6 +32,9 @@ import Modal from '@/components/ui/Modal';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Input from '@/components/ui/Input';
 import SelectField from '@/components/ui/SelectField';
+import Checkbox from '@/components/ui/Checkbox';
+import Textarea from '@/components/ui/Textarea';
+import SelectMenu from '@/components/ui/SelectMenu';
 import ActionMenu from '@/components/ui/ActionMenu';
 import ProcessStrip from '@/components/admin/ProcessStrip';
 import WorkflowLineage from '@/components/admin/WorkflowLineage';
@@ -37,7 +43,12 @@ import { toast } from '@/store/toastStore';
 import PageHeader from '@/components/admin/PageHeader';
 import { ADMIN_ROUTES } from '@/lib/adminRoutes';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
-import { useAdminInvoice, useAdminMutations, useAuditLog } from '@/hooks/useAdmin';
+import {
+  useAdminInvoice,
+  useAdminInvoiceLabels,
+  useAdminMutations,
+  useAuditLog,
+} from '@/hooks/useAdmin';
 import { apiUrl } from '@/lib/api';
 import { money, date, dateTime } from '@/lib/format';
 import { pressable } from '@/lib/motion';
@@ -61,6 +72,21 @@ const STATUS_TONE = {
   unpaid: 'neutral',
   overdue: 'danger',
   void: 'neutral',
+};
+
+/**
+ * The manual status pill, in the token the admin picked for it.
+ *
+ * Separate from `STATUS_TONE` above on purpose: that is payment state, which
+ * the shop does not colour. These are the shop's own words.
+ */
+const LABEL_PILL = {
+  ink: 'bg-surface-2 text-ink-600',
+  brand: 'bg-brand-50 text-brand-700',
+  info: 'bg-info-50 text-info',
+  ok: 'bg-ok-50 text-ok',
+  warn: 'bg-warn-50 text-warn',
+  danger: 'bg-danger-50 text-danger',
 };
 
 /** How a payment arrived. Matches the methods the Invoices list records. */
@@ -116,12 +142,52 @@ export function AdminInvoiceDetailPage() {
     reverseInvoicePayment,
     updateInvoice,
     deleteInvoice,
+    setInvoiceLabel,
+    refundInvoice,
+    remindInvoice,
   } = useAdminMutations();
+
+  // Active only - a retired status must not be offered back onto an invoice.
+  const { data: labelData } = useAdminInvoiceLabels();
+  const labels = labelData?.labels ?? [];
 
   const [paying, setPaying] = useState(false);
   const [tipping, setTipping] = useState(false);
   const [editing, setEditing] = useState(false);
   const [voiding, setVoiding] = useState(false);
+
+  /**
+   * `?refund=1` opens the refund form on arrival.
+   *
+   * The Invoices list offers Refund in its row menu but does not carry the form:
+   * a refund needs an amount, a destination and a reason, so the list sends the
+   * staff member here rather than keeping a second copy of it. Read in the
+   * initialiser so the form is open on the first paint - arriving to a closed
+   * page that pops open a frame later reads as a glitch, which is why
+   * `useCreateParam` does the same for `?new=1`.
+   */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [reminding, setReminding] = useState(false);
+
+  /**
+   * The status change waiting to be confirmed.
+   *
+   * `statusMove` is the chosen label, or null for "no status" - which is why the
+   * open flag is separate: null is a legitimate destination, so it cannot double
+   * as "nothing pending".
+   */
+  const [pickingStatus, setPickingStatus] = useState(false);
+  const [statusMove, setStatusMove] = useState(null);
+  const [refunding, setRefunding] = useState(() => searchParams.get('refund') === '1');
+
+  // Stripped once it has been acted on, so a refresh or a shared link does not
+  // reopen a form for a refund that has already been made.
+  useEffect(() => {
+    if (searchParams.get('refund') !== '1') return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('refund');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
   const [deleting, setDeleting] = useState(false);
   // Emailing goes out to a real customer, so it is confirmed first - the
   // outcome then arrives as a toast rather than a banner this page has to find
@@ -165,10 +231,63 @@ export function AdminInvoiceDetailPage() {
         icon={ADMIN_PAGE.icon}
         title={invoice.number}
         description={`Issued ${date(invoice.issuedAt)} to ${account}.`}
+        // Two badges plus a picker, so they go under the title rather than
+        // trailing off the end of it.
+        badgesBelow
         badge={
-          <Badge tone={STATUS_TONE[invoice.status] ?? 'neutral'} size="sm">
-            {invoice.status}
-          </Badge>
+          <>
+            <Badge tone={STATUS_TONE[invoice.status] ?? 'neutral'} size="sm">
+              {invoice.status}
+            </Badge>
+
+            {/* The status, pickable from the badge row as well as from the
+                three-dot menu - one is where it is READ, the other where
+                somebody goes looking for what they can do to an invoice. Both
+                stage the same confirmation rather than firing: one of these
+                statuses emails the customer, so a stray click on a pill must
+                not send it.
+
+                Hidden entirely when the shop has not made a list - an empty
+                picker is a dead control. */}
+            {labels.length > 0 && (
+              <SelectMenu
+                srLabel={`Manual status for ${invoice.number}`}
+                value={invoice.label?.id ?? ''}
+                options={[
+                  { value: '', label: 'No status' },
+                  ...labels.map((label) => ({
+                    value: label.id,
+                    label: label.sendsWarrantyEmail ? `${label.name} (emails)` : label.name,
+                  })),
+                ]}
+                align="left"
+                buttonClassName={cn(
+                  'h-6 w-auto gap-1 rounded-full border-0 px-2.5 text-xs font-semibold',
+                  'hover:border-0 focus:border-0 focus:ring-1',
+                  invoice.label
+                    ? (LABEL_PILL[invoice.label.colorToken] ?? LABEL_PILL.ink)
+                    : 'bg-surface-2 text-ink-400',
+                )}
+                menuTitle="Set the manual status"
+                menuFootnote={
+                  <>
+                    <Tag className="mt-px size-3 shrink-0" strokeWidth={2} aria-hidden="true" />
+                    <span>
+                      {invoice.labelEmailSentAt
+                        ? `The warranty email went out on ${date(invoice.labelEmailSentAt)}, so it will not send again.`
+                        : 'A status marked “emails” sends the warranty and review email once, and only on a paid invoice.'}
+                    </span>
+                  </>
+                }
+                onChange={(next) => {
+                  const current = invoice.label?.id ?? '';
+                  if (next === current) return;
+                  setStatusMove(labels.find((entry) => entry.id === next) ?? null);
+                  setPickingStatus(true);
+                }}
+              />
+            )}
+          </>
         }
         action={
           <div className="flex flex-wrap items-center gap-2">
@@ -213,13 +332,41 @@ export function AdminInvoiceDetailPage() {
                   onSelect: () => setPaying(true),
                 },
                 {
-                  key: 'tip',
-                  // Not disabled when settled, unlike a payment: a tip is
-                  // usually given at the moment the customer pays, which is the
-                  // moment the invoice becomes settled.
-                  label: invoice.tipCents > 0 ? 'Edit tip' : 'Record a tip',
-                  icon: HandCoins,
-                  onSelect: () => setTipping(true),
+                  /**
+                   * Where the invoice has got to with the customer.
+                   *
+                   * In the menu as well as on the badge row, because that is
+                   * where somebody goes looking for "what can I do to this
+                   * invoice" - a pill under the title reads as a label to be
+                   * read, not a control to be used, and a staff member who has
+                   * not been shown it will not try clicking it.
+                   */
+                  key: 'status',
+                  label: 'Set status',
+                  icon: Tag,
+                  // Nothing to pick from until the shop has made a list.
+                  disabled: labels.length === 0,
+                  onSelect: () => setPickingStatus(true),
+                },
+                {
+                  key: 'remind',
+                  label: 'Send reminder',
+                  icon: BellRing,
+                  // Nothing owed, nothing to chase. The server refuses it too;
+                  // disabling here means the staff member is not offered a button
+                  // that asks a paid-up customer for money.
+                  disabled: settled,
+                  onSelect: () => setReminding(true),
+                },
+                {
+                  key: 'refund',
+                  label: 'Refund',
+                  icon: RotateCcw,
+                  // Nothing received means nothing to give back. Disabled rather
+                  // than hidden, so the action stays where a staff member expects
+                  // to find it and the greyed row says why it cannot be used.
+                  disabled: (invoice.refundableCents ?? 0) <= 0,
+                  onSelect: () => setRefunding(true),
                 },
                 {
                   /**
@@ -358,18 +505,28 @@ export function AdminInvoiceDetailPage() {
             invite the reader to add it to the total, which is exactly the
             arithmetic the schema keeps them apart to prevent.
 
-            Rendered only when there is one: a row saying "Tip $0.00" on every
-            wholesale invoice is a line that teaches people to stop reading.
+            It lives HERE rather than in the three-dot menu, where it was: a tip
+            is money received, so the place somebody looks for it is the block
+            that already shows what was received. Buried in an overflow menu it
+            was a payment fact filed under actions.
           */}
-          {invoice.tipCents > 0 && (
-            <p className="mt-3 flex items-baseline justify-between gap-3 rounded-md bg-surface-2 px-4 py-2.5 text-sm">
-              <span className="text-ink-500">
-                Tip{' '}
-                <span className="text-ink-400">· not part of the invoice total</span>
-              </span>
-              <span className="tnum font-semibold text-ink-900">{money(invoice.tipCents)}</span>
-            </p>
-          )}
+          <div className="mt-3 flex items-center justify-between gap-3 rounded-md bg-surface-2 px-4 py-2.5 text-sm">
+            <span className="text-ink-500">
+              Tip{' '}
+              <span className="text-ink-400">· not part of the invoice total</span>
+            </span>
+
+            <span className="flex items-center gap-3">
+              {invoice.tipCents > 0 && (
+                <span className="tnum font-semibold text-ink-900">
+                  {money(invoice.tipCents)}
+                </span>
+              )}
+              <Button size="xs" variant="ghost" icon={HandCoins} onClick={() => setTipping(true)}>
+                {invoice.tipCents > 0 ? 'Edit' : 'Record a tip'}
+              </Button>
+            </span>
+          </div>
 
           <div className="mt-4">
             <p className="eyebrow mb-2 flex items-center gap-1.5 text-ink-400">
@@ -425,9 +582,20 @@ export function AdminInvoiceDetailPage() {
 
                   <tbody>
                     {invoice.payments.map((payment, index) => {
-                      const reversal = payment.amount < 0;
+                      const negative = payment.amount < 0;
                       const reversed = Boolean(payment.reversedAt);
                       const forgiven = payment.method === 'void';
+                      /**
+                       * A refund is not a reversal, and the row has to say so.
+                       *
+                       * A reversal undoes a payment recorded in error; a refund
+                       * returns money that really did arrive. Both are negative
+                       * rows, so reading the sign alone would file every refund
+                       * as a correction the shop made - which is a different
+                       * story to tell a customer asking what happened.
+                       */
+                      const isReversal = negative && payment.method === 'reversal';
+                      const refund = negative && !isReversal && !forgiven;
 
                       return (
                         <tr
@@ -441,11 +609,12 @@ export function AdminInvoiceDetailPage() {
                           <td
                             className={cn(
                               'tnum px-3 py-2.5 text-right font-display text-md font-bold',
-                              // Three different facts, three different weights:
-                              // money in is plain, a reversal is red because it
-                              // takes money back, and a void is grey because it
-                              // was never money at all - it is forgiveness.
-                              reversal ? 'text-danger' : forgiven ? 'text-ink-400' : 'text-ink-900',
+                              // Four facts, three weights: money in is plain,
+                              // money out is red whether it went back as a refund
+                              // or came off as a reversal, and a void is grey
+                              // because it was never money at all - it is
+                              // forgiveness.
+                              negative ? 'text-danger' : forgiven ? 'text-ink-400' : 'text-ink-900',
                               reversed && 'line-through opacity-60',
                             )}
                           >
@@ -455,10 +624,10 @@ export function AdminInvoiceDetailPage() {
                           <td className={t.cell()}>
                             {payment.method && (
                               <Badge
-                                tone={reversal ? 'danger' : forgiven ? 'neutral' : 'info'}
+                                tone={negative ? 'danger' : forgiven ? 'neutral' : 'info'}
                                 size="sm"
                               >
-                                {payment.method}
+                                {refund ? `refund · ${payment.method}` : payment.method}
                               </Badge>
                             )}
                           </td>
@@ -472,7 +641,7 @@ export function AdminInvoiceDetailPage() {
                                 A void and a reversal are already corrections
                                 offering to undo them would be a second way to
                                 reach the same state. */}
-                            {!reversal && !reversed && !forgiven && (
+                            {!negative && !reversed && !forgiven && (
                               <button
                                 type="button"
                                 onClick={() => setReversing(index)}
@@ -652,6 +821,33 @@ export function AdminInvoiceDetailPage() {
         }
       />
 
+      {/* The outcome is reported: whether the money went to credit or back to
+          the customer is the fact the staff member has to be able to repeat at
+          the counter, and the server is what decided it. */}
+      <RefundInvoiceModal
+        open={refunding}
+        invoice={invoice}
+        isPending={refundInvoice.isPending}
+        error={refundInvoice.error?.message}
+        onClose={() => setRefunding(false)}
+        onSubmit={(values) =>
+          refundInvoice.mutate(
+            { number: invoice.number, ...values },
+            {
+              onSuccess: (result) => {
+                setRefunding(false);
+                toast.ok(
+                  result.toStoreCredit ? 'Refunded to store credit' : 'Refund recorded',
+                  result.toStoreCredit
+                    ? `${money(result.refunded)} credited. The account now holds ${money(result.storeCreditBalance ?? 0)}.`
+                    : `${money(result.refunded)} went back to the customer.`,
+                );
+              },
+            },
+          )
+        }
+      />
+
       <EditInvoiceModal
         open={editing}
         invoice={invoice}
@@ -662,6 +858,111 @@ export function AdminInvoiceDetailPage() {
           updateInvoice.mutate(
             { number: invoice.number, ...values },
             { onSuccess: () => setEditing(false) },
+          )
+        }
+      />
+
+      {/* One confirmation for both ways in - the pill on the badge row and the
+          menu item - because they are the same change and one of these statuses
+          emails the customer.
+
+          It carries its own picker rather than only confirming a choice already
+          made, since the menu route arrives here with nothing chosen: "Set
+          status" has to be able to ASK which. Arriving from the pill, the answer
+          is already filled in. */}
+      <ConfirmDialog
+        open={pickingStatus}
+        onClose={() => setPickingStatus(false)}
+        tone="info"
+        heading="Change status?"
+        title={
+          <>
+            Where{' '}
+            <strong className="font-semibold text-ink-900">{invoice.number}</strong> has got to
+            with the customer. This moves no money.
+          </>
+        }
+        body={
+          <div className="space-y-3">
+            <SelectMenu
+              label="Status"
+              value={statusMove?.id ?? ''}
+              options={[
+                { value: '', label: 'No status' },
+                ...labels.map((label) => ({
+                  value: label.id,
+                  label: label.sendsWarrantyEmail ? `${label.name} (emails)` : label.name,
+                })),
+              ]}
+              onChange={(next) =>
+                setStatusMove(labels.find((entry) => entry.id === next) ?? null)
+              }
+            />
+
+            {statusMove?.sendsWarrantyEmail ? (
+              <p className="flex items-start gap-2 rounded-md bg-warn-50 px-3 py-2.5 text-sm text-warn">
+                <Mail className="mt-0.5 size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+                <span>
+                  {invoice.labelEmailSentAt
+                    ? `The warranty email went out on ${date(invoice.labelEmailSentAt)}, so it will not send again.`
+                    : invoice.status === 'paid'
+                      ? 'This emails the customer their warranty and a review link, once.'
+                      : 'The warranty email sends only on a paid invoice, so nothing will be sent yet.'}
+                </span>
+              </p>
+            ) : null}
+          </div>
+        }
+        confirmLabel="Confirm change"
+        loading={setInvoiceLabel.isPending}
+        error={setInvoiceLabel.error?.message}
+        onConfirm={() =>
+          setInvoiceLabel.mutate(
+            { number: invoice.number, labelId: statusMove?.id ?? null },
+            {
+              onSuccess: (result) => {
+                setPickingStatus(false);
+                // Whether the email actually went is the half the screen cannot
+                // work out for itself.
+                if (result?.emailed) {
+                  toast.ok(
+                    'Warranty email sent',
+                    `${result.labelName} is set, and the customer has their warranty and a review link.`,
+                  );
+                }
+              },
+            },
+          )
+        }
+      />
+      {/* A reminder asks a real customer for money, so it confirms and names the
+          figure: "send reminder" with no amount on it is a button somebody
+          clicks down a list without reading which row they are on. */}
+      <ConfirmDialog
+        open={reminding}
+        onClose={() => setReminding(false)}
+        tone="warn"
+        title={`Remind ${account} about ${invoice.number}?`}
+        body={`They will be emailed that ${money(invoice.balance)} is outstanding${
+          invoice.dueDate ? ` and was due ${date(invoice.dueDate)}` : ''
+        }. The invoice document is not attached - they already have it.`}
+        confirmLabel="Send reminder"
+        loading={remindInvoice.isPending}
+        error={remindInvoice.error?.message}
+        onConfirm={() =>
+          remindInvoice.mutate(
+            { number: invoice.number },
+            {
+              onSuccess: (result) => {
+                setReminding(false);
+                // What the transport said, not what was attempted.
+                if (result?.delivered === false) {
+                  toast.error('Reminder not sent', `${result.to} could not be reached.`);
+                } else {
+                  toast.ok('Reminder sent', `${result.to} has it.`);
+                }
+              },
+            },
           )
         }
       />
@@ -832,6 +1133,134 @@ function RecordTipModal({ open, invoice, onClose, onSubmit, isPending, error }) 
           </Button>
           <Button type="submit" loading={isPending}>
             Save tip
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/**
+ * Refunding money off the invoice.
+ *
+ * **The destination is the decision, so it leads.** Cash back and store credit
+ * are different promises to the customer - one hands the money over, the other
+ * keeps it and owes goods - and the panel says which is about to happen in the
+ * words the customer would use, not as a field label. A staff member who misses
+ * that has told somebody the wrong thing at the counter.
+ *
+ * The amount is pre-filled with everything that could go back, because refunding
+ * in full is the common case; the cap is stated in the hint and enforced by the
+ * server against the invoice own payment rows.
+ *
+ * The form itself is the confirmation (§3.0.1): it was deliberately opened,
+ * an amount was typed and a destination chosen, so a second dialog on top of it
+ * would be a click that confirms nothing new.
+ */
+function RefundInvoiceModal({ open, invoice, onClose, onSubmit, isPending, error }) {
+  const refundable = invoice.refundableCents ?? 0;
+
+  const { register, handleSubmit, watch, reset, control } = useForm({
+    defaultValues: {
+      amountDollars: (refundable / 100).toFixed(2),
+      toStoreCredit: false,
+      method: 'card',
+      reason: '',
+    },
+  });
+
+  const toStoreCredit = watch('toStoreCredit');
+
+  function close() {
+    reset();
+    onClose();
+  }
+
+  return (
+    <Modal open={open} onClose={close} title={`Refund on ${invoice.number}`} align="top">
+      <form
+        onSubmit={handleSubmit((values) =>
+          onSubmit({
+            // Cents at the boundary: the form works in dollars because that is what
+            // a staff member reads off a receipt, and everything past here is
+            // integer cents like every other amount in the system.
+            amountCents: Math.round(Number(values.amountDollars || 0) * 100),
+            toStoreCredit: Boolean(values.toStoreCredit),
+            method: values.toStoreCredit ? '' : values.method,
+            reason: values.reason,
+          }),
+        )}
+        className="space-y-4"
+      >
+        {error && (
+          <p className="flex items-start gap-2 rounded-md bg-danger-50 px-3 py-2.5 text-sm text-danger">
+            <AlertCircle className="mt-0.5 size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+            {error}
+          </p>
+        )}
+
+        <Input
+          label="Refund amount"
+          inputMode="decimal"
+          suffix="CAD"
+          hint={`At most ${money(refundable)} can go back - that is what has been paid and not already refunded.`}
+          {...register('amountDollars')}
+        />
+
+        {/* The choice, and what each side of it means. Not a bare checkbox label:
+            "add to store credit" says what the system does and not what the
+            customer walks away with. */}
+        <Checkbox
+          label="Add to the customer store credit instead of handing the money back"
+          {...register('toStoreCredit')}
+        />
+
+        <p
+          className={cn(
+            'rounded-md px-3 py-2.5 text-xs leading-relaxed',
+            toStoreCredit ? 'bg-info-50 text-ink-700' : 'bg-surface-2 text-ink-600',
+          )}
+        >
+          {toStoreCredit ? (
+            <>
+              The money stays with the business and the account is credited, so it can be spent on
+              a future repair or order. The customer leaves with a balance, not cash.
+            </>
+          ) : (
+            <>
+              The money leaves the business. Record how it went back so the till and the invoice
+              agree at the end of the day.
+            </>
+          )}
+        </p>
+
+        {/* Only asked for a cash refund: a store-credit refund records its own
+            method, and offering a choice there would imply the cash moved. */}
+        {!toStoreCredit && (
+          <SelectField
+            control={control}
+            name="method"
+            label="How it went back"
+            // Store credit is excluded: that is the checkbox above, and offering
+            // it here as a cash method would be two ways to say one thing.
+            options={PAYMENT_METHODS.filter((entry) => entry.value !== 'credit')}
+          />
+        )}
+
+        <Textarea
+          label="Reason"
+          rows={2}
+          placeholder="Part failed, customer cancelled, goodwill…"
+          hint="Shown on the invoice and, for a store-credit refund, on the customer statement."
+          {...register('reason')}
+        />
+
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={close}>
+            Cancel
+          </Button>
+          <Button type="submit" loading={isPending} disabled={refundable <= 0}>
+            {toStoreCredit ? 'Refund to store credit' : 'Refund the money'}
           </Button>
         </div>
       </form>

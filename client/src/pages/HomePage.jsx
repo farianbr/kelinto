@@ -1,4 +1,4 @@
-import { Link } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { motion } from 'motion/react';
 import {
   ArrowRight,
@@ -21,6 +21,8 @@ import CountdownTimer from '@/components/ui/CountdownTimer';
 import SectionFrame from '@/components/ui/SectionFrame';
 import PromoBanner from '@/components/home/PromoBanner';
 import FeaturedSplit from '@/components/home/FeaturedSplit';
+import TabWizard from '@/components/filters/TabWizard';
+import useFilterStore, { toSearchParams } from '@/store/filterStore';
 import { PartVisual } from '@/components/product/PartFrame';
 
 /**
@@ -222,6 +224,7 @@ function Hero({ offer, isLoading }) {
 
 export function HomePage() {
   useDocumentTitle();
+  const navigate = useNavigate();
 
   const { user } = useAuth();
   const isApproved = user?.status === 'approved';
@@ -259,8 +262,29 @@ export function HomePage() {
   const heroOffer = offers.find((o) => o.isExclusive) ?? offers.find((o) => o.isFeatured) ?? offers[0];
   const exclusives = offers.filter((o) => o.isExclusive);
 
-  const deviceTypes = sections?.deviceTypes ?? [];
   const brands = sections?.brands ?? [];
+
+
+  /**
+   * Take a wizard choice to the catalogue.
+   *
+   * The wizard writes the shared filter store, which on the Shop page is the
+   * whole mechanism - the grid re-renders under it. Here there is no grid, so a
+   * pick wrote the store and visibly did nothing.
+   *
+   * **Navigated WITH the query string, not just to `/shop`.** The store is a
+   * module singleton and survives the navigation, so `/shop` alone would in fact
+   * show the right products - and the URL would say nothing, which breaks the
+   * back button, a refresh, and sharing the link. `useFilterUrlSync` treats the
+   * URL as the whole filter state and re-hydrates from it before paint, so
+   * arriving at a bare `/shop` would actively CLEAR the choices that were just
+   * made. The params are built by `toQueryParams`, the same function that hook
+   * writes with, so the two cannot disagree about how a filter is spelled.
+   */
+  function showParts() {
+    const query = toSearchParams(useFilterStore.getState()).toString();
+    navigate(query ? `/shop?${query}` : '/shop');
+  }
   const clearance = sections?.clearance ?? [];
   const newest = sections?.newest ?? [];
 
@@ -310,48 +334,34 @@ export function HomePage() {
         ))}
       </ul>
 
-      {/* ---- shop by device -------------------------------------------
-          The way in for somebody who does not yet know our part names. Counts
-          are the useful thing on each tile: a category with 90 SKUs behind it
-          is a different promise from one with 6, and hiding that makes every
-          tile look the same until it is clicked. */}
-      {deviceTypes.length > 0 && (
-        <SectionFrame
-          id="home-categories"
-          eyebrow="Start here"
-          title="Shop by device"
-          to="/shop"
-          linkLabel="All parts"
-          fit
-        >
-          {/* `flex-wrap`, not a grid. The catalogue is smartphone-only by
-              rule (CLAUDE.md), so this is usually ONE tile - and one tile in a
-              four-column grid is a tile with three empty columns beside it,
-              which reads as a section that failed to load. Wrapped flex items
-              size to their own content and the frame closes around them. */}
-          <div className="flex flex-wrap gap-3">
-            {deviceTypes.map((type) => (
-              <Link
-                key={type.slug}
-                to={`/shop?deviceType=${type.slug}`}
-                className={cn(pressable, 'group flex min-w-[160px] flex-1 basis-[200px] flex-col justify-between gap-6 rounded-lg border border-line bg-surface p-4 transition-[border-color] duration-snap ease-entrance hover:border-brand/40 sm:max-w-[260px] sm:flex-none')}
-              >
-                <span className="font-display text-md font-bold text-ink-900 group-hover:text-brand">
-                  {type.name}
-                </span>
-                <span className="flex items-center justify-between text-sm text-ink-400">
-                  <span className="tnum">{type.count} parts</span>
-                  <ArrowRight
-                    className="size-4 shrink-0 transition-transform duration-200 group-hover:translate-x-0.5"
-                    strokeWidth={2}
-                    aria-hidden="true"
-                  />
-                </span>
-              </Link>
-            ))}
-          </div>
-        </SectionFrame>
-      )}
+      {/* ---- find your part -------------------------------------------
+          The way in for somebody who does not yet know our part names.
+
+          **This replaced a "Shop by device" tile grid**, and the reason is what
+          the catalogue actually is: smartphone-only by rule (CLAUDE.md), so that
+          grid was usually ONE tile reading "Smartphone - 773 parts". A section
+          whose whole job is to offer a choice, offering one, is a section that
+          answers nothing - and the tile only took the buyer to the same
+          unfiltered grid `/shop` already is.
+
+          The wizard asks the question the tile was standing in for: which
+          component, for which device. It is the same `TabWizard` the Shop page
+          carries, writing the same shared filter store, so a buyer who starts
+          here arrives at `/shop` with their choices already applied rather than
+          starting again. One filter with three faces (§5.3), not a fourth.
+
+          Unconditional, unlike the tiles: the wizard loads its own taxonomy and
+          renders its own skeleton, so it has something to show before
+          `useHomeSections` resolves. */}
+      <SectionFrame
+        id="home-find-part"
+        eyebrow="Start here"
+        title="Find your part"
+        to="/shop"
+        linkLabel="All parts"
+      >
+        <TabWizard onComplete={showParts} />
+      </SectionFrame>
 
       {/* ---- clearance ------------------------------------------------- */}
       {clearance.length > 0 && (

@@ -44,7 +44,8 @@ export default function CustomerPortalLink({ id }) {
         onSuccess: (result) => {
           setLink(result.url);
           setCopied(false);
-          if (rotate) toast.success('New link issued. The previous one no longer works.');
+          if (rotate)
+            toast.ok('New portal link issued', 'The previous one no longer works.');
         },
         onError: (error) => toast.error(error.message),
       },
@@ -55,7 +56,7 @@ export default function CustomerPortalLink({ id }) {
     try {
       await navigator.clipboard.writeText(link);
       setCopied(true);
-      toast.success('Portal link copied.');
+      toast.ok('Portal link copied');
       // Back to the idle label, so the tick reads as "that copy worked" rather
       // than as a permanent state of the button.
       setTimeout(() => setCopied(false), 2000);

@@ -1,6 +1,7 @@
 import { Navigate, Outlet } from 'react-router';
 import useDocumentTitle from '@/hooks/useDocumentTitle';
 import Header from './Header';
+import { NAV_STRIP_H } from './PrimaryNav';
 import Footer from './Footer';
 import MobileBottomNav from './MobileBottomNav';
 import BackToTop from './BackToTop';
@@ -40,7 +41,29 @@ export function RootLayout() {
 
       <Header />
 
-      <main id="main" className="flex-1">
+      {/* Clears the sliding nav row, which OVERLAYS the body rather than sitting
+          in the layout (see PrimaryNav.jsx).
+
+          Needed since the row became visible by default. While it only appeared
+          past a scroll threshold, what it painted over was mid-page content the
+          reader was already scrolling through, and reserving space would have
+          left 45px of empty white under the header at the top of every page. Now
+          it is up on load, so with no reservation it covers the first 45px of
+          every page instead - the top of the first section, which is exactly what
+          the reader is looking at.
+
+          `lg:` only, matching the row itself: it does not exist below that, and
+          padding a phone for a row that is not there is 45px of nothing.
+
+          Off `NAV_STRIP_H` rather than a literal: two hardcoded 45s that drift
+          apart is precisely what that constant exists to prevent, and it is an
+          inline style because a Tailwind arbitrary value cannot read a JS
+          binding. */}
+      <main
+        id="main"
+        className="flex-1 lg:[padding-top:var(--nav-strip-h)]"
+        style={{ '--nav-strip-h': `${NAV_STRIP_H}px` }}
+      >
         <Outlet />
       </main>
 

@@ -21,6 +21,8 @@
     "seed:quotes": "npm run seed:quotes --workspace server",
     "seed:expense-categories": "npm run seed:expense-categories --workspace server",
     "seed:service-business": "npm run seed:service-business --workspace server",
+    "seed:invoice-labels": "npm run seed:invoice-labels --workspace server",
+    "seed:invoice-history": "npm run seed:invoice-history --workspace server",
     "seed:service-quotes": "npm run seed:service-quotes --workspace server",
     "seed:tickets": "npm run seed:tickets --workspace server",
     "seed:bids": "npm run seed:bids --workspace server",

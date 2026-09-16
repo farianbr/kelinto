@@ -630,6 +630,9 @@ async function setTicketStatus(id, body, actor) {
     ticket.toObject(),
     body.status,
     actor,
+    // Absent on every path that does not ask (a bulk move, a script), which
+    // keeps the behaviour those had before the confirmation existed.
+    Array.isArray(body.channels) ? body.channels : null,
   );
 
   const settings = await db().Settings.load();

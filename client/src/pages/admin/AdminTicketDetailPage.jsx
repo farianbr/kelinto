@@ -28,6 +28,7 @@ import Modal from '@/components/ui/Modal';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Input from '@/components/ui/Input';
 import SelectField from '@/components/ui/SelectField';
+import Checkbox from '@/components/ui/Checkbox';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import Skeleton from '@/components/ui/Skeleton';
@@ -524,7 +525,7 @@ function StageCard({ ticket, disabled, isPending, error, onMove }) {
   const next = TICKET_STATUSES[currentIndex + 1];
 
   const { register, handleSubmit, control, watch } = useForm({
-    defaultValues: { status: next ?? ticket.status, note: '' },
+    defaultValues: { status: next ?? ticket.status, note: '', notify: true },
   });
 
   const chosen = watch('status');
@@ -544,7 +545,22 @@ function StageCard({ ticket, disabled, isPending, error, onMove }) {
         </p>
       ) : (
         <form
-          onSubmit={handleSubmit((values) => onMove({ status: values.status, note: values.note || undefined }))}
+          onSubmit={handleSubmit((values) =>
+            onMove({
+              status: values.status,
+              note: values.note || undefined,
+              /**
+               * An empty list is "change it silently"; omitting the field
+               * entirely is "behave as before", which is every channel.
+               *
+               * No confirmation dialog here, unlike the Tickets list: that one
+               * fires off a single click on a nine-item menu, and this is a form
+               * somebody opened, chose a stage in and submitted. A form the user
+               * filled in IS the confirmation (§3.0.1).
+               */
+              channels: values.notify ? undefined : [],
+            }),
+          )}
           className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto] sm:items-end"
         >
           <SelectField
@@ -569,6 +585,15 @@ function StageCard({ ticket, disabled, isPending, error, onMove }) {
           <Button type="submit" size="sm" icon={ArrowRight} loading={isPending}>
             {TICKET_STATUS_LABELS[chosen] ?? 'Move'}
           </Button>
+
+          {/* Spans the row: it qualifies the whole move rather than belonging to
+              any one field above it. */}
+          <div className="sm:col-span-3">
+            <Checkbox
+              label="Message the customer about this change"
+              {...register('notify')}
+            />
+          </div>
         </form>
       )}
     </Panel>

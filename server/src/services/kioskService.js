@@ -207,18 +207,32 @@ async function getDeviceOptions() {
   return { devices: roots };
 }
 
-/** `TKT-2026-00001`, the same series the counter writes. */
+/**
+ * `KS-00001`. **Its own series, separate from the counter's `TKT-`.**
+ *
+ * A kiosk ticket is not the same object as one a staff member wrote: it is a
+ * customer's own account of their device, unpriced, ungraded and unassigned,
+ * waiting for somebody to finish it. Sharing one sequence made that invisible on
+ * every screen that shows a number and not a badge - a printed slip, a phone
+ * call, a search box - and the prefix is the one part of a ticket that travels
+ * everywhere with it.
+ *
+ * No year segment, unlike `TKT-2026-00001`: the counter series restarts each
+ * January so its numbers stay short, and this one is a single running count for
+ * the life of the shop. Mixing a yearly reset into a flat series is how two
+ * tickets end up sharing a number.
+ */
+const KIOSK_PREFIX = 'KS-';
+
 async function nextTicketNumber() {
-  const year = new Date().getFullYear();
-  const prefix = `TKT-${year}-`;
   const last = await db()
-    .Ticket.findOne({ ticketNumber: new RegExp(`^${prefix}`) })
+    .Ticket.findOne({ ticketNumber: new RegExp(`^${KIOSK_PREFIX}`) })
     .sort({ ticketNumber: -1 })
     .select('ticketNumber')
     .lean();
 
-  const sequence = last ? Number(last.ticketNumber.slice(prefix.length)) + 1 : 1;
-  return `${prefix}${String(sequence).padStart(5, '0')}`;
+  const sequence = last ? Number(last.ticketNumber.slice(KIOSK_PREFIX.length)) + 1 : 1;
+  return `${KIOSK_PREFIX}${String(sequence).padStart(5, '0')}`;
 }
 
 /**

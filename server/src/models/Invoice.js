@@ -1,6 +1,20 @@
 import mongoose from 'mongoose';
 
 /**
+ * Imported for its side effect, and it is load-bearing.
+ *
+ * `label` below is a ref, and `db/models.js` binds a ref onto a business
+ * connection only if the model is ALREADY registered globally - an unknown
+ * name is skipped silently rather than thrown, so a missing import here does
+ * not fail at startup. It fails later, on the first read that populates it,
+ * which is every invoice list and every invoice detail.
+ *
+ * Declared here rather than in each service that populates it, because the ref
+ * is declared here: a new consumer should not have to discover this.
+ */
+import './InvoiceLabel.js';
+
+/**
  * One priced line - a service performed or a part fitted.
  *
  * `priceCents` is the price AT THE TIME OF INVOICING, copied rather than
@@ -173,6 +187,34 @@ const invoiceSchema = new mongoose.Schema(
       enum: ['walk_in', 'pickup', 'onsite', 'mail_in'],
       default: 'walk_in',
     },
+
+    /**
+     * The manual status an admin set, separate from `status` below.
+     *
+     * `status` is **payment state** and is derived from the payment rows -
+     * nothing writes it by hand. This is the other question a shop asks of an
+     * invoice: where it has got to with the customer. It moves no money, and
+     * `null` is the ordinary state rather than a missing value.
+     *
+     * A reference, not a string, so renaming a label on the settings screen
+     * renames it on every invoice carrying it. See `models/InvoiceLabel.js`.
+     */
+    label: { type: mongoose.Schema.Types.ObjectId, ref: 'InvoiceLabel', default: null, index: true },
+    labelSetAt: { type: Date, default: null },
+
+    /**
+     * When the warranty and review email went out, if it ever did.
+     *
+     * **The once-ever guard.** A label may be configured to send that email the
+     * first time it is set on a paid invoice; this is what stops it sending
+     * again when somebody clears the label and re-sets it, or picks a second
+     * label that also sends. A customer receiving the same warranty email twice
+     * because a board was being tidied is the failure this exists to prevent.
+     *
+     * Deliberately on the INVOICE, not on the label: the promise is "once per
+     * invoice", and a counter on the label could not express that.
+     */
+    labelEmailSentAt: { type: Date, default: null },
 
     /** `internalNotes` is the only one that never reaches the document. */
     customerNotes: String,
