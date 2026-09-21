@@ -1,4 +1,4 @@
-import { useFieldArray } from 'react-hook-form';
+import { useFieldArray, useFormState } from 'react-hook-form';
 import { Plus, Trash2 } from 'lucide-react';
 
 import cn from '@/lib/cn';
@@ -52,6 +52,17 @@ function PricedLines({
 }) {
   const { fields, append, remove } = useFieldArray({ control, name });
   const { createService } = useAdminMutations();
+
+  /**
+   * The errors for this array only.
+   *
+   * `useFormState` with a `name` subscribes this editor to its own slice, so a
+   * rejected line re-renders the block it is in rather than every priced line
+   * on the page - a service invoice can hold twenty devices with two arrays
+   * each, and a form-wide subscription would re-render all forty on a keystroke.
+   */
+  const { errors } = useFormState({ control, name });
+  const lineErrors = at(errors, name);
 
   /**
    * Add a service to the price book from inside the picker.
@@ -182,9 +193,23 @@ function PricedLines({
             </div>
 
             <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_90px_90px]">
-              <Input placeholder="Line name" {...register(`${name}.${index}.name`)} />
+              {/* The line name is the only required field on a row, and only
+                  once the row has been started: an untouched row is one the
+                  form drops on submit rather than one somebody got wrong, which
+                  is what `deviceFormResolver` exists to keep true. The star is
+                  on the placeholder rather than a label because this grid has
+                  no labels - a four-column row of them would be taller than the
+                  values it describes. */}
+              <Input
+                placeholder="Line name *"
+                aria-label="Line name"
+                error={lineErrors?.[index]?.name?.message}
+                {...register(`${name}.${index}.name`)}
+              />
               <Input
                 placeholder="Description (optional)"
+                aria-label="Description"
+                error={lineErrors?.[index]?.description?.message}
                 {...register(`${name}.${index}.description`)}
               />
               <Input
@@ -192,12 +217,16 @@ function PricedLines({
                 step="0.01"
                 min="0"
                 placeholder="0.00"
+                aria-label="Price"
+                error={lineErrors?.[index]?.priceDollars?.message}
                 {...register(`${name}.${index}.priceDollars`)}
               />
               <Input
                 type="number"
                 min="1"
                 placeholder="Qty"
+                aria-label="Quantity"
+                error={lineErrors?.[index]?.qty?.message}
                 {...register(`${name}.${index}.qty`)}
               />
             </div>
@@ -217,6 +246,20 @@ function PricedLines({
       </Button>
     </div>
   );
+}
+
+/**
+ * Walk a dotted path into the error tree.
+ *
+ * `name` arrives as `devices.0.services`, which is where RHF nests this
+ * array's errors, and there is no lookup on the error object itself. Returns
+ * `undefined` at the first missing step, which is the normal case: the tree is
+ * empty until a submit is refused.
+ */
+function at(errors, path) {
+  return String(path)
+    .split('.')
+    .reduce((node, key) => (node == null ? undefined : node[key]), errors);
 }
 
 export { emptyLine, PricedLines };

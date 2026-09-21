@@ -1,5 +1,6 @@
 import { useFieldArray, useWatch, Controller } from 'react-hook-form';
 import useAdminForm from '@/hooks/useAdminForm';
+import deviceFormResolver from '@/lib/deviceFormResolver';
 import {
   AlertCircle,
   ClipboardCheck,
@@ -16,6 +17,7 @@ import {
   TICKET_STATUS_LABELS,
   TICKET_PRIORITIES,
   TICKET_SOURCES,
+  ticketSchema,
   TAX_RATES,
   provinceTaxOptions,
 } from '@shared/schemas/admin';
@@ -27,6 +29,7 @@ import PhoneField from '@/components/ui/PhoneField';
 import Textarea from '@/components/ui/Textarea';
 import Button from '@/components/ui/Button';
 import SelectField from '@/components/ui/SelectField';
+import MissingFields from '@/components/admin/MissingFields';
 import { pressable } from '@/lib/motion';
 import {
   emptyLine,
@@ -72,6 +75,37 @@ const STATUS_OPTIONS = TICKET_STATUSES.map((value) => ({
 const PRIORITY_OPTIONS = TICKET_PRIORITIES.map((value) => ({ value, label: titleize(value) }));
 const SOURCE_OPTIONS = TICKET_SOURCES.map((value) => ({ value, label: titleize(value) }));
 
+/**
+ * Built once at module scope: a resolver rebuilt on every render is a new
+ * function identity each time, which RHF has to re-read the form against.
+ */
+const TICKET_RESOLVER = deviceFormResolver(ticketSchema, {
+  // A walk-in has no account and no technician yet, and both pickers emit ''
+  // rather than nothing - see `deviceFormResolver`.
+  optionalIds: ['user', 'technician'],
+});
+
+/**
+ * What the summary beside the submit calls each field.
+ *
+ * Keyed by the path RHF reports, with `devices.*.model` standing for every row
+ * of the repeater - "Devices" names the group once however many blocks are
+ * open, and the scroll has already put the offending one on screen.
+ */
+const TICKET_FIELD_LABELS = {
+  customerName: 'Customer name',
+  customerPhone: 'Phone',
+  customerEmail: 'Email',
+  'devices.*.model': 'Device model',
+  // A half-filled priced line. Named as a thing rather than left to fall back
+  // to the schema's "Name the line.", which is an instruction sitting in a
+  // list of nouns.
+  'devices.*.services.*.name': 'A name on every service line',
+  'devices.*.parts.*.name': 'A name on every part line',
+  'devices.*.services.*.priceDollars': 'Service line price',
+  'devices.*.parts.*.priceDollars': 'Part line price',
+};
+
 /** One blank device. Only the model is required, so the rest starts empty. */
 const emptyDevice = () => ({
   category: '',
@@ -104,7 +138,23 @@ export function TicketForm({
   // `useAdminForm`, not raw `useForm`: this form was the one that missed the
   // submit-only validation and the scroll-to-first-error, so intake alone still
   // marked untouched fields red and refused a submit without moving the page.
-  const { register, handleSubmit, control, setValue } = useAdminForm({
+  //
+  // The resolver is the ticket's own wire schema rather than a second set of
+  // rules written for the browser. Validating against anything else is how a
+  // form ends up accepting what the server rejects: the person gets a green
+  // submit and a red toast, with nothing on the page saying which field.
+  //
+  // Wrapped, because the blank priced line every device block seeds is a row
+  // this form drops on submit and `ticketLineSchema` would otherwise reject -
+  // see `deviceFormResolver`.
+  const {
+    register,
+    handleSubmit,
+    control,
+    setValue,
+    formState: { errors },
+  } = useAdminForm({
+    resolver: TICKET_RESOLVER,
     defaultValues: {
       customerName: ticket?.customer.name ?? seed?.name ?? '',
       customerPhone: ticket?.customer.phone ?? seed?.phone ?? '',
@@ -181,6 +231,17 @@ export function TicketForm({
         }),
       )}
       className="space-y-4"
+      /*
+        The browser's own validation is off, so ours is the only one.
+
+        `Input` sets the HTML `required` attribute along with the star, which
+        makes the browser refuse the submit BEFORE react-hook-form ever runs:
+        the person gets an unstyled "Please fill out this field." bubble on one
+        field at a time, it disappears on scroll, and the summary beside the
+        button never appears because the submit handler was never reached. The
+        attribute stays for assistive technology; only the native UI goes.
+      */
+      noValidate
     >
       {error && (
         <p className="flex items-start gap-2 rounded-md bg-danger-50 px-3 py-2.5 text-sm text-danger">
@@ -249,17 +310,24 @@ export function TicketForm({
         )}
 
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          <Input label="Customer name" required {...register('customerName')} />
+          <Input
+            label="Customer name"
+            required
+            placeholder="Who is dropping the device off"
+            error={errors.customerName?.message}
+            {...register('customerName')}
+          />
           <Controller
             name="customerPhone"
             control={control}
-            render={({ field }) => (
+            render={({ field, fieldState }) => (
               <PhoneField
                 label="Phone"
                 required
                 value={field.value}
                 onChange={field.onChange}
                 onBlur={field.onBlur}
+                error={fieldState.error?.message}
               />
             )}
           />
@@ -271,6 +339,7 @@ export function TicketForm({
             // something different from what it wants.
             placeholder="name@example.com"
             hint="Optional - used only if the shop emails a receipt."
+            error={errors.customerEmail?.message}
             {...register('customerEmail')}
           />
         </div>
@@ -421,6 +490,10 @@ export function TicketForm({
           a separate step.
         </p>
       </Section>
+
+      {/* Named beside the button that refused, not in place of it - the submit
+          stays pressable on purpose. See `MissingFields`. */}
+      <MissingFields errors={errors} labels={TICKET_FIELD_LABELS} />
 
       <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" onClick={onCancel}>

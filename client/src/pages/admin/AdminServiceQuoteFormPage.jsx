@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams, Link } from 'react-router';
 import { useFieldArray, useWatch } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
 import useAdminForm from '@/hooks/useAdminForm';
+import deviceFormResolver from '@/lib/deviceFormResolver';
 import {
   AlertCircle,
   ArrowLeft,
@@ -18,7 +18,12 @@ import {
   Wrench,
 } from 'lucide-react';
 
-import { INVOICE_SERVICE_TYPES, TAX_RATES, provinceTaxOptions } from '@shared/schemas/admin';
+import {
+  INVOICE_SERVICE_TYPES,
+  TAX_RATES,
+  provinceTaxOptions,
+  serviceQuoteSchema,
+} from '@shared/schemas/admin';
 import { money } from '@/lib/format';
 import cn from '@/lib/cn';
 import Input from '@/components/ui/Input';
@@ -28,6 +33,7 @@ import Checkbox from '@/components/ui/Checkbox';
 import SelectField from '@/components/ui/SelectField';
 import Panel from '@/components/ui/Panel';
 import PageHeader from '@/components/admin/PageHeader';
+import MissingFields from '@/components/admin/MissingFields';
 import { Section } from '@/components/admin/DeviceLines';
 import DeviceFinder from '@/components/admin/DeviceFinder';
 import PricedLines, { emptyLine } from '@/components/admin/PricedLines';
@@ -44,6 +50,35 @@ const SERVICE_TYPE_OPTIONS = INVOICE_SERVICE_TYPES;
 
 // Each option carries its tax name and rate - see `provinceTaxOptions`.
 const PROVINCE_OPTIONS = provinceTaxOptions();
+
+/**
+ * Both resolvers, built once at module scope rather than per render.
+ *
+ * Wrapped, because a fresh device block seeds a blank priced line that this
+ * form drops on submit and `serviceQuoteLineSchema` would reject - see
+ * `deviceFormResolver`.
+ */
+const QUOTE_CREATE_RESOLVER = deviceFormResolver(serviceQuoteSchema);
+const QUOTE_EDIT_RESOLVER = deviceFormResolver(serviceQuoteSchema.omit({ user: true }));
+
+/** What the summary beside the submit calls each field. See `MissingFields`. */
+const QUOTE_FIELD_LABELS = {
+  user: 'Customer',
+  quoteDate: 'Quote date',
+  validUntil: 'Valid until',
+  devices: 'At least one device',
+  'devices.*.model': 'Device model',
+  taxRate: 'Tax rate',
+  discountDollars: 'Discount',
+  extendedServiceFeeDollars: 'Extended service area fee',
+  // A half-filled priced line. Named as a thing rather than left to fall back
+  // to the schema's "Name the line.", which is an instruction sitting in a
+  // list of nouns.
+  'devices.*.services.*.name': 'A name on every service line',
+  'devices.*.parts.*.name': 'A name on every part line',
+  'devices.*.services.*.priceDollars': 'Service line price',
+  'devices.*.parts.*.priceDollars': 'Part line price',
+};
 
 const emptyDevice = () => ({
   category: '',
@@ -211,7 +246,29 @@ export function AdminServiceQuoteFormPage() {
 
   const quote = existing?.quote;
 
-  const { register, control, handleSubmit, setValue, reset } = useAdminForm({
+  /**
+   * The estimate's own wire schema, so the form refuses exactly what the
+   * server would refuse. `zodResolver` was imported here from the start and
+   * never passed, which left this page with no validation at all: a quote
+   * addressed to nobody submitted cleanly and came back a 400.
+   *
+   * The customer is dropped on an edit because the server drops it too -
+   * `serviceQuoteUpdateSchema` omits `user`, since re-pointing a sent document
+   * at a different person is a new estimate rather than a change to this one.
+   * Validating a field the payload does not carry would block the save on a
+   * value nobody can supply.
+   */
+  const resolver = editing ? QUOTE_EDIT_RESOLVER : QUOTE_CREATE_RESOLVER;
+
+  const {
+    register,
+    control,
+    handleSubmit,
+    setValue,
+    reset,
+    formState: { errors },
+  } = useAdminForm({
+    resolver,
     values: quote
       ? {
           user: quote.user ?? '',
@@ -388,13 +445,22 @@ export function AdminServiceQuoteFormPage() {
         </p>
       )}
 
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 pb-24">
+      {/* `noValidate`: the browser's native bubble would refuse the submit
+          before react-hook-form runs, one field at a time and unstyled, so the
+          summary beside the button would never appear. See `TicketForm`. */}
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 pb-24" noValidate>
         <Section icon={Info} title="Basic information">
           <div className="grid gap-3 lg:grid-cols-3">
             <SelectField
               control={control}
               name="user"
               label="Customer"
+              // Required, and marked as such: an estimate exists to be sent to
+              // somebody, so `serviceQuoteSchema` refuses one addressed to
+              // nobody. On an edit it is fixed rather than optional - the
+              // server will not re-point a sent document - so the star goes
+              // with the field that can still be answered.
+              required={!editing}
               // Searchable explicitly, not by row count: this list is every
               // approved account and it grows with the business, so it has to
               // be typeable at 500 rows as well as at five.
@@ -417,7 +483,12 @@ export function AdminServiceQuoteFormPage() {
               }
               createLabelEmpty="Add a customer"
             />
-            <Input label="Quote date" type="date" {...register('quoteDate')} />
+            <Input
+              label="Quote date"
+              type="date"
+              error={errors.quoteDate?.message}
+              {...register('quoteDate')}
+            />
             <SelectField
               control={control}
               name="serviceType"
@@ -516,6 +587,8 @@ export function AdminServiceQuoteFormPage() {
                   step="0.01"
                   min="0"
                   icon={MapPin}
+                  placeholder="0.00"
+                  error={errors.extendedServiceFeeDollars?.message}
                   {...register('extendedServiceFeeDollars')}
                 />
                 <Input
@@ -523,6 +596,8 @@ export function AdminServiceQuoteFormPage() {
                   type="number"
                   step="0.01"
                   min="0"
+                  placeholder="0.00"
+                  error={errors.discountDollars?.message}
                   {...register('discountDollars')}
                 />
                 <Input label="Discount code" placeholder="e.g. SUMMER10" {...register('discountCode')} />
@@ -547,6 +622,8 @@ export function AdminServiceQuoteFormPage() {
                   min="0"
                   max="100"
                   hint="0 means tax exempt"
+                  placeholder="e.g. 5"
+                  error={errors.taxRate?.message}
                   {...register('taxRate')}
                 />
               </div>
@@ -593,6 +670,10 @@ export function AdminServiceQuoteFormPage() {
             </div>
           </div>
         </Section>
+
+        {/* What a refused submit is still waiting on, beside the button that
+            refused it. The button stays pressable - see `MissingFields`. */}
+        <MissingFields errors={errors} labels={QUOTE_FIELD_LABELS} />
 
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={() => navigate('/admin/quotes')}>

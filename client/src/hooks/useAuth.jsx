@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import useUiStore from '@/store/uiStore';
+import { setBusiness } from '@/store/businessStore';
 
 const AuthContext = createContext(null);
 
@@ -73,6 +74,22 @@ export function AuthProvider({ children }) {
 
   const signOut = useCallback(async () => {
     await api.post('/auth/logout');
+
+    /**
+     * The business selection goes with the session that made it.
+     *
+     * It lives in `localStorage`, so it used to outlive sign-out and every tab
+     * on the origin kept sending it. A staff member who signed out of the
+     * CellShoppe panel left that id behind in their browser, and the storefront
+     * they visited next was served CellShoppe: an empty catalogue, and their own
+     * `buyer@` account rejected as a bad credential because `User` is
+     * per-business. Clearing it here makes signing out actually leave.
+     *
+     * Ordered after the request on purpose - `/auth/logout` is a scoped path in
+     * development, and clearing first would send it unscoped.
+     */
+    setBusiness(null);
+
     queryClient.setQueryData(['auth', 'me'], { user: null, features: null });
     queryClient.invalidateQueries({ queryKey: ['products'] });
     queryClient.invalidateQueries({ queryKey: ['search'] });

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams, useParams, Link } from 'react-router';
 import { useFieldArray, useWatch } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
 import useAdminForm from '@/hooks/useAdminForm';
+import deviceFormResolver from '@/lib/deviceFormResolver';
 import {
   AlertCircle,
   ArrowLeft,
@@ -16,7 +16,12 @@ import {
   Wrench,
 } from 'lucide-react';
 
-import { SERVICE_INVOICE_TYPES, TAX_RATES, provinceTaxOptions } from '@shared/schemas/admin';
+import {
+  SERVICE_INVOICE_TYPES,
+  TAX_RATES,
+  provinceTaxOptions,
+  adminInvoiceSchema,
+} from '@shared/schemas/admin';
 import { money } from '@/lib/format';
 import cn from '@/lib/cn';
 import Input from '@/components/ui/Input';
@@ -25,6 +30,7 @@ import Button from '@/components/ui/Button';
 import Checkbox from '@/components/ui/Checkbox';
 import SelectField from '@/components/ui/SelectField';
 import PageHeader from '@/components/admin/PageHeader';
+import MissingFields from '@/components/admin/MissingFields';
 import { Section } from '@/components/admin/DeviceLines';
 import DeviceFinder from '@/components/admin/DeviceFinder';
 import PricedLines, { emptyLine } from '@/components/admin/PricedLines';
@@ -41,6 +47,48 @@ import Skeleton from '@/components/ui/Skeleton';
 
 // Each option carries its tax name and rate - see `provinceTaxOptions`.
 const PROVINCE_OPTIONS = provinceTaxOptions();
+
+/**
+ * One resolver for both modes: the edit page sends the whole invoice and is
+ * validated exactly as the create form is, because it IS the create form with
+ * a record loaded into it - the same reasoning `invoiceUpdateSchema` gives for
+ * branching on `user` rather than accepting a partial.
+ *
+ * Wrapped, because a fresh device block seeds a blank priced line that this
+ * form drops on submit and `invoiceLineSchema` would reject - see
+ * `deviceFormResolver`.
+ *
+ * `billable` because an invoice has to bill from something: this form has no
+ * flat-amount box, so the rule resolves to "add a service or part", and it is
+ * checked against the real rows rather than the placeholders standing in for
+ * the blank ones.
+ */
+const INVOICE_RESOLVER = deviceFormResolver(adminInvoiceSchema, { billable: true });
+
+/**
+ * What the summary beside the submit calls each field. See `MissingFields`.
+ *
+ * `amount` is the itemised-or-flat rule landing somewhere: this form has no
+ * flat-amount box, so the only way to satisfy it is to bill from lines, and
+ * the label says that rather than naming a field the page does not show.
+ */
+const INVOICE_FIELD_LABELS = {
+  user: 'Customer',
+  amount: 'At least one service or part',
+  issuedAt: 'Invoice date',
+  dueDate: 'Due date',
+  'devices.*.model': 'Device model',
+  taxPercent: 'Tax rate',
+  discountDollars: 'Discount',
+  travelKm: 'Distance driven',
+  // A half-filled priced line. Named as a thing rather than left to fall back
+  // to the schema's "Name the line.", which is an instruction sitting in a
+  // list of nouns.
+  'devices.*.services.*.name': 'A name on every service line',
+  'devices.*.parts.*.name': 'A name on every part line',
+  'devices.*.services.*.priceDollars': 'Service line price',
+  'devices.*.parts.*.priceDollars': 'Part line price',
+};
 
 const emptyDevice = () => ({
   category: '',
@@ -163,7 +211,16 @@ export function AdminServiceInvoiceFormPage() {
    */
   const ratePerKm = Number(settingsData?.financial?.travelRateCentsPerKm ?? 0);
 
-  const { register, control, handleSubmit, setValue, reset } = useAdminForm({
+  const {
+    register,
+    control,
+    handleSubmit,
+    setValue,
+    reset,
+    clearErrors,
+    formState: { errors },
+  } = useAdminForm({
+    resolver: INVOICE_RESOLVER,
     defaultValues: {
       user: seededClient,
       issuedAt: today(),
@@ -257,6 +314,28 @@ export function AdminServiceInvoiceFormPage() {
 
   const watched = useWatch({ control });
   const feeOn = Boolean(watched.extendedServiceFee);
+
+  /**
+   * Take the "add a service or part" message down once one has been added.
+   *
+   * `amount` is not a field on this form - the rule is about the lines - so
+   * react-hook-form has nothing to revalidate when a line is typed, and
+   * `reValidateMode: 'onChange'` only re-runs the fields that are already in
+   * error. Without this the message survives the very edit that satisfies it,
+   * still asking for a service the person has just entered.
+   *
+   * Only ever clears. Putting the error back is the resolver's job, on the
+   * next submit, so a line emptied again is not re-flagged mid-typing.
+   */
+  const billable = (watched.devices ?? []).some((device) =>
+    [...(device?.services ?? []), ...(device?.parts ?? [])].some((row) =>
+      String(row?.name ?? '').trim() || String(row?.priceDollars ?? '').trim(),
+    ),
+  );
+
+  useEffect(() => {
+    if (billable && errors.amount) clearErrors('amount');
+  }, [billable, errors.amount, clearErrors]);
 
   /**
    * The running total, and the allowance beside it.
@@ -411,13 +490,20 @@ export function AdminServiceInvoiceFormPage() {
         </p>
       )}
 
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-3 pb-24">
+      {/* `noValidate`: the browser's native bubble would refuse the submit
+          before react-hook-form runs, one field at a time and unstyled, so the
+          summary beside the button would never appear. See `TicketForm`. */}
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-3 pb-24" noValidate>
         <Section icon={Info} title="Basic information">
           <div className="grid gap-3 lg:grid-cols-4">
             <SelectField
               control={control}
               name="user"
               label="Customer"
+              // An invoice is raised against somebody, so the schema requires
+              // it on both paths - unlike the estimate, the customer stays
+              // editable on an edit here.
+              required
               // Searchable explicitly, not by row count: this is every approved
               // account and it grows with the business.
               searchable
@@ -439,8 +525,19 @@ export function AdminServiceInvoiceFormPage() {
             {/* No `size` or `h-9` here any more: the density context sets the
                 height, and hand-sizing a field beside it is what let the two
                 drift apart in the first place. */}
-            <Input label="Invoice date" type="date" {...register('issuedAt')} />
-            <Input label="Due date" type="date" {...register('dueDate')} />
+            <Input
+              label="Invoice date"
+              type="date"
+              error={errors.issuedAt?.message}
+              {...register('issuedAt')}
+            />
+            <Input
+              label="Due date"
+              type="date"
+              hint="Leave blank to derive it from the terms."
+              error={errors.dueDate?.message}
+              {...register('dueDate')}
+            />
             <SelectField
               control={control}
               name="serviceType"
@@ -690,6 +787,8 @@ export function AdminServiceInvoiceFormPage() {
                   type="number"
                   step="0.01"
                   min="0"
+                  placeholder="0.00"
+                  error={errors.discountDollars?.message}
                   {...register('discountDollars')}
                 />
                 <Input
@@ -720,6 +819,8 @@ export function AdminServiceInvoiceFormPage() {
                   min="0"
                   max="100"
                   hint="0 means tax exempt"
+                  placeholder="e.g. 5"
+                  error={errors.taxPercent?.message}
                   {...register('taxPercent')}
                 />
               </div>
@@ -772,6 +873,10 @@ export function AdminServiceInvoiceFormPage() {
             </div>
           </div>
         </Section>
+
+        {/* What a refused submit is still waiting on, beside the button that
+            refused it. The button stays pressable - see `MissingFields`. */}
+        <MissingFields errors={errors} labels={INVOICE_FIELD_LABELS} />
 
         <div className="flex justify-end gap-2">
           <Button

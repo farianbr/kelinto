@@ -1,4 +1,4 @@
-import { useFieldArray, useWatch } from 'react-hook-form';
+import { useFieldArray, useWatch, useFormState } from 'react-hook-form';
 import { ClipboardCheck, Plus, Smartphone, Trash2 } from 'lucide-react';
 import cn from '@/lib/cn';
 import Input from '@/components/ui/Input';
@@ -48,6 +48,11 @@ function Section({ icon: Icon, title, hint, children, className }) {
 function LineEditor({ control, register, name, label, addLabel }) {
   const { fields, append, remove } = useFieldArray({ control, name });
 
+  // This array's own errors. Scoped by `name` so a rejected line re-renders
+  // its own block rather than every line editor on a multi-device ticket.
+  const { errors } = useFormState({ control, name });
+  const lineErrors = at(errors, name);
+
   return (
     <div className="mt-3">
       <p className="eyebrow mb-2 text-ink-400">{label}</p>
@@ -59,26 +64,33 @@ function LineEditor({ control, register, name, label, addLabel }) {
       <div className="space-y-2">
         {fields.map((field, index) => (
           <div key={field.id} className="grid gap-2 sm:grid-cols-[1fr_1fr_90px_80px_auto]">
+            {/* Required once the row has been started - an untouched row is
+                dropped on submit rather than rejected. The star rides on the
+                placeholder because this grid is deliberately label-less. */}
             <Input
-              placeholder="Name"
+              placeholder="Name *"
               aria-label={`${label} name`}
+              error={lineErrors?.[index]?.name?.message}
               {...register(`${name}.${index}.name`)}
             />
             <Input
               placeholder="Description (optional)"
               aria-label={`${label} description`}
+              error={lineErrors?.[index]?.description?.message}
               {...register(`${name}.${index}.description`)}
             />
             <Input
               placeholder="0.00"
               inputMode="decimal"
               aria-label={`${label} price`}
+              error={lineErrors?.[index]?.priceDollars?.message}
               {...register(`${name}.${index}.priceDollars`)}
             />
             <Input
               placeholder="Qty"
               inputMode="numeric"
               aria-label={`${label} quantity`}
+              error={lineErrors?.[index]?.qty?.message}
               {...register(`${name}.${index}.qty`)}
             />
             <button
@@ -121,6 +133,12 @@ function LineEditor({ control, register, name, label, addLabel }) {
 function DeviceBlock({ control, register, setValue, index, canRemove, onRemove, variant = 'ticket' }) {
   const isIntake = variant === 'ticket';
 
+  // The model's error, if a submit was refused for it. The finder is a set of
+  // step cards rather than an input, so there is nothing for the browser to
+  // mark and the message has to be placed by hand - see the note below.
+  const { errors } = useFormState({ control, name: `devices.${index}.model` });
+  const modelError = at(errors, `devices.${index}.model`)?.message;
+
   return (
     <div className="rounded-md border border-line bg-surface-2/50 p-3.5">
       <div className="mb-3 flex items-center justify-between gap-2">
@@ -149,11 +167,29 @@ function DeviceBlock({ control, register, setValue, index, canRemove, onRemove, 
           unnamed device cannot be found again - but the requirement now lives
           on the schema rather than on an input attribute, because a step card
           is not a form control the browser can mark. */}
+      {/* The one required field in the block, so it says so. The star is on a
+          heading rather than a label because the finder has no single control
+          to hang one off, and `Input`'s own treatment is reused verbatim so it
+          reads as the same mark the fields below it carry. */}
+      <p className="mb-1.5 block text-xs font-medium text-ink-700">
+        Device
+        <span className="ml-0.5 text-danger" aria-hidden="true">
+          *
+        </span>
+      </p>
+
       <DeviceFinder control={control} setValue={setValue} index={index} />
-      {isIntake && (
-        <p className="mt-1.5 text-xs text-ink-400">
-          Pick down to the model where you can - it is how this ticket is found again.
+
+      {modelError ? (
+        <p role="alert" className="mt-1.5 text-xs font-medium text-danger">
+          {modelError}
         </p>
+      ) : (
+        isIntake && (
+          <p className="mt-1.5 text-xs text-ink-400">
+            Pick down to the model where you can - it is how this ticket is found again.
+          </p>
+        )
       )}
 
       <div className="mt-2 grid gap-2 sm:grid-cols-2">
@@ -249,6 +285,20 @@ function useTicketTotal(control) {
     tax: Math.round(tax * 100),
     total: Math.round((subtotal + tax) * 100),
   };
+}
+
+/**
+ * Walk a dotted path into the error tree.
+ *
+ * `name` arrives as `devices.0.services` - where RHF nests this array's errors
+ * - and the error object has no lookup of its own. Undefined at the first
+ * missing step, which is the normal case: the tree is empty until a submit is
+ * refused.
+ */
+function at(errors, path) {
+  return String(path)
+    .split('.')
+    .reduce((node, key) => (node == null ? undefined : node[key]), errors);
 }
 
 export { emptyLine, Section, LineEditor, DeviceBlock, useTicketTotal };

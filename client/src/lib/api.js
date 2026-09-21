@@ -20,6 +20,28 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Paths where the admin's business selection is a real instruction.
+ *
+ * The panel's own calls, and `/auth/me` - which carries the feature set back,
+ * and a business's type is what decides which sections exist
+ * (SAAS_PLATFORM §1.1). Without the scope on that one call the sidebar would
+ * never change, however many admin lists switched correctly underneath it.
+ *
+ * Everything else - the catalogue, the cart, checkout, `/auth/login`,
+ * `/auth/register` - is customer-facing and belongs to the business the HOST
+ * names. Sending a selection there lets a panel session somebody opened once
+ * redirect a shopper's browser into another business. See `buildUrl`.
+ *
+ * `/kiosk` is deliberately absent: it is its own application on its own
+ * session and adopts its business from the URL, not from the panel's store.
+ */
+const SELECTABLE = ['/admin', '/auth/me'];
+
+function isSelectable(path) {
+  return SELECTABLE.some((prefix) => path === prefix || path.startsWith(`${prefix}/`) || path.startsWith(`${prefix}?`));
+}
+
 function buildUrl(path, params) {
   const url = `${BASE}${path}`;
 
@@ -54,8 +76,30 @@ function buildUrl(path, params) {
    *
    * `/superadmin` is the exception: the console is a platform application that
    * sits above every business, and scoping it to one would be meaningless.
+   *
+   * ## Why the host wins in production, and this does not
+   *
+   * The admin selection is in `localStorage`, which outlives the session that
+   * set it: it survives sign-out, and it is shared by every tab on the origin.
+   * So a staff member who opened CellShoppe in the panel once had that id
+   * attached to **every** later request from that browser - including the
+   * storefront's, and including `/auth/login`.
+   *
+   * Because `?business=` outranks the host in `resolveBusiness`, that turned a
+   * correctly-routed production request into a request for another business:
+   * the shop rendered CellShoppe's 12 shelf parts (none of which have photos,
+   * so the grid was *empty*), and `buyer@cellvix.ca` was rejected as a bad
+   * credential because `User` is per-business and that account is not in
+   * CellShoppe's database. Both read as application bugs and neither mentions
+   * the business.
+   *
+   * So the parameter is now sent only where it is a genuine selection - the
+   * panel and the session call that shapes it - and never on a customer-facing
+   * request, where the host is the authority and is already right. Development
+   * keeps the old behaviour for every path, because on one `localhost` there
+   * is no host to read and the selection is the only answer available.
    */
-  const scopedPath = !path.startsWith('/superadmin');
+  const scopedPath = !path.startsWith('/superadmin') && (import.meta.env.DEV || isSelectable(path));
   const business = scopedPath ? getBusiness() : null;
   const scoped = business && !(params && 'business' in params) ? { ...params, business } : params;
 

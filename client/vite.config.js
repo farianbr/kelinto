@@ -43,4 +43,22 @@ export default defineConfig({
       },
     },
   },
+  /**
+   * `vite preview` serves the production bundle, and it needs the same proxy.
+   *
+   * Without it the only way to exercise a production build locally is to point
+   * it at a deployed API, so the one code path that behaves differently in
+   * production - see `isSelectable` in `lib/api.js`, which stops the admin's
+   * business selection reaching customer-facing requests - could not be tested
+   * before shipping. It cost an empty storefront on the live site once.
+   */
+  preview: {
+    port: 4173,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:4000',
+        changeOrigin: true,
+      },
+    },
+  },
 });

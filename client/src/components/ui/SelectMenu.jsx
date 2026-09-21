@@ -46,8 +46,21 @@ const SIZES = {
   mdCompact: 'h-9 pl-3.5 pr-3 text-sm rounded-md',
 };
 
-/** Height of one option row - px-2.5 py-2 around a 13px line. */
-const OPTION_H = 33;
+/**
+ * Height of one option row: `py-2` (16px) around a `text-sm` line.
+ *
+ * **Measured, not derived.** This read 33 on the arithmetic of a 13px line,
+ * but the row is `text-sm` - 14px at Tailwind's 1.43 leading, so 20px of text
+ * and 36px in total. The 3px shortfall is invisible on a short menu and
+ * compounds: at the nine-row cap the budget came to 305px for 328px of
+ * content, so the ninth option was cut through the middle - a list that says
+ * "clipped" rather than "scrollable", which is the exact failure the
+ * `rowHeight` snapping below exists to prevent.
+ *
+ * Ticket statuses are the nine-row case that surfaced it. Anything that
+ * changes the row's padding or font size has to change this with it.
+ */
+const OPTION_H = 36;
 
 /**
  * Past this many options a menu grows its own search box.
