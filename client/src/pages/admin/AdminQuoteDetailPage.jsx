@@ -28,6 +28,8 @@ import ProcessStrip from '@/components/admin/ProcessStrip';
 import WorkflowLineage from '@/components/admin/WorkflowLineage';
 import { useSetRecordLabel } from '@/components/admin/shell/recordLabel';
 import { useAdminQuote, useAdminMutations } from '@/hooks/useAdmin';
+import useAuth from '@/hooks/useAuth';
+import AdminServiceQuoteDetailPage from './AdminServiceQuoteDetailPage';
 import Skeleton from '@/components/ui/Skeleton';
 import { pressable } from '@/lib/motion';
 
@@ -264,6 +266,24 @@ export const QUOTE_STATUS_CONFIRM = {
     tone: 'danger',
   },
 };
+
+/**
+ * One quote, from whichever collection this business keeps them in.
+ *
+ * The same split `AdminQuotesPage` makes one level up, and for the same reason:
+ * `Quote` prices catalogue lines, `ServiceQuote` prices devices and labour, and
+ * they are separate collections behind separate endpoints.
+ *
+ * This branch used to be missing, so `/admin/quotes/:id` asked the WHOLESALE
+ * endpoint for every business - and on a repair shop every row in the list
+ * opened onto "Quote not found". The record was real and the list was right;
+ * the detail route was querying the wrong collection.
+ */
+export function AdminQuoteDetailRoute() {
+  const { features } = useAuth();
+  if (features?.['sales.services']) return <AdminServiceQuoteDetailPage />;
+  return <AdminQuoteDetailPage />;
+}
 
 function AdminQuoteDetailPage() {
   const t = useTableClasses();
@@ -728,4 +748,4 @@ function AdminQuoteDetailPage() {
   );
 }
 
-export default AdminQuoteDetailPage;
+export default AdminQuoteDetailRoute;

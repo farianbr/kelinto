@@ -1,4 +1,5 @@
-import { useFieldArray, useForm, useWatch, Controller } from 'react-hook-form';
+import { useFieldArray, useWatch, Controller } from 'react-hook-form';
+import useAdminForm from '@/hooks/useAdminForm';
 import {
   AlertCircle,
   ClipboardCheck,
@@ -15,8 +16,10 @@ import {
   TICKET_STATUS_LABELS,
   TICKET_PRIORITIES,
   TICKET_SOURCES,
+  TAX_RATES,
+  provinceTaxOptions,
 } from '@shared/schemas/admin';
-import { PROVINCES } from '@shared/schemas/checkout';
+
 import cn from '@/lib/cn';
 import { money, titleize } from '@/lib/format';
 import Input from '@/components/ui/Input';
@@ -60,6 +63,8 @@ import {
  * already knows the job.
  */
 
+const PROVINCE_OPTIONS = provinceTaxOptions();
+
 const STATUS_OPTIONS = TICKET_STATUSES.map((value) => ({
   value,
   label: TICKET_STATUS_LABELS[value],
@@ -84,14 +89,30 @@ const emptyDevice = () => ({
 });
 
 
-export function TicketForm({ ticket, seed, technicians = [], onSubmit, onCancel, isPending, error }) {
+export function TicketForm({
+  ticket,
+  seed,
+  technicians = [],
+  clients = [],
+  onSubmit,
+  onCancel,
+  isPending,
+  error,
+}) {
   const editing = Boolean(ticket);
 
-  const { register, handleSubmit, control } = useForm({
+  // `useAdminForm`, not raw `useForm`: this form was the one that missed the
+  // submit-only validation and the scroll-to-first-error, so intake alone still
+  // marked untouched fields red and refused a submit without moving the page.
+  const { register, handleSubmit, control, setValue } = useAdminForm({
     defaultValues: {
       customerName: ticket?.customer.name ?? seed?.name ?? '',
       customerPhone: ticket?.customer.phone ?? seed?.phone ?? '',
       customerEmail: ticket?.customer.email ?? seed?.email ?? '',
+      // The linked account, when there is one. Blank for a walk-in, which is
+      // the common case - see the picker above the contact fields.
+      // `customer.userId` is where the serializer puts it, not `ticket.user`.
+      user: ticket?.customer?.userId ?? seed?.client ?? '',
 
       devices: ticket?.devices?.length
         ? ticket.devices.map((device) => ({
@@ -169,7 +190,65 @@ export function TicketForm({ ticket, seed, technicians = [], onSubmit, onCancel,
       )}
 
       <Section icon={Info} title="Basic information">
-        <div className="grid gap-2 sm:grid-cols-2">
+        {/* Three contact fields on one row, not two and a full-width third.
+
+            Email used to sit outside this grid, so it ran the entire width of
+            the page while the name and phone above it were half of it - a
+            22-character address in a 900px box, ragged against the two fields
+            it belongs with. A field's width is a hint about its content, and
+            an address is not four times a phone number. */}
+        {/* Pick an existing customer, or just type one.
+
+            A ticket stores its customer as free TEXT - a walk-in with no
+            account is the normal case at a repair counter, and a picker that
+            insisted on an account would block the fastest intake there is. So
+            the name stays a text field and the picker sits above it as a
+            shortcut: choosing somebody fills the name, phone and email in one
+            action and links the ticket to their account, and typing over any
+            of it afterwards still works.
+
+            `user` is a hidden field rather than state so it travels with the
+            form on submit, the same way the seeded `client` already did. */}
+        {clients.length > 0 && (
+          <div className="mb-2">
+            <SelectField
+              control={control}
+              name="user"
+              label="Existing customer"
+              hint="Optional - fills the three fields below, or leave it and type a walk-in."
+              searchable
+              searchPlaceholder="Name, business or email…"
+              options={[
+                { value: '', label: '– Walk-in / type below –' },
+                ...clients.map((client) => ({
+                  value: client.id,
+                  label: `${client.displayName}${client.email ? ` · ${client.email}` : ''}`,
+                })),
+              ]}
+              onValueChange={(value) => {
+                const picked = clients.find((client) => client.id === value);
+                if (!picked) return;
+                setValue('customerName', picked.displayName ?? '', { shouldDirty: true });
+                setValue('customerPhone', picked.phone ?? '', { shouldDirty: true });
+                setValue('customerEmail', picked.email ?? '', { shouldDirty: true });
+              }}
+              // Typing the name onto the ticket, NOT navigating to the customer
+              // form: intake is half-filled by this point and leaving the page
+              // would lose it. A walk-in does not need an account, and one can
+              // be opened later from the ticket - so the useful answer here is
+              // "use what I typed", which is exactly what the free-text name
+              // below already supports.
+              onCreate={(typed) => {
+                setValue('customerName', typed, { shouldDirty: true });
+                setValue('user', '', { shouldDirty: true });
+              }}
+              createLabel={'Use "{q}" as a walk-in'}
+              createLabelEmpty="Type a name to use it as a walk-in"
+            />
+          </div>
+        )}
+
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           <Input label="Customer name" required {...register('customerName')} />
           <Controller
             name="customerPhone"
@@ -184,14 +263,17 @@ export function TicketForm({ ticket, seed, technicians = [], onSubmit, onCancel,
               />
             )}
           />
+          <Input
+            label="Email"
+            type="email"
+            // Every other field on this row shows the shape of its answer; this
+            // one was the only empty box, which reads as a field that wants
+            // something different from what it wants.
+            placeholder="name@example.com"
+            hint="Optional - used only if the shop emails a receipt."
+            {...register('customerEmail')}
+          />
         </div>
-        <Input
-          label="Email"
-          type="email"
-          hint="Optional - used only if the shop emails a receipt."
-          containerClassName="mt-2"
-          {...register('customerEmail')}
-        />
 
         <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {!editing && (
@@ -203,6 +285,11 @@ export function TicketForm({ ticket, seed, technicians = [], onSubmit, onCancel,
             control={control}
             name="technician"
             label="Assign technician"
+            // Staff grows; status and priority do not. That is the line for
+            // `searchable` - whether the list tracks the business, not what it
+            // happens to hold today.
+            searchable
+            searchPlaceholder="Technician name…"
             options={technicianOptions}
           />
           <SelectField control={control} name="source" label="Source" options={SOURCE_OPTIONS} />
@@ -216,6 +303,7 @@ export function TicketForm({ ticket, seed, technicians = [], onSubmit, onCancel,
               key={field.id}
               control={control}
               register={register}
+              setValue={setValue}
               index={index}
               canRemove={fields.length > 1}
               onRemove={() => remove(index)}
@@ -288,7 +376,12 @@ export function TicketForm({ ticket, seed, technicians = [], onSubmit, onCancel,
             control={control}
             name="province"
             label="Province"
-            options={[{ value: '', label: ' - pick province - ' }, ...PROVINCES]}
+            // Each option names its tax and rate, and picking one fills the
+            // field beside it. Neither happened before: the list was bare
+            // province names and the rate never moved, so a ticket priced in
+            // Ontario kept whatever rate was already in the box.
+            options={PROVINCE_OPTIONS}
+            onValueChange={(value) => setValue('taxRate', TAX_RATES[value] ?? 0)}
           />
           <Input
             label="Tax rate (%)"

@@ -3,7 +3,8 @@ import useDocumentTitle from '@/hooks/useDocumentTitle';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { zodResolver } from '@hookform/resolvers/zod';
 import useAdminForm from '@/hooks/useAdminForm';
-import { invoiceTipSchema } from '@shared/schemas/admin';
+import useAuth from '@/hooks/useAuth';
+import { invoiceTipSchema, invoicePaymentSchema } from '@shared/schemas/admin';
 import {
   AlertCircle,
   ArrowLeft,
@@ -22,7 +23,6 @@ import {
   RotateCcw,
   Tag,
   Trash2,
-  Undo2,
   Wallet,
 } from 'lucide-react';
 
@@ -136,10 +136,20 @@ export function AdminInvoiceDetailPage() {
    */
   const { data: auditData } = useAuditLog('activity', { entity: 'invoice', q: number, limit: 20 });
 
+  /**
+   * Which kind of business this is, which decides where Edit goes.
+   *
+   * A service business has a full invoice form at `/admin/invoices/:number/edit`
+   * and Edit opens it. A wholesaler has no such screen - its invoices are
+   * raised in a modal over the list - so Edit there keeps the clerical dialog
+   * on this page.
+   */
+  const { features } = useAuth();
+  const isService = Boolean(features?.['sales.services']);
+
   const {
     recordInvoicePayment,
     recordInvoiceTip,
-    voidInvoice,
     emailInvoice,
     reverseInvoicePayment,
     updateInvoice,
@@ -156,7 +166,6 @@ export function AdminInvoiceDetailPage() {
   const [paying, setPaying] = useState(false);
   const [tipping, setTipping] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [voiding, setVoiding] = useState(false);
 
   /**
    * `?refund=1` opens the refund form on arrival.
@@ -301,7 +310,16 @@ export function AdminInvoiceDetailPage() {
               All invoices
             </Link>
 
-            <Button size="sm" variant="outline" icon={Pencil} onClick={() => setEditing(true)}>
+            {/* The full form on a service business, the clerical dialog on a
+                wholesaler - see `isService` above. */}
+            <Button
+              size="sm"
+              variant="outline"
+              icon={Pencil}
+              onClick={() =>
+                isService ? navigate(`/admin/invoices/${number}/edit`) : setEditing(true)
+              }
+            >
               Edit
             </Button>
 
@@ -386,21 +404,14 @@ export function AdminInvoiceDetailPage() {
                   onSelect: () => window.open(documentUrl, '_blank', 'noopener'),
                 },
                 {
-                  key: 'void',
-                  label: 'Void',
-                  icon: Undo2,
-                  disabled: settled,
-                  onSelect: () => setVoiding(true),
-                },
-                {
                   key: 'delete',
                   label: 'Delete',
                   icon: Trash2,
                   tone: 'danger',
-                  // Refused server-side once money has touched it; disabled
-                  // here so the staff member is not offered a button that will be
-                  // refused a moment later.
-                  disabled: invoice.amountPaid > 0,
+                  // Never disabled any more. It used to be refused once money
+                  // had touched the invoice, with voiding offered instead;
+                  // voiding is gone and deleting takes the payments with it,
+                  // which the confirm states before anything happens.
                   onSelect: () => setDeleting(true),
                 },
               ]}
@@ -1033,40 +1044,46 @@ export function AdminInvoiceDetailPage() {
       />
 
       <ConfirmDialog
-        open={voiding}
-        onClose={() => setVoiding(false)}
-        onConfirm={() =>
-          voidInvoice.mutate(
-            { number: invoice.number, reason: 'Voided from the invoice screen' },
-            { onSuccess: () => setVoiding(false) },
-          )
-        }
-        title={`Void ${invoice.number}?`}
-        body="The balance is forgiven and stops counting against their credit. The invoice stays in the record."
-        tone="danger"
-        confirmLabel="Void invoice"
-        loading={voidInvoice.isPending}
-      />
-
-      <ConfirmDialog
         open={deleting}
         onClose={() => setDeleting(false)}
         onConfirm={() =>
           deleteInvoice.mutate(
             { number: invoice.number },
             {
-              onSuccess: () => {
+              onSuccess: (payload) => {
                 setDeleting(false);
+                toast.ok(
+                  'Invoice deleted',
+                  payload?.deletedPayments
+                    ? `${invoice.number} is gone, along with ${payload.deletedPayments} payment${payload.deletedPayments === 1 ? '' : 's'} recorded against it.`
+                    : `${invoice.number} is gone.`,
+                );
                 navigate('/admin/invoices');
               },
             },
           )
         }
         title={`Delete ${invoice.number}?`}
-        body="The invoice is removed and the balance it reserved is released back to the account's line of credit."
-        tone="danger"
+        /**
+         * The payments are named, because they go too.
+         *
+         * Deleting destroys the invoice AND every payment recorded on it, and
+         * refunds nothing - so this dialog is the last place that money is
+         * mentioned. `critical` with the number typed out whenever money has
+         * touched it; an invoice nobody has paid is an ordinary delete and
+         * does not need the typing.
+         */
+        body={
+          invoice.amountPaid > 0
+            ? `The invoice for ${invoice.displayName ?? invoice.businessName ?? 'this customer'} is destroyed, and so is the ${money(invoice.amountPaid)} recorded as paid against it. That money is NOT refunded - if the customer is owed it back, refund the invoice first. Any balance it reserved is released back to their line of credit.`
+            : `The invoice for ${invoice.displayName ?? invoice.businessName ?? 'this customer'} is removed, and the balance it reserved is released back to their line of credit. This cannot be undone.`
+        }
+        tone={invoice.amountPaid > 0 ? 'critical' : 'danger'}
+        confirmPhrase={invoice.amountPaid > 0 ? invoice.number : undefined}
+        confirmPhraseLabel="the invoice number"
         confirmLabel="Delete invoice"
         loading={deleteInvoice.isPending}
+        error={deleteInvoice.error?.message}
       />
     </div>
   );

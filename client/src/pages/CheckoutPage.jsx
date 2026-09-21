@@ -117,7 +117,18 @@ export function CheckoutPage() {
 
   const form = useForm({
     resolver: zodResolver(checkoutSchema),
-    mode: 'onTouched',
+    /*
+      Checked when the buyer presses Continue, not while they look around.
+
+      Each step gates on an explicit `trigger(STEP_FIELDS[stepKey])` below, so
+      nothing is skipped by waiting: the fields for the step are validated the
+      moment the buyer tries to leave it. What waiting avoids is a form that
+      calls a field wrong because the buyer clicked into it and back out while
+      reading what it wanted. `reValidateMode` then clears each message as the
+      field is fixed, rather than at the next press.
+    */
+    mode: 'onSubmit',
+    reValidateMode: 'onChange',
     defaultValues: buildDefaults(null),
   });
 

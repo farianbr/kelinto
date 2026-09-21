@@ -315,6 +315,10 @@ export function App() {
         {/* Declared before ":number" so "create" is matched as a literal
             rather than read as an invoice number. */}
         <Route path="invoices/create" element={<AdminServiceInvoiceFormPage />} />
+        {/* The same form as "create", with the record loaded - see the note on
+            the component. A distinct path rather than a flag, so the edit
+            screen is linkable and Back behaves. */}
+        <Route path="invoices/:number/edit" element={<AdminServiceInvoiceFormPage />} />
         <Route path="invoices/:number" element={<AdminInvoiceDetailPage />} />
 
         {/* Approvals is the Clients screen filtered, and keeps its own screen

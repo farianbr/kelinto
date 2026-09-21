@@ -40,13 +40,34 @@ import { useForm } from 'react-hook-form';
  * `handleSubmit` takes the same arguments as RHF's. A second argument still
  * works and runs after the scroll, so a form needing its own invalid handling
  * keeps it.
+ *
+ * ## When errors appear
+ *
+ * **On submit, never before** - see `mode` below. A field the person has not
+ * filled in yet is not a field they got wrong, and marking it red as they tab
+ * past accuses them of a mistake they have not made.
  */
 export function useAdminForm(options = {}) {
   const form = useForm({
-    // Errors appear as soon as a touched field is left, rather than only on
-    // submit: a person correcting one field should not have to press the
-    // button again to find out whether they got it right.
-    mode: 'onTouched',
+    /*
+      Nothing is validated until the person presses the button.
+
+      This was `onTouched`, on the reasoning that somebody correcting one field
+      should not have to submit again to find out whether they got it right.
+      What it did in practice was accuse people of mistakes they had not made
+      yet: tabbing through a form to see what it asks for - clicking into Email,
+      clicking out to Phone - lit up every field left empty on the way past,
+      before a single character had been typed. An empty field somebody has not
+      filled in yet is not an error, it is a field they have not reached.
+
+      `onSubmit` holds until the button, and `reValidateMode` then takes over:
+      once a field HAS been rejected, it re-checks as the person types, so the
+      message clears the moment it is fixed rather than at the next submit.
+      That keeps the correction loop `onTouched` was reaching for, without
+      pre-emptively marking untouched fields wrong.
+    */
+    mode: 'onSubmit',
+    reValidateMode: 'onChange',
     shouldFocusError: true,
     ...options,
   });

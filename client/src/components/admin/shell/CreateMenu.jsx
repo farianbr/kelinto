@@ -46,10 +46,18 @@ const GROUPS = [
     items: [
       { key: 'client', label: 'Client', to: '/admin/clients', icon: 'Users', area: 'clients', feature: 'sales.clients' },
       { key: 'order', label: 'Order', to: '/admin/orders', icon: 'Package', area: 'sales', feature: 'sales.orders' },
-      { key: 'invoice', label: 'Invoice', to: '/admin/invoices', icon: 'FileText', area: 'sales', feature: 'sales.invoices' },
-      { key: 'quote', label: 'Quote', to: '/admin/quotes', icon: 'FileSignature', area: 'sales', feature: 'sales.quotes' },
+      // `servicePage` is where this entry goes on a business that sells labour.
+      // A repair invoice and a repair estimate are raised on their own screens,
+      // because each carries devices, services, parts and travel - more than a
+      // dialog holds without scrolling past what it is asking about. Naming the
+      // destination here rather than letting the list redirect is what keeps the
+      // wholesale modal from mounting for a frame on the way past.
+      { key: 'invoice', label: 'Invoice', to: '/admin/invoices', servicePage: '/admin/invoices/create', icon: 'FileText', area: 'sales', feature: 'sales.invoices' },
+      { key: 'quote', label: 'Quote', to: '/admin/quotes', servicePage: '/admin/quotes/create', icon: 'FileSignature', area: 'sales', feature: 'sales.quotes' },
       { key: 'rma', label: 'RMA', to: '/admin/rma', icon: 'RotateCcw', area: 'sales', feature: 'sales.rma' },
-      { key: 'ticket', label: 'Ticket', to: '/admin/tickets', icon: 'ClipboardList', area: 'sales', feature: 'sales.tickets' },
+      // A ticket only exists on a service business, so its own screen is not
+      // conditional - there is no modal behind this one to fall back to.
+      { key: 'ticket', label: 'Ticket', to: '/admin/tickets/new', page: true, icon: 'ClipboardList', area: 'sales', feature: 'sales.tickets' },
     ],
   },
   {
@@ -73,6 +81,11 @@ export function CreateMenu() {
   const navigate = useNavigate();
   const { permissions, features, isAdmin } = useAuth();
   useOnClickOutside(ref, () => setOpen(false));
+
+  // `sales.services` is on exactly when the business sells labour - the same
+  // test the quotes and invoices lists branch on. It decides which destination
+  // an entry carrying both takes.
+  const isService = Boolean(features?.['sales.services']);
 
   /**
    * What this session may actually create.
@@ -162,7 +175,16 @@ export function CreateMenu() {
                       // to consume. A type with its own create screen is
                       // navigated to directly - appending the sentinel there
                       // would put a flag in the URL that nothing reads.
-                      navigate(item.page ? item.to : `${item.to}?new=1`);
+                      //
+                      // The menu already knows which business it is in, so a
+                      // service business is sent straight to the full page. It
+                      // used to navigate to the list with `?new=1` and let the
+                      // list redirect, which meant the wholesale modal was
+                      // mounted and then navigated out from under - the "it
+                      // still opens the modal" this replaces. Deciding here
+                      // means no modal is ever constructed.
+                      const page = (isService && item.servicePage) || (item.page ? item.to : null);
+                      navigate(page ?? `${item.to}?new=1`);
                     }}
                     className={cn(pressable, 'flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-sm text-ink-700 hover:bg-surface-2 hover:text-ink-900')}
                   >

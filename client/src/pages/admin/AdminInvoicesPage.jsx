@@ -5,18 +5,19 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import useAdminForm from '@/hooks/useAdminForm';
 import {
   AlertCircle,
-  Ban,
   Car,
   Download,
   FileText,
   Info,
   Mail,
+  Pencil,
   Plus,
   Receipt,
   Smartphone,
   RotateCcw,
   StickyNote,
   Tag,
+  Trash2,
   Wallet,
 } from 'lucide-react';
 import { money, date, count as formatCount, titleize } from '@/lib/format';
@@ -35,8 +36,8 @@ import PageHeader from '@/components/admin/PageHeader';
 import BadgeExplainer from '@/components/admin/BadgeExplainer';
 import { TERMS } from '@/components/admin/ApproveClientForm';
 import { Section, DeviceBlock } from '@/components/admin/DeviceLines';
-import { PROVINCES } from '@shared/schemas/checkout';
-import { TAX_RATES, INVOICE_SERVICE_TYPES, invoicePaymentSchema } from '@shared/schemas/admin';
+
+import { TAX_RATES, INVOICE_SERVICE_TYPES, invoicePaymentSchema, provinceTaxOptions } from '@shared/schemas/admin';
 import KpiRow from '@/components/admin/KpiRow';
 import FilterStrip from '@/components/admin/FilterStrip';
 import BulkBar from '@/components/admin/BulkBar';
@@ -54,9 +55,13 @@ import {
   useAdminMutations,
 } from '@/hooks/useAdmin';
 import useCreateParam from '@/hooks/useCreateParam';
+import useCreateRedirect from '@/hooks/useCreateRedirect';
 import downloadExport from '@/lib/exportDownload';
 import cn from '@/lib/cn';
 import { toast } from '@/store/toastStore';
+
+/** Provinces, each carrying its tax name and rate. See `provinceTaxOptions`. */
+const PROVINCE_OPTIONS = provinceTaxOptions();
 
 /** A device as the invoice form starts it - no condition grid, that is intake. */
 const emptyInvoiceDevice = () => ({
@@ -243,42 +248,6 @@ function PaymentForm({ invoice, onSubmit, onCancel, isPending, error }) {
         </Button>
         <Button type="submit" loading={isPending} disabled={outstanding <= 0}>
           Record payment
-        </Button>
-      </div>
-    </form>
-  );
-}
-
-/** Voiding forgives the balance and keeps the row, so the reason is required. */
-function VoidForm({ invoice, onSubmit, onCancel, isPending, error }) {
-  const { register, handleSubmit } = useAdminForm({ defaultValues: { reason: '' } });
-
-  return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-      <p className="rounded-md bg-warn-50 px-3 py-2.5 text-sm leading-relaxed text-warn">
-        Voiding writes off the {money(invoice.balance)} still outstanding on {invoice.number}. The
-        invoice stays on the account with the reason attached - it is not deleted.
-      </p>
-
-      {error && (
-        <p className="flex items-start gap-2 text-sm text-danger">
-          <AlertCircle className="mt-0.5 size-3.5 shrink-0" strokeWidth={2.25} aria-hidden="true" />
-          {error}
-        </p>
-      )}
-
-      <Input
-        label="Reason"
-        placeholder="Duplicate of INV-2026-00041"
-        {...register('reason')}
-      />
-
-      <div className="flex justify-end gap-2">
-        <Button type="button" variant="ghost" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button type="submit" variant="danger" loading={isPending}>
-          Void invoice
         </Button>
       </div>
     </form>
@@ -483,6 +452,7 @@ function InvoiceForm({ clients, technicians = [], defaultUser, onSubmit, onCance
                 key={field.id}
                 control={control}
                 register={register}
+                setValue={setValue}
                 index={index}
                 variant="invoice"
                 canRemove
@@ -584,7 +554,10 @@ function InvoiceForm({ clients, technicians = [], defaultUser, onSubmit, onCance
                 control={control}
                 name="province"
                 label="Province"
-                options={[{ value: '', label: ' - pick province - ' }, ...PROVINCES]}
+                // Each option names its tax and rate, so the list says what is
+                // being charged rather than leaving the reader to remember
+                // which provinces are harmonised.
+                options={PROVINCE_OPTIONS}
                 // Picking a province fills the rate in; the rate stays editable
                 // because zero is a real answer for an exempt customer.
                 onValueChange={(value) => setValue('taxPercent', TAX_RATES[value] ?? 0)}
@@ -663,16 +636,56 @@ export function AdminInvoicesPage() {
   // test the quotes list branches on.
   const { features } = useAuth();
   const isService = Boolean(features?.['sales.services']);
-  const [voiding, setVoiding] = useState(null);
-  // Holds the void reason until the invoice number has been retyped. Voiding is
-  // the one invoice action with no matching un-void.
-  const [voidConfirm, setVoidConfirm] = useState(null);
+  // The invoice awaiting a typed number before it is destroyed.
+  const [deleting, setDeleting] = useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   // Opened directly by `+ Create` (§7.2), which arrives with `?new=1`.
   // `client` seeds the form when the customer profile sends us here to raise
   // an invoice against the account already on screen.
-  const [creating, setCreating, createSeed] = useCreateParam(true, false, ['client']);
+  //
+  // On a service business the create screen is a full page, so the flag is
+  // forwarded to it instead of opening a modal this branch does not use.
+  const redirecting = useCreateRedirect(isService ? '/admin/invoices/create' : null);
+  const [rawCreating, setCreating, createSeed] = useCreateParam(true, false, ['client']);
+
+  /**
+   * Whether we yet know which kind of business this is.
+   *
+   * `features` is `null` until `/auth/me` resolves, so on a FRESH load of
+   * `/admin/invoices?new=1` - which is exactly what `+ Create > Invoice` does
+   * from another page - `isService` was false for the first render or two.
+   * The redirect was therefore armed with `null`, the modal opened, and only
+   * then did the features arrive. That is the "it opens the modal again" from
+   * the customer page: the flag was right and the answer had not loaded.
+   *
+   * So the modal waits for the answer rather than assuming wholesale. Waiting
+   * costs one paint of the list behind it; assuming costs the wrong form.
+   */
+  const knowsBusinessKind = features !== null;
+
+  /**
+   * The modal, suppressed while a redirect is on its way.
+   *
+   * `useCreateParam` reads `?new=1` in its initialiser, so `creating` is true
+   * on the FIRST render - before any effect, including the redirect's, has
+   * run. Without this the service business paints the modal for a frame and
+   * then navigates away from underneath it, which is the "it still opens the
+   * modal" this was meant to fix. Gating on render rather than in the effect
+   * is what keeps that frame from ever existing.
+   *
+   * It also waits for `features`: until those load we do not know whether this
+   * business wants the modal or the page, and opening one to find out is the
+   * bug above.
+   *
+   * **And `isService` is the last word.** The gates above are about timing -
+   * whether a redirect is owed, whether the features have landed - and each of
+   * them fails open once it resolves. A service business must never reach this
+   * modal by ANY route: not the create menu, not the customer profile's "New
+   * invoice", not a bookmarked `?new=1`, not a redirect that lost a race. This
+   * is the one that does not depend on when it is asked.
+   */
+  const creating = isService || redirecting || !knowsBusinessKind ? false : rawCreating;
 
   const status = searchParams.get('status') ?? 'all';
 
@@ -680,7 +693,7 @@ export function AdminInvoicesPage() {
   // Any client can be invoiced - unlike an order, this does not need approval:
   // a pending account can still owe money for a repair.
   const { data: clientData } = useAdminUsers({});
-  const { recordInvoicePayment, voidInvoice, createInvoice, setInvoiceLabel } =
+  const { recordInvoicePayment, createInvoice, setInvoiceLabel, deleteInvoice } =
     useAdminMutations();
 
   // Active only: offering a retired status in a picker is how it gets put back
@@ -921,6 +934,11 @@ export function AdminInvoicesPage() {
     },
   ];
 
+  /**
+   * `false` entries are dropped at the end, which is how an entry that only
+   * exists on one kind of business is expressed - the row menu takes a plain
+   * array and has no notion of a hidden item.
+   */
   const rowMenu = [
     {
       key: 'pay',
@@ -928,6 +946,19 @@ export function AdminInvoicesPage() {
       icon: Wallet,
       disabled: (invoice) => invoice.balance <= 0,
       onSelect: setPaying,
+    },
+    /**
+     * The full edit form, at any status (ruled 2026-09-21).
+     *
+     * Service businesses only: a wholesale invoice is raised in a modal over
+     * this list and has no full-page form to send anybody to, so a wholesaler
+     * correcting what was billed there means deleting and raising again.
+     */
+    isService && {
+      key: 'edit',
+      label: 'Edit invoice',
+      icon: Pencil,
+      onSelect: (invoice) => navigate(`/admin/invoices/${invoice.number}/edit`),
     },
     {
       key: 'document',
@@ -955,14 +986,22 @@ export function AdminInvoicesPage() {
       onSelect: (invoice) => navigate(`/admin/invoices/${invoice.number}?refund=1`),
     },
     {
-      key: 'void',
-      label: 'Void invoice',
-      icon: Ban,
+      /**
+       * Deleting, at any status (ruled 2026-09-21).
+       *
+       * **The payments go with it.** An invoice is the only record that its
+       * payments were applied to anything, so deleting it and keeping them
+       * would leave money recorded against nothing. They are removed with the
+       * invoice and the customer's balance is put back, which the confirm
+       * states in full before the staff member types the number.
+       */
+      key: 'delete',
+      label: 'Delete invoice',
+      icon: Trash2,
       tone: 'danger',
-      disabled: (invoice) => invoice.balance <= 0,
-      onSelect: setVoiding,
+      onSelect: setDeleting,
     },
-  ];
+  ].filter(Boolean);
 
   return (
     <>
@@ -1088,10 +1127,11 @@ export function AdminInvoicesPage() {
         Export, and only export.
 
         **Neither of the other two row actions batches.** Recording a payment
-        needs an amount per invoice and voiding needs a reason per invoice, so a
-        bulk version of either would be answering a question on the staff member
-        behalf about money. Export asks nothing, and pulling a chosen set into a
-        spreadsheet is the thing an accounts person actually reaches for.
+        needs an amount per invoice and deleting destroys a record and its
+        payments, so a bulk version of either would be answering a question on
+        the staff member's behalf about money. Export asks nothing, and pulling
+        a chosen set into a spreadsheet is the thing an accounts person
+        actually reaches for.
       */}
       <BulkBar count={selected.length} noun="selected" onClear={() => setSelected([])}>
         <Button
@@ -1131,25 +1171,6 @@ export function AdminInvoicesPage() {
                 { onSuccess: () => setPaying(null) },
               )
             }
-          />
-        )}
-      </Modal>
-
-      <Modal
-        open={Boolean(voiding)}
-        onClose={() => setVoiding(null)}
-        title="Void invoice"
-        size="md"
-        align="top"
-      >
-        {voiding && (
-          <VoidForm
-            invoice={voiding}
-            isPending={voidInvoice.isPending}
-            // Reported on the confirm step, where the void is actually sent.
-            error={voidConfirm ? undefined : voidInvoice.error?.message}
-            onCancel={() => setVoiding(null)}
-            onSubmit={(values) => setVoidConfirm(values)}
           />
         )}
       </Modal>
@@ -1223,34 +1244,50 @@ export function AdminInvoicesPage() {
           )
         }
       />
-      {/* A void cannot be undone from the admin panel: the invoice stays on the
-          record as void and a replacement has to be raised by hand. The number
-          is retyped so the staff member confirms which invoice they are killing. */}
+      {/*
+        Deleting, and saying exactly what goes with it.
+
+        **The payments are named and counted.** They are destroyed with the
+        invoice and nothing is refunded, so this is the last screen on which
+        that money is mentioned anywhere - a staff member who reads "delete"
+        and assumes the payment survives somewhere else is the failure this
+        copy exists to prevent. `critical`, so the number has to be typed.
+      */}
       <ConfirmDialog
-        open={Boolean(voidConfirm)}
-        onClose={() => setVoidConfirm(null)}
+        open={Boolean(deleting)}
+        onClose={() => setDeleting(null)}
         onConfirm={() =>
-          voidInvoice.mutate(
-            { number: voiding.number, reason: voidConfirm.reason },
+          deleteInvoice.mutate(
+            { number: deleting.number },
             {
-              onSuccess: () => {
-                setVoidConfirm(null);
-                setVoiding(null);
+              onSuccess: (payload) => {
+                setDeleting(null);
+                toast.ok(
+                  'Invoice deleted',
+                  payload?.deletedPayments
+                    ? `${deleting.number} is gone, along with ${formatCount(payload.deletedPayments)} payment${payload.deletedPayments === 1 ? '' : 's'} recorded against it.`
+                    : `${deleting.number} is gone.`,
+                );
               },
             },
           )
         }
-        title="Void this invoice?"
+        title={`Delete ${deleting?.number}?`}
         body={
-          voiding
-            ? `Invoice ${voiding.number} for ${voiding.displayName ?? voiding.businessName} will be marked void.`
+          deleting
+            ? `The invoice for ${deleting.displayName ?? deleting.businessName} is destroyed and leaves no document behind.${
+                (deleting.amountPaid ?? 0) > 0
+                  ? ` The ${money(deleting.amountPaid)} recorded as paid against it is deleted with it and is NOT refunded - if the customer is owed that money back, refund the invoice first.`
+                  : ''
+              } This cannot be undone.`
             : ''
         }
-        confirmPhrase={voiding?.number}
+        tone="critical"
+        confirmPhrase={deleting?.number}
         confirmPhraseLabel="the invoice number"
-        confirmLabel="Void invoice"
-        loading={voidInvoice.isPending}
-        error={voidInvoice.error?.message}
+        confirmLabel="Delete invoice"
+        loading={deleteInvoice.isPending}
+        error={deleteInvoice.error?.message}
       />
 
       <Modal

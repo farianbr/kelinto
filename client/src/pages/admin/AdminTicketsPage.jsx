@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { useForm } from 'react-hook-form';
 import {
@@ -24,6 +24,7 @@ import {
   TICKET_SOURCES,
 } from '@shared/schemas/admin';
 import cn from '@/lib/cn';
+import { apiUrl } from '@/lib/api';
 import reportStatusOutcome from '@/lib/ticketStatusOutcome';
 import { count as formatCount, titleize } from '@/lib/format';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
@@ -43,6 +44,7 @@ import { PER_PAGE_OPTIONS, DEFAULT_PER_PAGE } from '@/hooks/useTablePage';
 import { ADMIN_ROUTES } from '@/lib/adminRoutes';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { useAdminTickets, useAdminMutations } from '@/hooks/useAdmin';
+import useCreateRedirect from '@/hooks/useCreateRedirect';
 
 /**
  * Repair tickets (Sales § Ticket).
@@ -190,21 +192,19 @@ export function AdminTicketsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   /**
-   * `?new=1` still opens intake - it now redirects to the form's own route.
+   * `?new=1` still opens intake - it redirects to the form's own route.
    *
    * The `+ Create > Ticket` menu and the customer profile both link here with
    * that flag (and, from a profile, the customer's details as companions). The
-   * form moved to `/admin/tickets/new`, so rather than teach every caller a new
+   * form lives at `/admin/tickets/new`, so rather than teach every caller a new
    * URL this forwards the whole query string on arrival: one place changed, and
    * an old link somebody bookmarked still lands on the right screen.
+   *
+   * The quotes and invoices lists now do the same thing for the same reason,
+   * so the mechanism moved to `useCreateRedirect` and this is its first caller
+   * rather than its own copy.
    */
-  useEffect(() => {
-    if (searchParams.get('new') !== '1') return;
-    const params = new URLSearchParams(searchParams);
-    params.delete('new');
-    const forwarded = params.toString();
-    navigate(`/admin/tickets/new${forwarded ? `?${forwarded}` : ''}`, { replace: true });
-  }, [searchParams, navigate]);
+  useCreateRedirect('/admin/tickets/new');
 
   const status = searchParams.get('status') ?? 'all';
   const priority = searchParams.get('priority') ?? 'all';
@@ -452,10 +452,20 @@ export function AdminTicketsPage() {
       key: 'pdf',
       label: 'Download PDF',
       icon: Download,
+      /**
+       * The same job sheet the detail screen prints.
+       *
+       * This used to be a `window.alert` saying the sheet "arrives with the
+       * ticket detail screen" - written before that screen had one. It does
+       * now, and the route behind it is read-level, so there was nothing left
+       * for the placeholder to stand in for.
+       *
+       * `apiUrl` rather than a bare path: a new tab carries none of our
+       * headers, so the selected business has to travel in the URL or the
+       * server looks for this ticket in the default business's database.
+       */
       onSelect: (ticket) =>
-        window.alert(
-          `A printable job sheet for ${ticket.ticketNumber} arrives with the ticket detail screen.`,
-        ),
+        window.open(apiUrl(`/admin/tickets/${ticket.id}/document`), '_blank', 'noopener'),
     },
     {
       key: 'delete',

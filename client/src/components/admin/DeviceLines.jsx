@@ -2,6 +2,7 @@ import { useFieldArray, useWatch } from 'react-hook-form';
 import { ClipboardCheck, Plus, Smartphone, Trash2 } from 'lucide-react';
 import cn from '@/lib/cn';
 import Input from '@/components/ui/Input';
+import DeviceFinder from '@/components/admin/DeviceFinder';
 import Textarea from '@/components/ui/Textarea';
 import Button from '@/components/ui/Button';
 import SelectField from '@/components/ui/SelectField';
@@ -117,7 +118,7 @@ function LineEditor({ control, register, name, label, addLabel }) {
  * keeps, and a condition grid records the state at drop-off, which an invoice
  * issued afterwards is not describing.
  */
-function DeviceBlock({ control, register, index, canRemove, onRemove, variant = 'ticket' }) {
+function DeviceBlock({ control, register, setValue, index, canRemove, onRemove, variant = 'ticket' }) {
   const isIntake = variant === 'ticket';
 
   return (
@@ -134,20 +135,26 @@ function DeviceBlock({ control, register, index, canRemove, onRemove, variant = 
         )}
       </div>
 
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        <Input label="Category" placeholder="Smartphone" {...register(`devices.${index}.category`)} />
-        <Input label="Brand" placeholder="Apple" {...register(`devices.${index}.brand`)} />
-        <Input label="Device / Series" placeholder="iPhone 15" {...register(`devices.${index}.series`)} />
-        {/* Required on intake - a ticket for an unnamed device cannot be found
-            again - but not on an invoice, where the line descriptions carry the
-            job and the schema allows the model to be blank. */}
-        <Input
-          label="Model"
-          required={isIntake}
-          placeholder="iPhone 15 Pro"
-          {...register(`devices.${index}.model`)}
-        />
-      </div>
+      {/* Four free-text boxes became a stepped finder over the shop's own
+          device tree.
+
+          As typing they were four unguided fields that agreed with nothing:
+          the same phone arrived as "iphone", "iPhone" and "Apple iPhone"
+          depending on who was at the counter, and none of them matched the
+          device list the shop had actually built. The finder narrows each step
+          to the children of the last, and adds a missing one in place rather
+          than sending somebody to a settings screen mid-intake.
+
+          The model is still effectively required on intake - a ticket for an
+          unnamed device cannot be found again - but the requirement now lives
+          on the schema rather than on an input attribute, because a step card
+          is not a form control the browser can mark. */}
+      <DeviceFinder control={control} setValue={setValue} index={index} />
+      {isIntake && (
+        <p className="mt-1.5 text-xs text-ink-400">
+          Pick down to the model where you can - it is how this ticket is found again.
+        </p>
+      )}
 
       <div className="mt-2 grid gap-2 sm:grid-cols-2">
         <Input label="Serial number" placeholder="e.g. IMEI or S/N" {...register(`devices.${index}.serial`)} />

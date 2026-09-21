@@ -1732,9 +1732,24 @@ function shapeAdminInvoice(invoice) {
     extendedServiceFee: Boolean(invoice.extendedServiceFee),
     extendedServiceFeeCents: invoice.extendedServiceFeeCents ?? 0,
     serviceType: invoice.serviceType ?? null,
-    // `internalNotes` is deliberately NOT here: it is the one note that never
-    // leaves the building, and a field that reaches the client is a field that
-    // reaches a screenshot.
+    technician: invoice.technician ?? null,
+    /**
+     * `internalNotes` IS here, and this used to say it deliberately was not.
+     *
+     * The old reasoning was that it never leaves the building and a field that
+     * reaches the client is a field that reaches a screenshot. That holds for
+     * a CUSTOMER-facing payload; this shape is not one. Every caller of
+     * `shapeAdminInvoice` sits behind `requirePermission('sales', …)`, and the
+     * buyer's own copy is rendered by the document service from the record
+     * directly - it never reads this.
+     *
+     * Withholding it here had a concrete cost once the invoice became
+     * editable: the edit form seeds from this payload and posts back what it
+     * holds, so a field it could not see was a field it silently erased on
+     * every save. A note the shop cannot read is better than a note the shop
+     * loses.
+     */
+    internalNotes: invoice.internalNotes ?? null,
     customerNotes: invoice.customerNotes ?? null,
     technicianNotes: invoice.technicianNotes ?? null,
     payments: (invoice.payments ?? []).map((payment) => ({
@@ -2338,25 +2353,132 @@ async function remindInvoice(number, { note } = {}) {
 /**
  * Correcting an invoice.
  *
- * **Only the fields that are a clerical detail** - the due date, the PO
- * reference and the note. The amount is deliberately not editable: it is
- * derived from the order or the lines the invoice was raised against, and a
- * total somebody can retype is a total that no longer agrees with anything.
- * Changing what was billed means voiding this invoice and raising another,
- * which leaves both documents in the record where an audit can see them.
+ * ## Two shapes, one route
+ *
+ * **The clerical patch** - due date, PO reference, note - is what the detail
+ * screen's inline controls send, and it is matched by a body carrying only
+ * those keys. Nothing else moves.
+ *
+ * **The full rebuild** is what the edit page sends, and it is the same payload
+ * `createInvoice` takes: customer, devices, lines, discount, tax, travel. It is
+ * recognised by the presence of `user`, which the clerical patch never carries.
+ *
+ * This used to be the first shape only, on the rule that a total somebody can
+ * retype is a total that agrees with nothing, and that changing what was billed
+ * meant voiding and raising another. The client overruled that (2026-09-21): a
+ * shop correcting a line it got wrong should not have to issue the customer a
+ * second document to do it.
+ *
+ * **The total is still never taken from the request.** It is recomputed here
+ * from the lines by the same `invoiceTotals` the create path uses, so an edited
+ * invoice is priced exactly as a new one would be - the client sends lines, not
+ * money (PROJECT_INSTRUCTIONS.md §5.3).
+ *
+ * ## What an edit deliberately leaves alone
+ *
+ * `number`, `kind`, `amountPaid` and the payment array. Money already taken is
+ * a fact about what happened, not a field on the form: re-pricing an invoice
+ * below what has been paid leaves it over-paid, which `recompute` reports
+ * honestly rather than hiding. The invoice keeps its identity, so the customer's
+ * copy and ours still name the same document.
  */
 async function updateInvoice(number, data) {
   const invoice = await db().Invoice.findOne({ number });
   if (!invoice) throw ApiError.notFound('Invoice not found.', 'INVOICE_NOT_FOUND');
 
+  // The clerical fields, on both paths - the edit page sends a due date too.
   if (data.dueDate !== undefined) invoice.dueDate = new Date(`${data.dueDate}T00:00:00`);
   if (data.poNumber !== undefined) invoice.poNumber = data.poNumber || undefined;
   if (data.note !== undefined) invoice.note = data.note || undefined;
 
-  // The due date decides whether a row is overdue, so the status is recomputed
-  // rather than left saying what it said before the date moved.
+  if (data.user) {
+    const user = await db().User.findById(data.user).lean();
+    if (!user) throw ApiError.badRequest('Pick a client.', 'USER_NOT_FOUND');
+
+    const itemised = isItemised(data);
+
+    /**
+     * Both travel figures come from the shop's own settings, never the request
+     * - the same rule the create path documents at length. The form sends the
+     * DISTANCE and whether to charge an out-of-area fee; the rate is ours.
+     */
+    const settings = await db().Settings.load();
+    const feeCents = Math.round(Number(data.extendedServiceFeeDollars ?? 0) * 100);
+    const ratePerKm = Number(settings?.financial?.travelRateCentsPerKm ?? 0);
+
+    const totals = itemised ? invoiceTotals(data, { extendedServiceFeeCents: feeCents }) : null;
+    const amount = itemised ? totals.totalCents : data.amount;
+    if (!(amount > 0)) {
+      throw ApiError.badRequest('An invoice needs an amount.', 'INVOICE_EMPTY');
+    }
+
+    invoice.user = user._id;
+    // The customer is what knows the business, exactly as on create - moving an
+    // invoice to a customer in another business moves the invoice with them.
+    invoice.business = user.business ?? null;
+    invoice.amount = amount;
+
+    if (data.issuedAt) invoice.issuedAt = new Date(`${data.issuedAt}T00:00:00`);
+    if (data.terms) invoice.terms = data.terms;
+
+    /**
+     * A cleared due date is re-derived from the terms, exactly as on create.
+     *
+     * The clerical branch above sets `dueDate` only when one is sent, which is
+     * right for a patch that names one field. On a full edit the absence of a
+     * date is itself the answer - the staff member emptied the box - so
+     * leaving the old date would keep a value the form no longer shows.
+     */
+    if (!data.dueDate) {
+      const derived = new Date(invoice.issuedAt);
+      derived.setDate(derived.getDate() + (orderBuilder.TERMS_DAYS[invoice.terms] ?? 0));
+      invoice.dueDate = derived;
+    }
+
+    invoice.devices = (data.devices ?? []).map((device) => ({
+      category: device.category,
+      brand: device.brand,
+      series: device.series,
+      model: device.model,
+      serial: device.serial,
+      problem: device.problem,
+      solution: device.solution,
+      notes: device.notes,
+      services: (device.services ?? []).map(toInvoiceLine),
+      parts: (device.parts ?? []).map(toInvoiceLine),
+    }));
+
+    invoice.province = data.province || undefined;
+    invoice.taxPercent = itemised ? (data.taxPercent ?? 0) : 0;
+    invoice.taxCents = totals?.taxCents ?? 0;
+    invoice.subtotalCents = totals?.subtotalCents ?? amount;
+    invoice.discountCents = totals?.discountCents ?? 0;
+    invoice.discountCode = data.discountCode || undefined;
+
+    invoice.travelKm = data.travelKm ?? 0;
+    invoice.travelAllowanceCents = travelAllowanceCents(data.travelKm, ratePerKm);
+    invoice.extendedServiceFee = Boolean(data.extendedServiceFee);
+    invoice.extendedServiceFeeCents = data.extendedServiceFee ? feeCents : 0;
+    invoice.serviceType = data.serviceType ?? 'walk_in';
+    invoice.technician = data.technician || undefined;
+
+    invoice.customerNotes = data.customerNotes || undefined;
+    invoice.technicianNotes = data.technicianNotes || undefined;
+    invoice.internalNotes = data.internalNotes || undefined;
+  }
+
+  // The due date decides whether a row is overdue and the amount decides
+  // whether it is settled, so the status is recomputed rather than left saying
+  // what it said before either moved.
   recomputeInvoice(invoice);
   await invoice.save();
+
+  // Re-derived from the invoices rather than incremented - see `creditService`.
+  // An edit can change the amount owed or move the invoice to another customer,
+  // and either changes what is drawn against a line of credit.
+  if (invoice.terms && invoice.terms !== 'prepaid') {
+    await creditService.syncBalance(invoice.user);
+  }
 
   return getInvoice(number);
 }
@@ -2376,27 +2498,52 @@ async function deleteInvoice(number) {
   const invoice = await db().Invoice.findOne({ number });
   if (!invoice) throw ApiError.notFound('Invoice not found.', 'INVOICE_NOT_FOUND');
 
-  if ((invoice.amountPaid ?? 0) > 0) {
-    throw ApiError.badRequest(
-      'This invoice has payments against it. Void it instead - deleting would erase the customer’s receipt.',
-      'INVOICE_HAS_PAYMENTS',
-    );
-  }
-
-  const outstanding = invoice.amount - (invoice.amountPaid ?? 0);
-  // The debt goes with the invoice, so the headroom it reserved comes back.
-  // Synced *after* the delete, so the sum no longer counts this row.
-  const releasesCredit = outstanding > 0 && invoice.terms && invoice.terms !== 'prepaid';
+  /**
+   * **Deletable whatever has been paid against it** (ruled 2026-09-21).
+   *
+   * This refused outright once `amountPaid` was above zero, and said to void
+   * instead. Voiding is gone from the panel: a shop that raises an invoice
+   * against the wrong customer, takes money against it and then finds the
+   * mistake was left with a permanent wrong record and a voided document the
+   * customer never asked for.
+   *
+   * **The payments are destroyed with it, and nothing is refunded** (ruled
+   * 2026-09-21, replacing the store-credit return shipped earlier the same
+   * day). The payments live on the invoice as a subdocument array, so deleting
+   * the invoice deletes them - there is no second collection to clean. The
+   * reasoning for the ruling is that this is for an invoice that should never
+   * have existed; a payment recorded against a record being erased as a
+   * mistake is part of the same mistake, and returning it as credit would
+   * leave the customer holding money for a sale nobody now has a record of.
+   *
+   * **A real sale that needs reversing is a refund, not this** - that is
+   * `invoiceRefundService`, which leaves both the invoice and the money trail
+   * in place. The confirm in front of this one says the payments go, and
+   * demands the invoice number typed out.
+   */
+  const paid = invoice.amountPaid ?? 0;
   const owner = invoice.user;
 
+  /**
+   * The line of credit is re-derived either way.
+   *
+   * Whatever this invoice was drawing against the customer's headroom goes
+   * with it - both the outstanding half and, once the payments are destroyed,
+   * anything they had already repaid. Re-derived from the surviving invoices
+   * rather than adjusted by a delta, so it cannot drift (see `creditService`).
+   */
+  const releasesCredit = Boolean(invoice.terms && invoice.terms !== 'prepaid');
+
   // Commission accrued against an invoice that no longer exists is commission
-  // on nothing, so it is reversed exactly as a void does.
+  // on nothing, so every accrual against it is reversed (§6.13).
   await referralService.reverseForInvoice(invoice.number);
   await invoice.deleteOne();
 
   if (releasesCredit) await creditService.syncBalance(owner);
 
-  return { number };
+  // `deletedPayments` is what the confirmation said would happen, echoed back
+  // so the toast can state it rather than assume it.
+  return { number, deletedPayments: (invoice.payments ?? []).length, deletedPaid: paid };
 }
 
 /**

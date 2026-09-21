@@ -862,15 +862,15 @@ const invoicePaymentSchema = z.object({
   reference: z.string().trim().max(80).optional(),
 });
 
-/** Voiding forgives the balance and keeps the row, so the reason is required. */
 /**
- * Correcting an invoice. Clerical fields only.
+ * Correcting an invoice, the clerical half.
  *
- * The amount is absent on purpose: it is derived from what was billed, and a
- * total somebody can retype is a total that agrees with nothing. Changing what
- * was billed is a void plus a new invoice, which leaves both in the record.
+ * The due date, the PO reference and the note - what the detail screen's
+ * inline controls send. `invoiceUpdateSchema` below accepts this OR the full
+ * invoice body the edit page sends; this half is the one that carries no
+ * `user`, which is how the two are told apart.
  */
-const invoiceUpdateSchema = z.object({
+const invoiceClericalSchema = z.object({
   dueDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'Pick a due date.').optional(),
   poNumber: z.string().trim().max(60).or(z.literal('')).optional(),
   note: z.string().trim().max(500).or(z.literal('')).optional(),
@@ -1526,6 +1526,51 @@ const TAX_RATES = {
 };
 
 /**
+ * What the tax is CALLED in each province.
+ *
+ * The rate alone does not tell a staff member which tax they are charging, and
+ * "12%" is two different things in BC (GST+PST) and Manitoba (GST+PST at a
+ * different split) - while 5% in Alberta is GST with no provincial tax at all.
+ * A counter quoting a customer says "thirteen percent HST", so the picker
+ * should say it too rather than making them remember which provinces are
+ * harmonised.
+ *
+ * Naming only, never arithmetic: `TAX_RATES` above stays the single source of
+ * the number, and every total is still computed server-side from it.
+ */
+const TAX_LABELS = {
+  AB: 'GST', BC: 'GST+PST', MB: 'GST+PST', NB: 'HST', NL: 'HST', NS: 'HST',
+  NT: 'GST', NU: 'GST', ON: 'HST', PE: 'HST', QC: 'GST+QST', SK: 'GST+PST',
+  YT: 'GST',
+};
+
+/**
+ * The province picker's options, each carrying its tax.
+ *
+ * Built here rather than in each form so the ticket, the quote and both
+ * invoices offer the same list in the same order - three screens that price
+ * the same work should not disagree about what Quebec charges.
+ *
+ * **Ordered by rate, then by name.** Alphabetical puts Alberta's 5% next to
+ * British Columbia's 12% and buries the four 15% provinces apart from each
+ * other; grouping by what is actually charged is what makes the list scannable
+ * for somebody checking a figure rather than hunting a name.
+ */
+function provinceTaxOptions(placeholder = '– Pick province –') {
+  const sorted = [...PROVINCES].sort(
+    (a, b) => (TAX_RATES[a.value] ?? 0) - (TAX_RATES[b.value] ?? 0) || a.label.localeCompare(b.label),
+  );
+
+  return [
+    { value: '', label: placeholder },
+    ...sorted.map((province) => ({
+      value: province.value,
+      label: `${province.value} · ${province.label} (${TAX_LABELS[province.value] ?? 'Tax'} ${TAX_RATES[province.value] ?? 0}%)`,
+    })),
+  ];
+}
+
+/**
  * One priced line - a service performed, or a part fitted.
  *
  * Services and parts are the same shape because they are the same thing on an
@@ -1603,7 +1648,15 @@ const invoiceDeviceSchema = z.object({
  * The flat path stays because most standalone invoices are one number and
  * making a staff member open a device panel to type it would be a worse form.
  */
-const adminInvoiceSchema = z.object({
+/**
+ * The invoice body, before the itemised-or-flat rule is applied.
+ *
+ * Split out so `invoiceUpdateSchema` can reuse the exact same field set for
+ * the edit page. Describing those fields twice is how an edit form ends up
+ * accepting something the create form rejects, or silently dropping a field
+ * somebody added to only one of them.
+ */
+const adminInvoiceFields = z.object({
   user: z.string().trim().min(1, 'Pick a customer.'),
   // Required for a flat charge, ignored when `devices` carries lines - the
   // superRefine below enforces exactly that.
@@ -1660,22 +1713,78 @@ const adminInvoiceSchema = z.object({
     .optional(),
   reference: z.string().trim().max(80).optional(),
   notes: z.string().trim().max(2000).optional(),
-})
-  .superRefine((value, ctx) => {
-    const hasLines = (value.devices ?? []).some(
-      (device) => (device.services?.length ?? 0) + (device.parts?.length ?? 0) > 0,
-    );
+});
 
-    // An itemised invoice computes its own total, so an amount is not asked
-    // for. A flat one has nothing else to bill from, so it is required - and
-    // an invoice for nothing is not a document.
-    if (!hasLines && !(value.amount > 0)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['amount'],
-        message: 'Enter an amount, or add a service or part.',
-      });
+/**
+ * An invoice must bill from lines or from a typed figure, never from neither.
+ *
+ * Shared by the create and the full-edit paths so the two cannot disagree
+ * about what a complete invoice is.
+ */
+function requireAmountOrLines(value, ctx) {
+  const hasLines = (value.devices ?? []).some(
+    (device) => (device.services?.length ?? 0) + (device.parts?.length ?? 0) > 0,
+  );
+
+  // An itemised invoice computes its own total, so an amount is not asked
+  // for. A flat one has nothing else to bill from, so it is required - and
+  // an invoice for nothing is not a document.
+  if (!hasLines && !(value.amount > 0)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['amount'],
+      message: 'Enter an amount, or add a service or part.',
+    });
+  }
+}
+
+const adminInvoiceSchema = adminInvoiceFields.superRefine(requireAmountOrLines);
+
+/**
+ * Correcting an invoice: either half, chosen by what the body carries.
+ *
+ * The edit page sends the whole invoice - customer, devices, lines, tax,
+ * travel - and is validated exactly as the create form is, because it IS the
+ * create form with a record loaded into it. The detail screen's inline
+ * controls send three clerical fields and nothing else.
+ *
+ * **Branched on `user` rather than written as a `z.union`.** A union reports a
+ * failure as a nested `invalid_union` whose issues carry no usable top-level
+ * path, so a bad line price on the edit page would have reached the form as an
+ * error against nothing and shown up nowhere. Picking the branch first means a
+ * full edit fails with `devices.0.services.0.priceDollars` intact, which is
+ * what the field-level error display needs (§5.1).
+ *
+ * The check is presence of `user`: the clerical patch never sends one, and the
+ * edit page always does. A body that means to be a full edit but has lost its
+ * customer therefore fails the full branch with "Pick a customer." rather than
+ * passing quietly as a clerical patch that changes nothing.
+ */
+const invoiceUpdateSchema = z
+  .any()
+  .superRefine((value, ctx) => {
+    const schema = value && typeof value === 'object' && 'user' in value
+      ? adminInvoiceFields
+      : invoiceClericalSchema;
+
+    const result = schema.safeParse(value);
+    if (result.success) {
+      if (schema === adminInvoiceFields) requireAmountOrLines(result.data, ctx);
+      return;
     }
+
+    for (const issue of result.error.issues) ctx.addIssue(issue);
+  })
+  .transform((value) => {
+    const schema = value && typeof value === 'object' && 'user' in value
+      ? adminInvoiceFields
+      : invoiceClericalSchema;
+
+    // Re-parsed rather than returned raw, so the caller receives the COERCED
+    // values (numbers from numeric strings, defaults filled) that the service
+    // then relies on - the same data the create path gets.
+    const result = schema.safeParse(value);
+    return result.success ? result.data : value;
   });
 
 const RMA_ITEM_DISPOSITIONS = ['pending', 'restock', 'scrap', 'return_to_supplier', 'reject'];
@@ -3268,4 +3377,4 @@ const serviceQuoteConvertSchema = z.object({
   priority: z.enum(TICKET_PRIORITIES).default('normal'),
 });
 
-export { quoteToTicketSchema, ticketDepositSchema, ticketConvertSchema, TAX_RATES, INVOICE_SERVICE_TYPES, SERVICE_INVOICE_TYPES, ORDER_OPEN_STATUSES, ORDER_UNFULFILLED_STATUSES, approveUserSchema, rejectUserSchema, creditSchema, clientSchema, clientFormSchema, clientCreateFormSchema, clientUpdateSchema, CONSENT_CHANNELS, PREFERRED_CONTACT_OPTIONS, CUSTOMER_SOURCE_OPTIONS, contactConsentSchema, MEMBERSHIP_TIERS, tierSchema, internalNoteSchema, storeCreditSchema, refundSchema, userStatusSchema, productSchema, ORDER_STATUS_FLOW, orderStatusSchema, CARRIERS, ADMIN_NAV, ADMIN_LEGACY_REDIRECTS, invoicePaymentSchema, invoiceTipSchema, invoiceVoidSchema, webQuoteStatusSchema, creditPaymentSchema, invoiceUpdateSchema, bulkOrderStatusSchema, supplierSchema, purchaseOrderSchema, purchaseOrderStatusSchema, purchaseReceiveSchema, purchasePaymentSchema, purchaseInviteSchema, purchaseSendSchema, purchaseNegotiateSchema, purchaseConfirmSchema, proformaRevisionSchema, supplierQuoteSchema, supplierDeclineSchema, supplierProformaSchema, supplierDeliverySchema, superAdminLoginSchema, tenantSchema, tenantSlotsSchema, superAdminBusinessSchema, businessAssignSchema, businessFeatureSchema, impersonationSchema, tenantOwnerSchema, supportMessageSchema, planSchema, planFeatureSchema, businessStatusSchema, supplierLoginSchema, supplierForgotSchema, supplierResetSchema, supplierPasswordSchema, expenseSchema, expenseCategorySchema, stockAdjustSchema, productOpsSchema, quoteSchema, quoteStatusSchema, quoteConvertSchema, adminOrderSchema, adminInvoiceSchema, RMA_ITEM_DISPOSITIONS, rmaSchema, TICKET_STATUSES, TICKET_PRIORITIES, TICKET_SOURCES, TICKET_STATUS_LABELS, CONDITION_GRADES, CONDITION_PARTS, ticketSchema, ticketDeviceSchema, ticketLineSchema, ticketUpdateSchema, ticketStatusSchema, rmaStatusSchema, rmaInspectSchema, rmaResolveSchema, PERMISSION_AREAS, PERMISSION_LEVELS, PERMISSION_LEVEL_LABELS, SETTINGS_SUBAREAS, SUBAREA_LEVELS, SUBAREA_LEVEL_LABELS, settingsAreaKey, BUSINESS_STATUSES, BUSINESS_COLOR_TOKENS, businessSchema, roleSchema, staffUserSchema, staffUserUpdateSchema, MESSAGE_CHANNELS, TEMPLATE_DOCUMENTS, CAMPAIGN_AUDIENCES, CAMPAIGN_AUDIENCE_LABELS, messageSchema, callLogSchema, messageTemplateSchema, campaignSchema, unsubscribeSchema, referralRateSchema, businessInfoSchema, saleSettingsSchema, shippingSettingsSchema, paymentMethodsSettingsSchema, inventorySettingsSchema, agreementTemplateSchema, agreementSignSchema, providerCredentialSchema, taxonomyNodeSchema, taxonomyCreateSchema, taxonomyImportSchema, invoiceStatusRuleSchema, LABEL_COLOR_TOKENS, LABEL_COLOR_OPTIONS, invoiceLabelSchema, invoiceLabelSetSchema, invoiceRefundSchema, invoiceRemindSchema, communicationsSettingsSchema, messageLimitSchema, SUPPLIER_RETURN_REASON_VALUES, supplierReturnSchema, supplierReturnStatusSchema, supplierCreditSchema, SUPPLIER_BILLING_CYCLES, supplierServiceSchema, supplierServiceUpdateSchema, supplierChargeSchema, SERVICE_CATEGORIES, SERVICE_CATEGORY_LABELS, serviceCatalogSchema, serviceCatalogUpdateSchema, serviceImportSchema, DEVICE_KINDS, DEVICE_KIND_LABELS, deviceCatalogSchema, deviceCatalogUpdateSchema, kioskCheckInSchema, kioskUnlockSchema, kioskPinSchema, kioskSettingsSchema, SERVICE_QUOTE_STATUSES, SERVICE_QUOTE_SOURCES, SERVICE_QUOTE_STATUS_LABELS, serviceQuoteLineSchema, serviceQuoteDeviceSchema, serviceQuoteSchema, serviceQuoteUpdateSchema, serviceQuoteStatusSchema, serviceQuoteConvertSchema };
+export { quoteToTicketSchema, ticketDepositSchema, ticketConvertSchema, TAX_RATES, TAX_LABELS, provinceTaxOptions, INVOICE_SERVICE_TYPES, SERVICE_INVOICE_TYPES, ORDER_OPEN_STATUSES, ORDER_UNFULFILLED_STATUSES, approveUserSchema, rejectUserSchema, creditSchema, clientSchema, clientFormSchema, clientCreateFormSchema, clientUpdateSchema, CONSENT_CHANNELS, PREFERRED_CONTACT_OPTIONS, CUSTOMER_SOURCE_OPTIONS, contactConsentSchema, MEMBERSHIP_TIERS, tierSchema, internalNoteSchema, storeCreditSchema, refundSchema, userStatusSchema, productSchema, ORDER_STATUS_FLOW, orderStatusSchema, CARRIERS, ADMIN_NAV, ADMIN_LEGACY_REDIRECTS, invoicePaymentSchema, invoiceTipSchema, invoiceVoidSchema, webQuoteStatusSchema, creditPaymentSchema, invoiceUpdateSchema, bulkOrderStatusSchema, supplierSchema, purchaseOrderSchema, purchaseOrderStatusSchema, purchaseReceiveSchema, purchasePaymentSchema, purchaseInviteSchema, purchaseSendSchema, purchaseNegotiateSchema, purchaseConfirmSchema, proformaRevisionSchema, supplierQuoteSchema, supplierDeclineSchema, supplierProformaSchema, supplierDeliverySchema, superAdminLoginSchema, tenantSchema, tenantSlotsSchema, superAdminBusinessSchema, businessAssignSchema, businessFeatureSchema, impersonationSchema, tenantOwnerSchema, supportMessageSchema, planSchema, planFeatureSchema, businessStatusSchema, supplierLoginSchema, supplierForgotSchema, supplierResetSchema, supplierPasswordSchema, expenseSchema, expenseCategorySchema, stockAdjustSchema, productOpsSchema, quoteSchema, quoteStatusSchema, quoteConvertSchema, adminOrderSchema, adminInvoiceSchema, RMA_ITEM_DISPOSITIONS, rmaSchema, TICKET_STATUSES, TICKET_PRIORITIES, TICKET_SOURCES, TICKET_STATUS_LABELS, CONDITION_GRADES, CONDITION_PARTS, ticketSchema, ticketDeviceSchema, ticketLineSchema, ticketUpdateSchema, ticketStatusSchema, rmaStatusSchema, rmaInspectSchema, rmaResolveSchema, PERMISSION_AREAS, PERMISSION_LEVELS, PERMISSION_LEVEL_LABELS, SETTINGS_SUBAREAS, SUBAREA_LEVELS, SUBAREA_LEVEL_LABELS, settingsAreaKey, BUSINESS_STATUSES, BUSINESS_COLOR_TOKENS, businessSchema, roleSchema, staffUserSchema, staffUserUpdateSchema, MESSAGE_CHANNELS, TEMPLATE_DOCUMENTS, CAMPAIGN_AUDIENCES, CAMPAIGN_AUDIENCE_LABELS, messageSchema, callLogSchema, messageTemplateSchema, campaignSchema, unsubscribeSchema, referralRateSchema, businessInfoSchema, saleSettingsSchema, shippingSettingsSchema, paymentMethodsSettingsSchema, inventorySettingsSchema, agreementTemplateSchema, agreementSignSchema, providerCredentialSchema, taxonomyNodeSchema, taxonomyCreateSchema, taxonomyImportSchema, invoiceStatusRuleSchema, LABEL_COLOR_TOKENS, LABEL_COLOR_OPTIONS, invoiceLabelSchema, invoiceLabelSetSchema, invoiceRefundSchema, invoiceRemindSchema, communicationsSettingsSchema, messageLimitSchema, SUPPLIER_RETURN_REASON_VALUES, supplierReturnSchema, supplierReturnStatusSchema, supplierCreditSchema, SUPPLIER_BILLING_CYCLES, supplierServiceSchema, supplierServiceUpdateSchema, supplierChargeSchema, SERVICE_CATEGORIES, SERVICE_CATEGORY_LABELS, serviceCatalogSchema, serviceCatalogUpdateSchema, serviceImportSchema, DEVICE_KINDS, DEVICE_KIND_LABELS, deviceCatalogSchema, deviceCatalogUpdateSchema, kioskCheckInSchema, kioskUnlockSchema, kioskPinSchema, kioskSettingsSchema, SERVICE_QUOTE_STATUSES, SERVICE_QUOTE_SOURCES, SERVICE_QUOTE_STATUS_LABELS, serviceQuoteLineSchema, serviceQuoteDeviceSchema, serviceQuoteSchema, serviceQuoteUpdateSchema, serviceQuoteStatusSchema, serviceQuoteConvertSchema };

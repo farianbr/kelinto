@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useNavigate, useParams, Link } from 'react-router';
+import { useNavigate, useParams, useSearchParams, Link } from 'react-router';
 import { useFieldArray, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import useAdminForm from '@/hooks/useAdminForm';
@@ -18,8 +18,7 @@ import {
   Wrench,
 } from 'lucide-react';
 
-import { INVOICE_SERVICE_TYPES } from '@shared/schemas/admin';
-import { PROVINCES } from '@shared/schemas/checkout';
+import { INVOICE_SERVICE_TYPES, TAX_RATES, provinceTaxOptions } from '@shared/schemas/admin';
 import { money } from '@/lib/format';
 import cn from '@/lib/cn';
 import Input from '@/components/ui/Input';
@@ -30,7 +29,7 @@ import SelectField from '@/components/ui/SelectField';
 import Panel from '@/components/ui/Panel';
 import PageHeader from '@/components/admin/PageHeader';
 import { Section } from '@/components/admin/DeviceLines';
-import DevicePicker from '@/components/admin/DevicePicker';
+import DeviceFinder from '@/components/admin/DeviceFinder';
 import PricedLines, { emptyLine } from '@/components/admin/PricedLines';
 import { pressable } from '@/lib/motion';
 import {
@@ -43,8 +42,8 @@ import {
 
 const SERVICE_TYPE_OPTIONS = INVOICE_SERVICE_TYPES;
 
-// `PROVINCES` is already `{value, label}`, which is what `SelectField` wants.
-const PROVINCE_OPTIONS = [{ value: '', label: '– Pick province –' }, ...PROVINCES];
+// Each option carries its tax name and rate - see `provinceTaxOptions`.
+const PROVINCE_OPTIONS = provinceTaxOptions();
 
 const emptyDevice = () => ({
   category: '',
@@ -69,7 +68,7 @@ function today() {
 }
 
 /**
- * One device on the estimate.
+ * One device on the quote.
  *
  * The same block the ticket intake uses, minus the condition grid: a
  * component-by-component check is done with the hardware on the counter, and a
@@ -91,9 +90,10 @@ function DeviceBlock({ control, register, setValue, index, onRemove, canRemove, 
         )}
       </div>
 
-      {/* Linked to the shop's own device tree, falling back to free text at any
-          level the tree has nothing for - see `DevicePicker`. */}
-      <DevicePicker control={control} register={register} setValue={setValue} index={index} />
+      {/* The stepped finder over the shop's own device tree - the same control
+          the ticket and the invoice use, so one device is named the same way
+          whichever document is being raised. See `DeviceFinder`. */}
+      <DeviceFinder control={control} setValue={setValue} index={index} />
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <Input label="Serial number" placeholder="e.g. IMEI or S/N" {...register(`devices.${index}.serial`)} />
@@ -155,7 +155,7 @@ function DeviceBlock({ control, register, setValue, index, onRemove, canRemove, 
 }
 
 /**
- * Build a repair estimate (Sales § Quote, service businesses).
+ * Build a repair quote (Sales § Quote, service businesses).
  *
  * **A full page, not a modal.** The form carries a customer, any number of
  * devices, each with its own services and parts, three sets of notes and a
@@ -170,6 +170,19 @@ export function AdminServiceQuoteFormPage() {
   const navigate = useNavigate();
   const { id } = useParams();
   const editing = Boolean(id);
+
+  /**
+   * The customer this was opened for, from `?client=<id>`.
+   *
+   * The profile's "Quote" button and `+ Create > Quote` both land here through
+   * the quotes list, which forwards the whole query string (`useCreateRedirect`).
+   * Without reading it the staff member arrives at a form that has forgotten
+   * which account they pressed the button on, and picks them out of a list of
+   * 500 again. Read once, as a default - not a `values` override, which would
+   * fight them if they then changed the customer.
+   */
+  const [searchParams] = useSearchParams();
+  const seededClient = searchParams.get('client') ?? '';
 
   const [submitError, setSubmitError] = useState(null);
 
@@ -227,7 +240,7 @@ export function AdminServiceQuoteFormPage() {
         }
       : undefined,
     defaultValues: {
-      user: '',
+      user: seededClient,
       serviceType: 'walk_in',
       quoteDate: today(),
       validUntil: '',
@@ -333,16 +346,19 @@ export function AdminServiceQuoteFormPage() {
   if (editing && loadingQuote) {
     return (
       <Panel>
-        <p className="py-8 text-center text-sm text-ink-400">Loading estimate…</p>
+        <p className="py-8 text-center text-sm text-ink-400">Loading quote…</p>
       </Panel>
     );
   }
 
   return (
-    <>
+    /* Measured, not full-bleed - see `AdminTicketFormPage` for the argument.
+       `.record-page` rather than `.form-page` because the device blocks and
+       priced lines below are tables, which a 760px column would crush. */
+    <div className="record-page">
       <PageHeader
         icon={FileSignature}
-        title={editing ? `Edit ${quote?.quoteNumber ?? 'estimate'}` : 'Create estimate'}
+        title={editing ? `Edit ${quote?.quoteNumber ?? 'quote'}` : 'Create quote'}
         description="Prepare a service quote for a customer who has not left their device."
         action={
           <Link
@@ -361,7 +377,7 @@ export function AdminServiceQuoteFormPage() {
       {!editing && (
         <p className="mb-4 flex items-center gap-2 rounded-md bg-ok-50 px-3 py-2.5 text-sm text-ok">
           <CheckCircle2 className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
-          The estimate number is assigned on save, as <strong>EST-{new Date().getFullYear()}-…</strong>
+          The quote number is assigned on save, as <strong>EST-{new Date().getFullYear()}-…</strong>
         </p>
       )}
 
@@ -379,6 +395,11 @@ export function AdminServiceQuoteFormPage() {
               control={control}
               name="user"
               label="Customer"
+              // Searchable explicitly, not by row count: this list is every
+              // approved account and it grows with the business, so it has to
+              // be typeable at 500 rows as well as at five.
+              searchable
+              searchPlaceholder="Name, business or email…"
               options={[
                 { value: '', label: '– Choose a customer –' },
                 ...clients.map((client) => ({
@@ -386,6 +407,15 @@ export function AdminServiceQuoteFormPage() {
                   label: `${client.displayName}${client.email ? ` · ${client.email}` : ''}`,
                 })),
               ]}
+              // A customer is a record with a dozen fields, so this hands off
+              // to the form that owns it rather than inventing a second one -
+              // and carries the typed name so it is not retyped there.
+              onCreate={(typed) =>
+                navigate(
+                  `/admin/clients?new=1${typed ? `&name=${encodeURIComponent(typed)}` : ''}`,
+                )
+              }
+              createLabelEmpty="Add a customer"
             />
             <Input label="Quote date" type="date" {...register('quoteDate')} />
             <SelectField
@@ -398,10 +428,10 @@ export function AdminServiceQuoteFormPage() {
 
           <p className="mt-2 text-xs text-ink-400">
             No account yet?{' '}
-            <Link to="/admin/clients/new" className="font-medium text-brand underline">
+            <Link to="/admin/clients?new=1" className="font-medium text-brand underline">
               Add a customer
             </Link>{' '}
-            first - an estimate is addressed to somebody.
+            first - a quote is addressed to somebody.
           </p>
         </Section>
 
@@ -438,14 +468,14 @@ export function AdminServiceQuoteFormPage() {
               label="Client notes"
               hint="Visible to the customer on the PDF"
               rows={3}
-              placeholder="Notes visible to the client on the PDF estimate..."
+              placeholder="Notes visible to the client on the PDF quote..."
               {...register('clientNotes')}
             />
             <Textarea
               label="Technician notes"
               hint="Visible to the customer on the PDF"
               rows={3}
-              placeholder="Technical details (visible on the PDF estimate)..."
+              placeholder="Technical details (visible on the PDF quote)..."
               {...register('technicianNotes')}
             />
 
@@ -456,7 +486,7 @@ export function AdminServiceQuoteFormPage() {
               <Textarea
                 label="Internal notes"
                 rows={3}
-                placeholder="Internal notes (NOT visible on the PDF estimate)..."
+                placeholder="Internal notes (NOT visible on the PDF quote)..."
                 {...register('internalNotes')}
               />
               <p className="mt-1.5 flex items-center gap-1.5 text-xs text-warn">
@@ -467,7 +497,7 @@ export function AdminServiceQuoteFormPage() {
           </div>
         </Section>
 
-        <Section icon={Wrench} title="Estimate summary">
+        <Section icon={Wrench} title="Quote summary">
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
             <div className="space-y-3">
               <div>
@@ -503,6 +533,12 @@ export function AdminServiceQuoteFormPage() {
                   name="province"
                   label="Province"
                   options={PROVINCE_OPTIONS}
+                  // Picking a province fills the rate in. It had no cascade at
+                  // all, so the province said Ontario while the rate beside it
+                  // still read 5% and the quote went out under-taxed. The rate
+                  // stays editable because zero is a real answer for an exempt
+                  // customer; the server recomputes from it either way.
+                  onValueChange={(value) => setValue('taxRate', TAX_RATES[value] ?? 0)}
                 />
                 <Input
                   label="Tax rate (%)"
@@ -563,11 +599,11 @@ export function AdminServiceQuoteFormPage() {
             Cancel
           </Button>
           <Button type="submit" loading={isPending} icon={CheckCircle2}>
-            {editing ? 'Save estimate' : 'Create estimate'}
+            {editing ? 'Save quote' : 'Create quote'}
           </Button>
         </div>
       </form>
-    </>
+    </div>
   );
 }
 

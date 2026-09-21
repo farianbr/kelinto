@@ -8,7 +8,7 @@ import TicketForm from '@/components/admin/TicketForm';
 import { ADMIN_ROUTES } from '@/lib/adminRoutes';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { useSetRecordLabel } from '@/components/admin/shell/recordLabel';
-import { useAdminTickets, useAdminMutations } from '@/hooks/useAdmin';
+import { useAdminTickets, useAdminUsers, useAdminMutations } from '@/hooks/useAdmin';
 import { toast } from '@/store/toastStore';
 import { pressable } from '@/lib/motion';
 import cn from '@/lib/cn';
@@ -47,6 +47,17 @@ export function AdminTicketFormPage() {
    */
   const { data, isLoading } = useAdminTickets({ status: 'all', limit: 200 });
   const technicians = data?.technicians ?? [];
+
+  /**
+   * Accounts offered by the customer shortcut above the contact fields.
+   *
+   * No `status` filter, unlike the quote and invoice builders: those need an
+   * approved account because they price and bill, while a repair is taken in
+   * from whoever walks up - a pending account is still a person with a broken
+   * phone.
+   */
+  const { data: clientData } = useAdminUsers({ limit: 500 });
+  const clients = clientData?.users ?? [];
   const ticket = editing ? data?.tickets?.find((row) => row.id === id) : undefined;
 
   useSetRecordLabel(ticket?.ticketNumber);
@@ -96,7 +107,11 @@ export function AdminTicketFormPage() {
   }
 
   return (
-    <>
+    /* Measured, not full-bleed. Intake is a form, and a form the width of a
+       27-inch monitor puts the label at one edge and the value at the other.
+       `.record-page` rather than `.form-page`: this carries device blocks and
+       priced lines, which are tables and need more than a 760px column. */
+    <div className="record-page">
       <Link
         to="/admin/tickets"
         className={cn(pressable, 'mb-3 inline-flex items-center gap-1.5 text-sm font-medium text-ink-500 hover:text-ink-900')}
@@ -112,6 +127,9 @@ export function AdminTicketFormPage() {
           ticket={ticket}
           seed={seed.name ? seed : undefined}
           technicians={technicians}
+          // Offered as a shortcut above the contact fields; a walk-in with no
+          // account is still typed straight in.
+          clients={clients}
           isPending={editing ? updateTicket.isPending : createTicket.isPending}
           error={(editing ? updateTicket : createTicket).error?.message}
           onCancel={() => navigate('/admin/tickets')}
@@ -119,9 +137,16 @@ export function AdminTicketFormPage() {
             const payload = {
               ...values,
               estimateDollars: Number(values.estimateDollars) || 0,
-              // Links the ticket to the account it was raised from, so that
-              // customer's profile can count its own open jobs.
-              ...(seed.client && !editing ? { user: seed.client } : {}),
+              /**
+               * The linked account.
+               *
+               * `values.user` is the picker's answer and wins when it has one;
+               * the seed covers arriving from a customer profile without
+               * touching the picker. Sent as `undefined` rather than `''` when
+               * there is neither, because a walk-in has no account and an empty
+               * string is not an id the server can store.
+               */
+              user: values.user || (!editing ? seed.client : '') || undefined,
             };
 
             const mutation = editing ? updateTicket : createTicket;
@@ -137,7 +162,7 @@ export function AdminTicketFormPage() {
           }}
         />
       </Panel>
-    </>
+    </div>
   );
 }
 

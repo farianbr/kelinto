@@ -1,5 +1,6 @@
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import useDocumentTitle from '@/hooks/useDocumentTitle';
+import useAdoptBusinessFromUrl from '@/hooks/useAdoptBusinessFromUrl';
 import { Navigate, Outlet, useLocation } from 'react-router';
 import { ShieldAlert } from 'lucide-react';
 import Skeleton from '@/components/ui/Skeleton';
@@ -34,6 +35,18 @@ import { RecordLabelProvider } from './recordLabel';
  * screen full of failed requests.
  */
 export function AdminShell() {
+  /**
+   * `?business=` from the URL, before anything fetches.
+   *
+   * FIRST, and deliberately above `useAuth`: `sessionStorage` is per-tab and
+   * empty in a new one, so opening any admin page in a new tab arrived with no
+   * business selected and fell back to the default - a CellShoppe staff member
+   * opening an invoice in a new tab watched the panel turn into Cellvix. This
+   * runs in an initialiser rather than an effect so the id is in the store
+   * before the first query reads it.
+   */
+  useAdoptBusinessFromUrl();
+
   // The browser tab, per route. One call per surface rather than one per
   // page: the titles live in the route table beside the breadcrumbs.
   useDocumentTitle();

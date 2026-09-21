@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown } from 'lucide-react';
+import { Check, ChevronDown, Plus } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import cn from '@/lib/cn';
 import useOnClickOutside from '@/hooks/useOnClickOutside';
@@ -108,6 +108,24 @@ export function SelectMenu({
   menuTitle,
   /** A note under the options, for a consequence the list cannot show. */
   menuFootnote,
+  /**
+   * Let the reader add a value the list does not have, from inside the menu.
+   *
+   * Called with the current search text (often `''`), and the menu closes
+   * straight after. What "add" means is the caller's: open a modal, push a
+   * free-typed name onto the form, POST a record. This only provides the row.
+   *
+   * **Why it belongs in the picker.** The alternative is a separate "+ Add"
+   * beside every field, which is a second control for a thing somebody only
+   * wants at the moment they discover the list is missing it. They discover
+   * that HERE, having just searched and found nothing - so this is where the
+   * answer goes, and the query they typed is handed over rather than retyped.
+   */
+  onCreate,
+  /** The create row's wording. `{q}` is replaced with the current search. */
+  createLabel = 'Add "{q}"',
+  /** The create row's wording when nothing has been typed. */
+  createLabelEmpty = 'Add new',
   name,
   id: idProp,
   className,
@@ -384,9 +402,21 @@ export function SelectMenu({
             </li>
           )}
 
-          {rows.length === 0 && (
+          {rows.length === 0 && !onCreate && (
             <li role="none" className="px-2.5 py-3 text-center text-sm text-ink-400">
               Nothing matches “{search.trim()}”.
+            </li>
+          )}
+
+          {/* Nothing matched, and this picker can add things.
+
+              The sentence and the action are one row rather than a message
+              with a button under it: at this moment there is exactly one
+              useful thing to do, and making the reader read a dead line first
+              is a step that buys nothing. */}
+          {rows.length === 0 && onCreate && !search.trim() && (
+            <li role="none" className="px-2.5 py-3 text-center text-sm text-ink-400">
+              Nothing here yet.
             </li>
           )}
 
@@ -441,6 +471,40 @@ export function SelectMenu({
               </li>
             );
           })}
+
+          {/*
+            "Add new", pinned under the options.
+
+            Last rather than first, and ruled off: it is the answer when the
+            list did not have what somebody wanted, so it sits where they end
+            up after reading, not in front of the rows they came to read. It
+            carries the typed query so the thing they searched for is what
+            gets created, rather than making them type it a second time into
+            whatever opens next.
+          */}
+          {onCreate && (
+            <li role="none" className={cn(rows.length > 0 && 'mt-1 border-t border-line pt-1')}>
+              <button
+                type="button"
+                tabIndex={-1}
+                onClick={() => {
+                  const query = search.trim();
+                  close({ refocus: false });
+                  onCreate(query);
+                }}
+                className={cn(
+                  'flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm font-medium text-brand-700 transition-colors hover:bg-surface-2',
+                )}
+              >
+                <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate">
+                  {search.trim()
+                    ? createLabel.replace('{q}', search.trim())
+                    : createLabelEmpty}
+                </span>
+              </button>
+            </li>
+          )}
 
           {/*
             An optional note under the options.

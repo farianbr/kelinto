@@ -15,11 +15,25 @@
  * switcher now lands on the default business when this is empty, and `null`
  * survives only as the state before that has happened.
  *
- * Persisted in `sessionStorage` for the same reason the date range is: the
- * business you are working in is a working context that should survive a
- * navigation and a reload, but not still be there next week. A staff member's
- * business is enforced server-side regardless, so a stale value here can never
- * widen what they are allowed to see.
+ * ## Persisted in `localStorage`, not `sessionStorage`
+ *
+ * It was `sessionStorage`, on the reasoning that the business you are working
+ * in is a working context that should survive a reload but not still be there
+ * next week. The flaw is that `sessionStorage` is **per tab**: a new tab starts
+ * empty, so opening any admin page in one - middle-click, "open in new tab", a
+ * pasted link - selected nothing and fell through to the default business. On
+ * this installation that is Cellvix, so a CellShoppe staff member opening an
+ * invoice in a second tab watched the panel become another shop.
+ *
+ * That is not a working context surviving too long, it is one failing to
+ * survive an action people take constantly. `localStorage` is shared across the
+ * origin, so every tab agrees about which business is on screen, and the
+ * selection outlives a reload in whichever tab made it.
+ *
+ * **A stale value is still harmless.** A staff member's business is enforced
+ * server-side and the switcher only offers businesses the account may see, so
+ * this can never widen access - the worst case is landing in the business you
+ * were last in, which is the intent.
  */
 
 const KEY = 'cellvix:admin:business';
@@ -31,7 +45,7 @@ const KEY = 'cellvix:admin:business';
  * reads it.**
  *
  * It exists because the id alone cannot colour the panel. On a reload the id is
- * in `sessionStorage` and readable synchronously, but the token that goes with
+ * in `localStorage` and readable synchronously, but the token that goes with
  * it lives on the business record, which arrives a network round-trip later.
  * For the length of that round-trip `paletteVars(undefined)` returned the
  * default ramp, so a CellShoppe admin reloading their own panel watched it open
@@ -68,7 +82,7 @@ const listeners = new Set();
 
 function read(key) {
   try {
-    return sessionStorage.getItem(key) || null;
+    return localStorage.getItem(key) || null;
   } catch {
     // Storage blocked (private window, site data off). All businesses is the
     // right answer, and the panel must still render.
@@ -78,8 +92,8 @@ function read(key) {
 
 function write(key, value) {
   try {
-    if (value) sessionStorage.setItem(key, value);
-    else sessionStorage.removeItem(key);
+    if (value) localStorage.setItem(key, value);
+    else localStorage.removeItem(key);
   } catch {
     // Not persisting is survivable; the value still holds for this page.
   }
@@ -149,12 +163,15 @@ export function setBusiness(id, { colorToken = null, name = null } = {}) {
 /**
  * A client-route URL carrying the selected business.
  *
- * **For a link that opens a new tab**, which is the one case the store cannot
- * cover on its own: the selection lives in `sessionStorage`, and a new tab
- * starts with none, so the page that opens there resolves to the default
- * business. On localhost that is silent and wrong - a CellShoppe staff member
- * opening the kiosk was shown Cellvix's, reported as "kiosk says it is off"
- * about a kiosk that was on.
+ * **For a link that leaves the panel**, where the store cannot speak for
+ * itself. Since the selection moved to `localStorage` a new admin tab inherits
+ * it, so an ordinary "open in new tab" is covered - but a surface that is not
+ * the admin panel still needs telling. The kiosk is the case: it is its own
+ * application on its own session, and a CellShoppe staff member opening it was
+ * shown Cellvix's, reported as "kiosk says it is off" about a kiosk that was on.
+ *
+ * It also still pins the business into a link somebody PASTES elsewhere, where
+ * neither storage nor the host can answer the question.
  *
  * The API layer already solves this for API paths (`apiUrl`, and the
  * `?business=` every request carries). This is the same idea for an

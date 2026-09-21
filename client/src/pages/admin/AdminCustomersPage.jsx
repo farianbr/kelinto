@@ -103,7 +103,15 @@ const CREATE_STATUS = [
  * sign-in link, so the admin no longer has to invent a password and then pass
  * it on down a phone line.
  */
-function ClientForm({ onSubmit, onCancel, isPending, error }) {
+/**
+ * `seedName` is what somebody typed into a customer picker before pressing
+ * "Add a customer" - the quote and invoice builders hand it over rather than
+ * dropping it, so the name they had already typed is not typed twice. Split on
+ * the first space, the same shape the form holds names in.
+ */
+function ClientForm({ onSubmit, onCancel, isPending, error, seedName = '' }) {
+  const [seedFirst, ...seedRest] = seedName.trim().split(/\s+/).filter(Boolean);
+
   const {
     register,
     handleSubmit,
@@ -114,8 +122,8 @@ function ClientForm({ onSubmit, onCancel, isPending, error }) {
   } = useAdminForm({
     resolver: zodResolver(clientCreateFormSchema),
     defaultValues: {
-      firstName: '',
-      lastName: '',
+      firstName: seedFirst ?? '',
+      lastName: seedRest.join(' '),
       businessName: '',
       email: '',
       phone: '',
@@ -362,7 +370,7 @@ export function AdminCustomersPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   // Opened directly by `+ Create` (§7.2), which arrives with `?new=1`.
-  const [creating, setCreating] = useCreateParam();
+  const [creating, setCreating, createSeed] = useCreateParam(true, false, ['name']);
   const [selected, setSelected] = useState([]);
   // Which bulk status change is waiting to be confirmed. Both write to every
   // selected account one after another, so the count is what the dialog leads
@@ -827,6 +835,9 @@ export function AdminCustomersPage() {
       >
         {creating && (
           <ClientForm
+            // What was typed into a customer picker before "Add a customer"
+            // was pressed, so the name survives the hop to this form.
+            seedName={createSeed.name}
             isPending={createUser.isPending}
             error={createUser.error?.message}
             onCancel={() => setCreating(false)}

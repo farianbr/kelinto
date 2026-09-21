@@ -25,6 +25,7 @@ import FilterStrip from '@/components/admin/FilterStrip';
 import DataTable, { CountLine } from '@/components/admin/DataTable';
 import Pagination from '@/components/ui/Pagination';
 import useTablePage from '@/hooks/useTablePage';
+import useCreateRedirect from '@/hooks/useCreateRedirect';
 import { ADMIN_ROUTES } from '@/lib/adminRoutes';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { useAdminServiceQuotes, useAdminMutations } from '@/hooks/useAdmin';
@@ -33,8 +34,8 @@ import { toast } from '@/store/toastStore';
 const ADMIN_PAGE = {
   ...ADMIN_ROUTES['/admin/quotes'],
   icon: adminIcon('FileSignature'),
-  title: 'Estimates',
-  description: 'Repair estimates given before the device is in the shop.',
+  title: 'Quotes',
+  description: 'Repair quotes given before the device is in the shop.',
 };
 
 const PILLS = [
@@ -55,7 +56,7 @@ const STATUS_TONE = {
   rejected: 'danger',
 };
 
-/** The devices on one estimate, as one line. */
+/** The devices on one quote, as one line. */
 function deviceSummary(quote) {
   const devices = quote.devices ?? [];
   if (!devices.length) return '–';
@@ -65,7 +66,7 @@ function deviceSummary(quote) {
 }
 
 /**
- * Repair estimates (Sales § Quote, service businesses).
+ * Repair quotes (Sales § Quote, service businesses).
  *
  * **The service half of one nav row.** `AdminQuotesPage` renders this instead
  * of the wholesale quote list when the business sells services. They are
@@ -73,15 +74,21 @@ function deviceSummary(quote) {
  * database-per-business a shop only ever has one kind, so a business never sees
  * a list that mixes them and never needs two menu items to find its own.
  *
- * The builder is a **full page**, not a modal here - an estimate carries any
+ * The builder is a **full page**, not a modal here - a quote carries any
  * number of devices, each with its own lines and notes, which is more than a
  * dialog can hold without scrolling past what it is asking about.
  */
 export function AdminServiceQuotesPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  // `+ Create > Quote` and the customer profile both arrive with `?new=1`. The
+  // builder here is a full page, not a modal, so the flag is forwarded to it
+  // rather than consumed - see `useCreateRedirect`.
+  useCreateRedirect('/admin/quotes/create');
   const [query, setQuery] = useState('');
   const [converting, setConverting] = useState(null);
+  // The estimate awaiting a typed number before it is destroyed.
+  const [deleting, setDeleting] = useState(null);
   const [selected, setSelected] = useState([]);
 
   const status = searchParams.get('status') ?? 'all';
@@ -115,7 +122,7 @@ export function AdminServiceQuotesPage() {
    * partial one for reasons nobody can reconstruct afterwards.
    *
    * **Convert is deliberately absent**, as it is on the wholesale list. It
-   * creates a ticket per estimate and asks a question per conversion; a batch
+   * creates a ticket per quote and asks a question per conversion; a batch
    * would answer it on the staff member's behalf for every row.
    */
   async function runBulk(action) {
@@ -146,8 +153,8 @@ export function AdminServiceQuotesPage() {
       toast.error(
         `${formatCount(done)} ${noun}, ${formatCount(skipped)} skipped`,
         action === 'accept'
-          ? 'Only a sent estimate that has not expired can be accepted.'
-          : 'An estimate that has become a ticket cannot be deleted - the ticket references it.',
+          ? 'Only a sent quote that has not expired can be accepted.'
+          : 'A quote that has become a ticket cannot be deleted - the ticket references it.',
       );
     } else if (done > 0) {
       toast.ok(`${formatCount(done)} ${noun}`, 'Done.');
@@ -157,7 +164,7 @@ export function AdminServiceQuotesPage() {
   const columns = [
     {
       key: 'quoteNumber',
-      header: 'Estimate',
+      header: 'Quote',
       priority: 1,
       render: (quote) => (
         <>
@@ -221,17 +228,17 @@ export function AdminServiceQuotesPage() {
   const rowMenu = [
     {
       key: 'view',
-      label: 'Open estimate',
+      label: 'Open quote',
       icon: FileSignature,
       onSelect: (quote) => navigate(`/admin/quotes/${quote.id}`),
     },
     {
       key: 'edit',
-      label: 'Edit estimate',
+      label: 'Edit quote',
       icon: Wrench,
-      // A converted estimate is history: its ticket carries the work now, and
-      // editing it would leave the two disagreeing about what was promised.
-      disabled: (quote) => Boolean(quote.convertedTicket),
+      // Editable at every status, converted included (ruled 2026-09-21). This
+      // was disabled once a ticket existed; the shop corrects its own paperwork,
+      // and the ticket is a separate record that this does not reach into.
       onSelect: (quote) => navigate(`/admin/quotes/${quote.id}/edit`),
     },
     {
@@ -256,6 +263,22 @@ export function AdminServiceQuotesPage() {
       disabled: (quote) => quote.storedStatus !== 'accepted' || Boolean(quote.convertedTicket),
       onSelect: setConverting,
     },
+    {
+      /**
+       * Deleting, at any status (ruled 2026-09-21).
+       *
+       * The estimate had no delete at all before this - a draft typed against
+       * the wrong customer stayed in the list for ever. A converted one takes
+       * its ticket's back-reference with it rather than leaving the ticket
+       * pointing at a record that is gone; the ticket itself is untouched,
+       * because the work still happened.
+       */
+      key: 'delete',
+      label: 'Delete quote',
+      icon: Trash2,
+      tone: 'danger',
+      onSelect: setDeleting,
+    },
   ];
 
   return (
@@ -266,7 +289,7 @@ export function AdminServiceQuotesPage() {
         description={ADMIN_PAGE.description}
         action={
           <Button onClick={() => navigate('/admin/quotes/create')} icon={Plus}>
-            New estimate
+            New quote
           </Button>
         }
       />
@@ -284,7 +307,7 @@ export function AdminServiceQuotesPage() {
             key: 'open',
             label: 'Open pipeline',
             value: money(totals.open ?? 0),
-            hint: 'Draft and sent estimates still live',
+            hint: 'Draft and sent quotes still live',
             tone: 'brand',
             icon: Wallet,
           },
@@ -319,7 +342,7 @@ export function AdminServiceQuotesPage() {
         <FilterStrip
           search={query}
           onSearchChange={setQuery}
-          searchPlaceholder="Estimate number, customer, phone or model…"
+          searchPlaceholder="Quote number, customer, phone or model…"
           pills={PILLS.map((pill) => ({ ...pill, count: counts[pill.value] }))}
           activePill={status}
           onPillChange={setStatus}
@@ -330,7 +353,7 @@ export function AdminServiceQuotesPage() {
             total={quotes.length}
             shown={pageQuotes.length}
             from={from}
-            noun={quotes.length === 1 ? 'estimate' : 'estimates'}
+            noun={quotes.length === 1 ? 'quote' : 'quotes'}
           />
         </div>
 
@@ -348,15 +371,15 @@ export function AdminServiceQuotesPage() {
           empty={
             <PanelEmpty
               icon={FileSignature}
-              title={query || status !== 'all' ? 'No estimates match' : 'No estimates yet'}
+              title={query || status !== 'all' ? 'No quotes match' : 'No quotes yet'}
               body={
                 query || status !== 'all'
                   ? 'Try a different filter.'
-                  : 'An estimate is for a customer who has not left their device. Somebody who walks in with one goes straight to a ticket.'
+                  : 'A quote is for a customer who has not left their device. Somebody who walks in with one goes straight to a ticket.'
               }
               action={
                 <Button onClick={() => navigate('/admin/quotes/create')} icon={Plus} size="sm">
-                  New estimate
+                  New quote
                 </Button>
               }
             />
@@ -397,16 +420,16 @@ export function AdminServiceQuotesPage() {
 
       {/*
         Converting starts work and creates a second record, so it names the
-        estimate and says exactly what will exist afterwards.
+        quote and says exactly what will exist afterwards.
       */}
       <ConfirmDialog
         open={Boolean(converting)}
         onClose={() => setConverting(null)}
-        title="Start work on this estimate?"
+        title="Start work on this quote?"
         body={
           converting
             ? `${converting.quoteNumber} for ${converting.customerName} becomes a repair ticket. ` +
-              'Every device, line and note carries over, and the estimate can no longer be edited.'
+              'Every device, line and note carries over, and the ticket owns the work from then on.'
             : ''
         }
         confirmLabel="Create the ticket"
@@ -424,6 +447,44 @@ export function AdminServiceQuotesPage() {
               },
             },
           )
+        }
+      />
+
+      {/*
+        Deleting the estimate.
+
+        `critical` and a typed quote number, because the document is destroyed
+        rather than closed - and because a converted estimate is the paper the
+        customer agreed to, which is worth one deliberate act to remove. The
+        body says what happens to the ticket, since that is the question a
+        staff member will have at exactly this moment.
+      */}
+      <ConfirmDialog
+        open={Boolean(deleting)}
+        onClose={() => setDeleting(null)}
+        title={`Delete ${deleting?.quoteNumber}?`}
+        body={
+          deleting
+            ? `The estimate for ${deleting.customerName} is destroyed, along with its devices, lines and timeline.${
+                deleting.convertedTicket
+                  ? ' The repair ticket it became is kept - it simply stops naming an estimate.'
+                  : ''
+              } This cannot be undone.`
+            : ''
+        }
+        tone="critical"
+        confirmPhrase={deleting?.quoteNumber}
+        confirmPhraseLabel="the quote number"
+        confirmLabel="Delete quote"
+        loading={deleteServiceQuote.isPending}
+        error={deleteServiceQuote.error?.message}
+        onConfirm={() =>
+          deleteServiceQuote.mutate(deleting.id, {
+            onSuccess: () => {
+              toast.ok('Quote deleted', `${deleting.quoteNumber} is gone.`);
+              setDeleting(null);
+            },
+          })
         }
       />
     </>

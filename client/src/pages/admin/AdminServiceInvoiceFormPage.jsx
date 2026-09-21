@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { useNavigate, Link } from 'react-router';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams, useParams, Link } from 'react-router';
 import { useFieldArray, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import useAdminForm from '@/hooks/useAdminForm';
@@ -16,8 +16,7 @@ import {
   Wrench,
 } from 'lucide-react';
 
-import { SERVICE_INVOICE_TYPES } from '@shared/schemas/admin';
-import { PROVINCES } from '@shared/schemas/checkout';
+import { SERVICE_INVOICE_TYPES, TAX_RATES, provinceTaxOptions } from '@shared/schemas/admin';
 import { money } from '@/lib/format';
 import cn from '@/lib/cn';
 import Input from '@/components/ui/Input';
@@ -27,7 +26,7 @@ import Checkbox from '@/components/ui/Checkbox';
 import SelectField from '@/components/ui/SelectField';
 import PageHeader from '@/components/admin/PageHeader';
 import { Section } from '@/components/admin/DeviceLines';
-import DevicePicker from '@/components/admin/DevicePicker';
+import DeviceFinder from '@/components/admin/DeviceFinder';
 import PricedLines, { emptyLine } from '@/components/admin/PricedLines';
 import { pressable } from '@/lib/motion';
 import {
@@ -35,10 +34,13 @@ import {
   useAdminServices,
   useAdminInventory,
   useAdminSettings,
+  useAdminInvoice,
   useAdminMutations,
 } from '@/hooks/useAdmin';
+import Skeleton from '@/components/ui/Skeleton';
 
-const PROVINCE_OPTIONS = [{ value: '', label: '– Pick province –' }, ...PROVINCES];
+// Each option carries its tax name and rate - see `provinceTaxOptions`.
+const PROVINCE_OPTIONS = provinceTaxOptions();
 
 const emptyDevice = () => ({
   category: '',
@@ -62,7 +64,23 @@ function today() {
 }
 
 /**
- * Bill a repair (Sales § Invoice, service businesses).
+ * Bill a repair, and correct one (Sales § Invoice, service businesses).
+ *
+ * ## One screen, two modes
+ *
+ * `/admin/invoices/create` raises a new invoice; `/admin/invoices/:number/edit`
+ * loads an existing one into the same form. **The same component on purpose**:
+ * the client asked for the edit screen to look like the new-invoice screen, and
+ * the surest way to keep two screens identical is for there to be one of them.
+ * A second component would drift the first time a field was added to either.
+ *
+ * The mode is `useParams().number`. Everything downstream branches on that -
+ * the heading, the submit label, which mutation runs and where it navigates.
+ *
+ * **An edit posts the whole invoice**, not a patch: the server re-prices it
+ * from the lines exactly as it prices a new one, so what you see on this form
+ * is what the record becomes. What the form does NOT carry - the number, the
+ * payments, what has been paid - is what an edit must not touch.
  *
  * ## Why this is a separate screen and not a separate model
  *
@@ -90,12 +108,37 @@ export function AdminServiceInvoiceFormPage() {
   const navigate = useNavigate();
   const [submitError, setSubmitError] = useState(null);
 
+  /**
+   * The customer this was opened for, from `?client=<id>`.
+   *
+   * The profile's "Invoice" button and `+ Create > Invoice` both land here
+   * through the invoices list, which forwards the whole query string
+   * (`useCreateRedirect`). Without reading it the staff member arrives at a
+   * form that has forgotten which account they pressed the button on.
+   */
+  const [searchParams] = useSearchParams();
+  const seededClient = searchParams.get('client') ?? '';
+
+  /**
+   * Present on `/admin/invoices/:number/edit`, absent on create.
+   *
+   * The one value the whole screen branches on. Read from the path rather than
+   * a prop so the route table stays the only place the two URLs are named.
+   */
+  const { number: editingNumber } = useParams();
+  const editing = Boolean(editingNumber);
+
+  const { data: invoiceData, isLoading: loadingInvoice, error: loadError } =
+    useAdminInvoice(editingNumber);
+  const existing = invoiceData?.invoice;
+
   const { data: clientData } = useAdminUsers({ status: 'approved', limit: 500 });
   const { data: serviceData } = useAdminServices({ status: 'active', limit: 200 });
   const { data: inventoryData } = useAdminInventory({ limit: 500 });
   const { data: settingsData } = useAdminSettings();
 
-  const { createInvoice } = useAdminMutations();
+  const { createInvoice, updateInvoice } = useAdminMutations();
+  const saving = editing ? updateInvoice : createInvoice;
 
   const clients = clientData?.users ?? [];
   const services = serviceData?.services ?? [];
@@ -120,9 +163,9 @@ export function AdminServiceInvoiceFormPage() {
    */
   const ratePerKm = Number(settingsData?.financial?.travelRateCentsPerKm ?? 0);
 
-  const { register, control, handleSubmit, setValue } = useAdminForm({
+  const { register, control, handleSubmit, setValue, reset } = useAdminForm({
     defaultValues: {
-      user: '',
+      user: seededClient,
       issuedAt: today(),
       dueDate: '',
       technician: '',
@@ -140,6 +183,71 @@ export function AdminServiceInvoiceFormPage() {
       taxPercent: 5,
     },
   });
+
+  /**
+   * Load the invoice into the form, once it arrives.
+   *
+   * **Money comes back in cents and the form works in dollars**, so every
+   * price, the discount and the out-of-area fee are divided on the way in.
+   * Getting this wrong does not fail - it silently multiplies the invoice by a
+   * hundred - so the conversion lives here, in one place, rather than at each
+   * field.
+   *
+   * Dates arrive as ISO timestamps and `<input type="date">` wants
+   * `YYYY-MM-DD`; `slice(0, 10)` is that, and it takes the UTC day the server
+   * stored rather than re-deriving a local one that can land a day earlier.
+   *
+   * An invoice with no devices - a flat charge, or one an order raised - seeds
+   * one empty device block, because the form has no flat-amount field and an
+   * empty repeater reads as a broken screen.
+   */
+  useEffect(() => {
+    if (!existing) return;
+
+    const toDollars = (cents) => (cents ?? 0) / 100;
+    const line = (entry) => ({
+      name: entry.name ?? '',
+      description: entry.description ?? '',
+      qty: entry.qty ?? 1,
+      priceDollars: toDollars(entry.priceCents),
+      product: entry.product ?? undefined,
+    });
+
+    const devices = (existing.devices ?? []).map((device) => ({
+      category: device.category ?? '',
+      brand: device.brand ?? '',
+      series: device.series ?? '',
+      model: device.model ?? '',
+      serial: device.serial ?? '',
+      passcode: '',
+      problem: device.problem ?? '',
+      solution: device.solution ?? '',
+      notes: device.notes ?? '',
+      services: (device.services ?? []).map(line),
+      parts: (device.parts ?? []).map(line),
+    }));
+
+    reset({
+      user: existing.userId ?? '',
+      issuedAt: existing.issuedAt ? String(existing.issuedAt).slice(0, 10) : today(),
+      dueDate: existing.dueDate ? String(existing.dueDate).slice(0, 10) : '',
+      technician: existing.technician ?? '',
+      serviceType: existing.serviceType ?? 'walk_in',
+      devices: devices.length ? devices : [emptyDevice()],
+      customerNotes: existing.customerNotes ?? '',
+      technicianNotes: existing.technicianNotes ?? '',
+      internalNotes: existing.internalNotes ?? '',
+      travelKm: existing.travelKm || '',
+      extendedServiceFee: Boolean(existing.extendedServiceFee),
+      extendedServiceFeeDollars: existing.extendedServiceFee
+        ? toDollars(existing.extendedServiceFeeCents)
+        : '',
+      discountDollars: toDollars(existing.discountCents),
+      discountCode: existing.discountCode ?? '',
+      province: existing.province ?? '',
+      taxPercent: existing.taxPercent ?? 0,
+    });
+  }, [existing, reset]);
 
   const {
     fields: deviceFields,
@@ -189,10 +297,22 @@ export function AdminServiceInvoiceFormPage() {
   function onSubmit(values) {
     setSubmitError(null);
 
-    createInvoice.mutate(
+    saving.mutate(
       {
+        // Identifies the record on an edit; ignored by `createInvoice`, which
+        // assigns the number itself.
+        ...(editing ? { number: editingNumber } : {}),
         user: values.user,
         issuedAt: values.issuedAt || undefined,
+        /**
+         * Blank means "derive it from the terms", on both paths.
+         *
+         * Sent as `undefined` rather than `''`: the schema wants a calendar
+         * date or nothing at all, and an empty string is neither. On an edit
+         * that hands the server the same instruction a create gives it, so an
+         * invoice whose due date is cleared here gets the terms' own date back
+         * rather than keeping a date the form no longer shows.
+         */
         dueDate: values.dueDate || undefined,
         // A repair is settled on collection, so it is raised prepaid rather
         // than on terms - see the note on this component.
@@ -217,7 +337,9 @@ export function AdminServiceInvoiceFormPage() {
       },
       {
         onSuccess: (result) => {
-          const number = result?.invoice?.number;
+          // On an edit the number is already known and the response is the
+          // updated record; on a create it is the number just assigned.
+          const number = result?.invoice?.number ?? editingNumber;
           navigate(number ? `/admin/invoices/${number}` : '/admin/invoices');
         },
         onError: (error) => setSubmitError(error.message),
@@ -225,22 +347,59 @@ export function AdminServiceInvoiceFormPage() {
     );
   }
 
+  /**
+   * An edit cannot render its form until the record is in hand.
+   *
+   * Showing the empty defaults first and filling them a tick later reads as an
+   * invoice that has been blanked, and a staff member who starts typing into
+   * that loses it to the `reset` below. The create path has nothing to wait
+   * for and skips both of these.
+   */
+  if (editing && loadError) {
+    return (
+      <div className="record-page">
+        <PageHeader icon={Receipt} title="Edit invoice" />
+        <p className="flex items-start gap-2 rounded-md bg-danger-50 px-3 py-2.5 text-sm text-danger">
+          <AlertCircle className="mt-0.5 size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+          {loadError.message}
+        </p>
+      </div>
+    );
+  }
+
+  if (editing && (loadingInvoice || !existing)) {
+    return (
+      <div className="record-page space-y-4">
+        <Skeleton className="h-16 w-72" />
+        <Skeleton className="h-64" />
+        <Skeleton className="h-48" />
+      </div>
+    );
+  }
+
   return (
-    <>
+    /* Measured, not full-bleed - see `AdminTicketFormPage` for the argument.
+       `.record-page` rather than `.form-page` because the device blocks and
+       priced lines below are tables, which a 760px column would crush. */
+    <div className="record-page">
       <PageHeader
         icon={Receipt}
-        title="New invoice"
-        description="Bill a repair. The number is assigned on save."
+        title={editing ? `Edit ${editingNumber}` : 'New invoice'}
+        description={
+          editing
+            ? 'The invoice keeps its number and anything already paid against it. Everything else is re-priced from these lines on save.'
+            : 'Bill a repair. The number is assigned on save.'
+        }
         action={
           <Link
-            to="/admin/invoices"
+            to={editing ? `/admin/invoices/${editingNumber}` : '/admin/invoices'}
             className={cn(
               pressable,
               'inline-flex h-11 select-none items-center justify-center gap-2 rounded-md border border-line-strong bg-surface px-5 font-display text-md font-semibold text-ink-700 hover:border-ink-300 hover:bg-surface-2',
             )}
           >
             <ArrowLeft className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
-            Back to invoices
+            {editing ? `Back to ${editingNumber}` : 'Back to invoices'}
           </Link>
         }
       />
@@ -259,7 +418,10 @@ export function AdminServiceInvoiceFormPage() {
               control={control}
               name="user"
               label="Customer"
-              size="sm"
+              // Searchable explicitly, not by row count: this is every approved
+              // account and it grows with the business.
+              searchable
+              searchPlaceholder="Name, business or email…"
               options={[
                 { value: '', label: '– Choose a customer –' },
                 ...clients.map((client) => ({
@@ -267,21 +429,29 @@ export function AdminServiceInvoiceFormPage() {
                   label: `${client.displayName}${client.email ? ` · ${client.email}` : ''}`,
                 })),
               ]}
+              onCreate={(typed) =>
+                navigate(
+                  `/admin/clients?new=1${typed ? `&name=${encodeURIComponent(typed)}` : ''}`,
+                )
+              }
+              createLabelEmpty="Add a customer"
             />
-            <Input label="Invoice date" type="date" className="h-9" {...register('issuedAt')} />
-            <Input label="Due date" type="date" className="h-9" {...register('dueDate')} />
+            {/* No `size` or `h-9` here any more: the density context sets the
+                height, and hand-sizing a field beside it is what let the two
+                drift apart in the first place. */}
+            <Input label="Invoice date" type="date" {...register('issuedAt')} />
+            <Input label="Due date" type="date" {...register('dueDate')} />
             <SelectField
               control={control}
               name="serviceType"
               label="Service type"
-              size="sm"
               options={SERVICE_INVOICE_TYPES}
             />
           </div>
 
           <p className="mt-2 text-xs text-ink-400">
             No account yet?{' '}
-            <Link to="/admin/clients/new" className="font-medium text-brand underline">
+            <Link to="/admin/clients?new=1" className="font-medium text-brand underline">
               Add a customer
             </Link>{' '}
             first - an invoice is raised against somebody.
@@ -313,24 +483,19 @@ export function AdminServiceInvoiceFormPage() {
                   )}
                 </div>
 
-                <DevicePicker
-                  control={control}
-                  register={register}
-                  setValue={setValue}
-                  index={index}
-                />
+                {/* The stepped finder over the shop's own device tree - the
+                    same control the ticket and the quote use. */}
+                <DeviceFinder control={control} setValue={setValue} index={index} />
 
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <Input
                     label="Serial number"
                     placeholder="e.g. IMEI or S/N"
-                    className="h-9"
                     {...register(`devices.${index}.serial`)}
                   />
                   <Input
                     label="Passcode / PIN"
                     placeholder="For testing (optional)"
-                    className="h-9"
                     {...register(`devices.${index}.passcode`)}
                   />
                 </div>
@@ -454,7 +619,6 @@ export function AdminServiceInvoiceFormPage() {
                 step="0.1"
                 min="0"
                 placeholder="e.g. 45"
-                className="h-9"
                 {...register('travelKm')}
               />
               <p className="mt-1 text-xs text-ink-400">
@@ -510,7 +674,6 @@ export function AdminServiceInvoiceFormPage() {
                   step="0.01"
                   min="0"
                   placeholder="0.00"
-                  className="h-9"
                   {...register('extendedServiceFeeDollars')}
                 />
               </div>
@@ -527,13 +690,11 @@ export function AdminServiceInvoiceFormPage() {
                   type="number"
                   step="0.01"
                   min="0"
-                  className="h-9"
                   {...register('discountDollars')}
                 />
                 <Input
                   label="Discount code"
                   placeholder="e.g. SUMMER10"
-                  className="h-9"
                   {...register('discountCode')}
                 />
               </div>
@@ -542,17 +703,23 @@ export function AdminServiceInvoiceFormPage() {
                   control={control}
                   name="province"
                   label="Province"
-                  size="sm"
                   options={PROVINCE_OPTIONS}
+                  // Picking a province fills the rate in. Without this the
+                  // province read Ontario while the rate beside it still said
+                  // 5%, and the invoice went out under-taxed. Editable after,
+                  // because zero is a real answer for an exempt customer.
+                  onValueChange={(value) => setValue('taxPercent', TAX_RATES[value] ?? 0)}
                 />
                 <Input
-                  label="GST %"
+                  // "Tax", not "GST": this same field carries HST in Ontario
+                  // and GST+QST in Quebec, and labelling all three GST names
+                  // the tax wrongly on nine provinces out of thirteen.
+                  label="Tax %"
                   type="number"
                   step="0.01"
                   min="0"
                   max="100"
                   hint="0 means tax exempt"
-                  className="h-9"
                   {...register('taxPercent')}
                 />
               </div>
@@ -607,15 +774,23 @@ export function AdminServiceInvoiceFormPage() {
         </Section>
 
         <div className="flex justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={() => navigate('/admin/invoices')}>
+          <Button
+            type="button"
+            variant="ghost"
+            // Back to the invoice on an edit, not the list: it is the screen
+            // the staff member came from and the one they want to check.
+            onClick={() =>
+              navigate(editing ? `/admin/invoices/${editingNumber}` : '/admin/invoices')
+            }
+          >
             Cancel
           </Button>
-          <Button type="submit" loading={createInvoice.isPending} icon={CheckCircle2}>
-            Create invoice
+          <Button type="submit" loading={saving.isPending} icon={CheckCircle2}>
+            {editing ? 'Save changes' : 'Create invoice'}
           </Button>
         </div>
       </form>
-    </>
+    </div>
   );
 }
 

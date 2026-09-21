@@ -398,19 +398,19 @@ async function updateQuote(id, body = {}) {
   if (!quote) throw ApiError.notFound('Estimate not found.', 'SERVICE_QUOTE_NOT_FOUND');
 
   /**
-   * A converted estimate is a historical record.
+   * **An estimate is editable at every status, converted included** (ruled
+   * 2026-09-21).
    *
-   * Its ticket is already carrying the work, and editing the estimate now would
-   * leave the two disagreeing about what was promised - with the estimate, the
-   * document the customer actually saw, being the one that changed.
+   * This refused once a ticket existed, on the grounds that the two records
+   * would then disagree about what was promised. That is a real risk and it is
+   * now the shop's to take: the common case is a typo or a price the counter
+   * corrected while the customer was standing there, and refusing meant the
+   * estimate stayed wrong for ever while the ticket carried the truth.
+   *
+   * The ticket is NOT rewritten to match - it is a separate record of separate
+   * work, and editing an estimate has never reached forward into it. The
+   * timeline on both still shows when each was changed.
    */
-  if (quote.convertedTicket) {
-    throw ApiError.badRequest(
-      `${quote.quoteNumber} has already become a ticket and can no longer be edited.`,
-      'SERVICE_QUOTE_CONVERTED',
-    );
-  }
-
   if (body.devices !== undefined) {
     const devices = shapeDevicesIn(body.devices);
     if (!devices.length) {
@@ -483,11 +483,24 @@ async function deleteQuote(id) {
   const quote = await db().ServiceQuote.findOne(query).lean();
   if (!quote) throw ApiError.notFound('Estimate not found.', 'SERVICE_QUOTE_NOT_FOUND');
 
+  /**
+   * **Deletable at every status, converted included** (ruled 2026-09-21).
+   *
+   * This refused once a ticket referenced the estimate. The reference is the
+   * reason it has to be CLEANED rather than the reason to refuse: a ticket
+   * pointing at a quote that no longer exists draws a lineage strip with a
+   * dead station on it, which is a worse record than one that simply starts at
+   * the ticket.
+   *
+   * So the pointer is cleared first and the ticket survives untouched - it is
+   * the record of the work, and the work still happened. The estimate is the
+   * document that goes.
+   */
+  // `serviceQuote`, not `quote` - the latter is the WHOLESALE quote reference
+  // and is deliberately null on a repair ticket. Clearing the wrong one would
+  // have left the dead pointer exactly where it was.
   if (quote.convertedTicket) {
-    throw ApiError.badRequest(
-      `${quote.quoteNumber} has become a ticket and cannot be deleted - the ticket references it.`,
-      'SERVICE_QUOTE_CONVERTED',
-    );
+    await db().Ticket.updateMany({ serviceQuote: quote._id }, { $set: { serviceQuote: null } });
   }
 
   await db().ServiceQuote.deleteOne({ _id: quote._id });

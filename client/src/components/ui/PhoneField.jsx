@@ -7,6 +7,7 @@ import cn from '@/lib/cn';
 import useOnClickOutside from '@/hooks/useOnClickOutside';
 import useAnchoredPosition from '@/hooks/useAnchoredPosition';
 import { ease, pressable } from '@/lib/motion';
+import { useDensity, fieldSize, labelSize, hintSize } from './density';
 
 /**
  * The dial codes offered: every country, from the one shared list.
@@ -404,6 +405,17 @@ export const PhoneField = forwardRef(function PhoneField(
   const id = idProp || generatedId;
   const describedBy = error ? `${id}-error` : hint ? `${id}-hint` : undefined;
 
+  /**
+   * Height, label and hint from the density in scope - like every other field.
+   *
+   * This component hardcoded `h-11` and a 14px label, so inside `/admin` it
+   * stood 8px taller than the `Input`s beside it: on the ticket intake form the
+   * Phone control sat visibly low against Customer name and Email, and its
+   * label was a step larger than theirs. A field that ignores the density
+   * context breaks the row it is in, and the row is what the staff member reads.
+   */
+  const density = useDensity();
+
   const { dial: parsedDial, national } = splitPhone(value);
 
   /**
@@ -426,7 +438,7 @@ export const PhoneField = forwardRef(function PhoneField(
       {label && (
         <label
           htmlFor={id}
-          className="mb-1.5 block text-sm font-medium text-ink-700"
+          className={cn(labelSize(density), 'block font-medium text-ink-700')}
         >
           {label}
           {required && (
@@ -444,7 +456,10 @@ export const PhoneField = forwardRef(function PhoneField(
           'focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/25',
           error ? 'border-danger focus-within:border-danger focus-within:ring-danger/20' : 'border-line',
           disabled && 'cursor-not-allowed bg-surface-2',
-          'h-11',
+          // `fieldSize` carries the height AND the text size; the height
+          // belongs on this wrapper and the text on the `input` inside it, so
+          // the pair is applied across both rather than duplicated.
+          fieldSize(density),
         )}
       >
         <CountryCodeMenu
@@ -475,7 +490,12 @@ export const PhoneField = forwardRef(function PhoneField(
           onBlur={onBlur}
           onChange={(event) => onChange?.(composePhone(dial, formatNational(event.target.value, dial)))}
           className={cn(
-            'h-full min-w-0 flex-1 bg-transparent px-3 text-lg text-ink-900 sm:text-md',
+            // No font size of its own: `text-[length:inherit]` takes whatever
+            // `fieldSize` put on the wrapper, so the number matches the other
+            // fields at both densities and one place decides it. The `length:`
+            // hint is load-bearing - a bare `text-inherit` is a COLOUR utility
+            // in Tailwind and would fight `text-ink-900` beside it.
+            'h-full min-w-0 flex-1 bg-transparent px-3 text-[length:inherit] text-ink-900',
             'placeholder:text-ink-300 focus:outline-none',
             'disabled:cursor-not-allowed disabled:text-ink-400',
           )}
@@ -483,12 +503,12 @@ export const PhoneField = forwardRef(function PhoneField(
       </div>
 
       {error ? (
-        <p id={`${id}-error`} className="mt-1.5 flex items-center gap-1.5 text-sm text-danger">
+        <p id={`${id}-error`} className={cn(hintSize(density), 'flex items-center gap-1.5 text-danger')}>
           <AlertCircle className="size-3.5 shrink-0" strokeWidth={2.25} aria-hidden="true" />
           {error}
         </p>
       ) : hint ? (
-        <p id={`${id}-hint`} className="mt-1.5 text-sm text-ink-400">
+        <p id={`${id}-hint`} className={cn(hintSize(density), 'text-ink-400')}>
           {hint}
         </p>
       ) : null}

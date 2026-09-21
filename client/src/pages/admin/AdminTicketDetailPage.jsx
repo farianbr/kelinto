@@ -72,6 +72,32 @@ const STATUS_TONES = {
   cancelled: 'danger',
 };
 
+/**
+ * The dot beside each status in the picker.
+ *
+ * **The same map the Tickets list uses**, deliberately duplicated rather than
+ * imported: `STATUS_DOTS` lives in `AdminTicketsPage` as a module constant and
+ * exporting a colour table from a page component to another page component is
+ * how two screens end up importing each other. The pair is small, stable and
+ * the labels are already shared through `TICKET_STATUS_LABELS`; if a third
+ * screen needs it, it moves to `shared/` then.
+ *
+ * Without these the picker was nine lines of identical grey text - readable,
+ * but nothing to aim at, and visibly not the control the list had trained
+ * people on.
+ */
+const STATUS_DOTS = {
+  diagnosis: 'bg-info/60',
+  accepted: 'bg-warn',
+  waiting_for_parts: 'bg-danger/70',
+  ready_to_repair: 'bg-brand',
+  processing: 'bg-brand-600',
+  retention_policy: 'bg-ink-300',
+  ready_to_pickup: 'bg-ok',
+  completed: 'bg-ok/60',
+  cancelled: 'bg-danger',
+};
+
 const DEPOSIT_METHODS = [
   { value: 'cash', label: 'Cash' },
   { value: 'card', label: 'Credit card' },
@@ -81,11 +107,22 @@ const DEPOSIT_METHODS = [
   { value: 'other', label: 'Other' },
 ];
 
+/**
+ * Payment terms on the invoice a repair converts into.
+ *
+ * **Worded for a repair shop, not for the wholesale desk.** These labels were
+ * the parts business's own - bare "Net 30", "Net 60" - which is a credit
+ * vocabulary that belongs to a buyer with an account and a line of credit. The
+ * customer collecting a phone pays at the counter, so "Due on collection" is
+ * the normal case and says the thing that actually happens; the net terms stay
+ * for the business accounts a shop does invoice, named so it is clear they
+ * draw on credit rather than settle now.
+ */
 const TERMS = [
-  { value: 'prepaid', label: 'Prepaid - due on issue' },
-  { value: 'net15', label: 'Net 15' },
-  { value: 'net30', label: 'Net 30' },
-  { value: 'net60', label: 'Net 60' },
+  { value: 'prepaid', label: 'Due on collection' },
+  { value: 'net15', label: 'On account - 15 days' },
+  { value: 'net30', label: 'On account - 30 days' },
+  { value: 'net60', label: 'On account - 60 days' },
 ];
 
 /**
@@ -127,7 +164,7 @@ const COMPACT_FIELD = 'h-9';
  * **Four stations, not nine.** The real ladder in `TICKET_STATUSES` has nine
  * rungs and most are shades of the same station - `ready_to_repair` and
  * `waiting_for_parts` are both "in repair" as far as anyone outside the workshop
- * is concerned. `Move stage` above is where the exact rung lives; this is the
+ * is concerned. The `Status` panel above is where the exact rung lives; this is the
  * shape of the process, which is what somebody scanning wants.
  *
  * `cancelled` is not a fifth station. It is an exit that can happen from any
@@ -194,6 +231,23 @@ export function AdminTicketDetailPage() {
   const [removingDeposit, setRemovingDeposit] = useState(null);
   const [cancelling, setCancelling] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  /**
+   * The submitted-but-unconfirmed stage move and deposit.
+   *
+   * **Every mutation confirms** (Instructions §3.0.1), and these two were the
+   * exceptions - argued on the grounds that a form somebody filled in is itself
+   * the confirmation. That reading has been overruled twice, and the two of
+   * them are the page's consequential writes: a stage move MESSAGES THE
+   * CUSTOMER by default, and a deposit records money taken. Neither is
+   * recoverable by editing a field back - an SMS is out, and a deposit is
+   * removed rather than undone.
+   *
+   * The form's values are parked here and the mutation fires from the dialog,
+   * so what is confirmed is exactly what was typed.
+   */
+  const [movingStage, setMovingStage] = useState(null);
+  const [recordingDeposit, setRecordingDeposit] = useState(null);
 
   const ticket = data?.ticket;
   useSetRecordLabel(ticket?.ticketNumber);
@@ -357,12 +411,8 @@ export function AdminTicketDetailPage() {
             disabled={invoiced}
             isPending={setTicketStatus.isPending}
             error={setTicketStatus.error?.message}
-            onMove={(values) =>
-              setTicketStatus.mutate(
-                { id: ticket.id, ...values },
-                { onSuccess: reportStatusOutcome },
-              )
-            }
+            // Held for the confirm rather than sent - see `movingStage`.
+            onMove={setMovingStage}
           />
 
           <DepositCard
@@ -370,7 +420,7 @@ export function AdminTicketDetailPage() {
             invoiced={invoiced}
             isPending={recordTicketDeposit.isPending}
             error={recordTicketDeposit.error?.message}
-            onRecord={(values) => recordTicketDeposit.mutate({ id: ticket.id, ...values })}
+            onRecord={setRecordingDeposit}
             onRemove={setRemovingDeposit}
           />
 
@@ -451,6 +501,75 @@ export function AdminTicketDetailPage() {
             },
           )
         }
+      />
+
+      {/*
+        Moving the stage, confirmed.
+
+        The consequence worth naming is not the stage - the staff member just chose
+        that - it is the MESSAGE. "Message the customer" is ticked by default,
+        so the commonest way to text somebody by accident is to move a stage
+        without noticing the box, and the dialog says which of the two is about
+        to happen in the sentence rather than leaving it to a checkbox
+        higher up the page.
+      */}
+      <ConfirmDialog
+        open={Boolean(movingStage)}
+        onClose={() => setMovingStage(null)}
+        onConfirm={() =>
+          setTicketStatus.mutate(
+            { id: ticket.id, ...movingStage },
+            {
+              onSuccess: (payload) => {
+                setMovingStage(null);
+                reportStatusOutcome(payload);
+              },
+            },
+          )
+        }
+        title={`Move ${ticket.ticketNumber} to ${TICKET_STATUS_LABELS[movingStage?.status] ?? 'the next stage'}?`}
+        body={
+          movingStage?.channels?.length === 0
+            ? `${ticket.customer?.name ?? 'The customer'} will not be told. The stage changes and the timeline records it.`
+            : `${ticket.customer?.name ?? 'The customer'} is messaged about this change on the channels this shop has switched on. A message cannot be recalled once it is out.`
+        }
+        // `warn` rather than `info` when it reaches somebody outside the
+        // building, which is the tone rule exactly (see ConfirmDialog).
+        tone={movingStage?.channels?.length === 0 ? 'info' : 'warn'}
+        confirmLabel="Set status"
+        loading={setTicketStatus.isPending}
+        error={setTicketStatus.error?.message}
+      />
+
+      {/*
+        Taking a deposit, confirmed.
+
+        Money in, against a record that has no invoice yet - so the amount and
+        the method are both in the question. `critical` and a typed amount
+        would be the rule for money LEAVING; this is money arriving and fully
+        reversible by removing it, which is the dialog directly below.
+      */}
+      <ConfirmDialog
+        open={Boolean(recordingDeposit)}
+        onClose={() => setRecordingDeposit(null)}
+        onConfirm={() => {
+          const { onDone, ...values } = recordingDeposit;
+          recordTicketDeposit.mutate(
+            { id: ticket.id, ...values },
+            {
+              onSuccess: () => {
+                setRecordingDeposit(null);
+                onDone?.();
+              },
+            },
+          );
+        }}
+        title="Record this deposit?"
+        body={`${money(Math.round(Number(recordingDeposit?.amountDollars ?? 0) * 100))} by ${recordingDeposit?.method ?? 'cash'} is held against ${ticket.ticketNumber} for ${ticket.customer?.name ?? 'this customer'}, and carries over as a payment when the ticket becomes an invoice.`}
+        tone="warn"
+        confirmLabel="Record deposit"
+        loading={recordTicketDeposit.isPending}
+        error={recordTicketDeposit.error?.message}
       />
 
       <ConfirmDialog
@@ -537,14 +656,29 @@ function StageCard({ ticket, disabled, isPending, error, onMove }) {
   const currentIndex = TICKET_STATUSES.indexOf(ticket.status);
   const next = TICKET_STATUSES[currentIndex + 1];
 
+  /**
+   * The field starts on where the ticket IS, not where it is going next.
+   *
+   * It used to pre-select the next rung, which turned the control into
+   * something that read as a state display showing the wrong state: a ticket
+   * sitting at Ready to Pickup showed "Completed", the current status was
+   * missing from the list entirely, and the button beside it carried the same
+   * word. Three things all saying a status nobody had chosen yet.
+   *
+   * Starting on the current status makes the field answer "what is this?"
+   * first and "what next?" only once somebody opens it - and it makes a
+   * wrongly-pressed button a no-op rather than a stage change, because the
+   * submit is disabled until the value actually differs.
+   */
   const { register, handleSubmit, control, watch } = useAdminForm({
-    defaultValues: { status: next ?? ticket.status, note: '', notify: true },
+    defaultValues: { status: ticket.status, note: '', notify: true },
   });
 
-  const chosen = watch('status');
+  // Nothing to do while the field still reads the status it started on.
+  const unchanged = watch('status') === ticket.status;
 
   return (
-    <Panel icon={ArrowRight} title="Move stage" bodyClassName={COMPACT_BODY}>
+    <Panel icon={ArrowRight} title="Status" bodyClassName={COMPACT_BODY}>
       {error && (
         <p className="mb-3 flex items-start gap-2 rounded-md bg-danger-50 px-3 py-2.5 text-sm text-danger">
           <AlertCircle className="mt-0.5 size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
@@ -566,10 +700,11 @@ function StageCard({ ticket, disabled, isPending, error, onMove }) {
                * An empty list is "change it silently"; omitting the field
                * entirely is "behave as before", which is every channel.
                *
-               * No confirmation dialog here, unlike the Tickets list: that one
-               * fires off a single click on a nine-item menu, and this is a form
-               * somebody opened, chose a stage in and submitted. A form the user
-               * filled in IS the confirmation (§3.0.1).
+               * This used to submit straight to the mutation, arguing a filled-in
+               * form is its own confirmation. It confirms now like everything
+               * else on the page (§3.0.1): the values go to `movingStage` and
+               * the dialog fires the write, because the part worth pausing on
+               * is the message to the customer, not the stage.
                */
               channels: values.notify ? undefined : [],
             }),
@@ -579,14 +714,30 @@ function StageCard({ ticket, disabled, isPending, error, onMove }) {
           <SelectField
             control={control}
             name="status"
-            label="Move to"
+            label="Set status to"
             size="sm"
-            options={TICKET_STATUSES.filter((status) => status !== ticket.status).map((status) => ({
+            /**
+             * Every status, the current one included and marked as such.
+             *
+             * It was filtered out before, on the reasoning that moving to
+             * where you already are is not a move. True, but it left the field
+             * unable to show the ticket's own state - so it opened on a value
+             * that was a proposal, with no entry for the answer to "where is
+             * this now?". The current rung is listed and labelled "(current)";
+             * the next one still says "(next)", which is the shortcut that
+             * makes the common case one click.
+             */
+            options={TICKET_STATUSES.map((status) => ({
               value: status,
               label:
-                status === next
-                  ? `${TICKET_STATUS_LABELS[status]} (next)`
-                  : TICKET_STATUS_LABELS[status],
+                status === ticket.status
+                  ? `${TICKET_STATUS_LABELS[status]} (current)`
+                  : status === next
+                    ? `${TICKET_STATUS_LABELS[status]} (next)`
+                    : TICKET_STATUS_LABELS[status],
+              // The same tinted dot the Tickets list puts on this status, so
+              // the two controls read as one vocabulary rather than two.
+              dotClass: STATUS_DOTS[status],
             }))}
           />
           <Input
@@ -595,8 +746,28 @@ function StageCard({ ticket, disabled, isPending, error, onMove }) {
             className={COMPACT_FIELD}
             {...register('note')}
           />
-          <Button type="submit" size="sm" icon={ArrowRight} loading={isPending}>
-            {TICKET_STATUS_LABELS[chosen] ?? 'Move'}
+          {/*
+            The button says what it DOES, not where it lands.
+
+            It used to read the destination alone - "Completed", "Processing" -
+            which beside a dropdown already showing that word read as a second
+            label rather than as the action, and gave no clue that pressing it
+            was the thing that moved the ticket. Naming the verb and leaving
+            the stage to the field next to it is the fix; the two together
+            would be "Set status to Completed" on a 36px control, which wraps.
+
+            Disabled until the field differs from the ticket's own status:
+            with the current status now selected by default, an enabled button
+            beside it would invite a click that does nothing.
+          */}
+          <Button
+            type="submit"
+            size="sm"
+            icon={ArrowRight}
+            loading={isPending}
+            disabled={unchanged}
+          >
+            Set status
           </Button>
 
           {/* Spans the row: it qualifies the whole move rather than belonging to
@@ -695,10 +866,21 @@ function DepositCard({ ticket, invoiced, isPending, error, onRecord, onRemove })
             )}
 
             <form
-              onSubmit={handleSubmit((values) => {
-                onRecord(values);
-                reset({ amountDollars: '', method: values.method, note: '' });
-              })}
+              /**
+               * Submitting opens the confirm; it does not clear the form.
+               *
+               * The reset rides along as a callback the dialog runs once the
+               * deposit is actually written. Clearing here would empty the
+               * fields the moment the question was asked, so backing out of
+               * the confirm would lose an amount the staff member had just
+               * counted at the counter.
+               */
+              onSubmit={handleSubmit((values) =>
+                onRecord({
+                  ...values,
+                  onDone: () => reset({ amountDollars: '', method: values.method, note: '' }),
+                }),
+              )}
               className="grid gap-3 sm:grid-cols-[120px_minmax(0,160px)_minmax(0,1fr)_auto] sm:items-end"
             >
               <Input
@@ -914,7 +1096,7 @@ function Lifecycle({ ticket, invoiced, className }) {
       caption={
         cancelled
           ? 'Cancelled - the job stopped here. Any deposit taken stays recorded against it.'
-          : 'The stage follows the Move stage control above; invoicing settles it.'
+          : 'The stage follows the Status control above; invoicing settles it.'
       }
       className={className}
     />
