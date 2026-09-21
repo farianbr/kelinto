@@ -3,7 +3,7 @@ import { Link } from 'react-router';
 import { motion, useReducedMotion } from 'motion/react';
 import { ArrowRight, Headphones, MessageCircleQuestion, Search } from 'lucide-react';
 import cn from '@/lib/cn';
-import { BUSINESS_INFO } from '@/lib/constants';
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 import Input from '@/components/ui/Input';
 import SelectMenu from '@/components/ui/SelectMenu';
 import Skeleton from '@/components/ui/Skeleton';
@@ -120,6 +120,7 @@ function CategoryNav({ groups, activeId }) {
  * parameter exists for anyone hitting the API directly.
  */
 export function FaqPage() {
+  const info = useBusinessInfo();
   const [query, setQuery] = useState('');
   const debounced = useDebouncedValue(query, 180).trim().toLowerCase();
   const reduce = useReducedMotion();
@@ -255,13 +256,15 @@ export function FaqPage() {
             Contact us
             <ArrowRight className="size-4" strokeWidth={2} aria-hidden="true" />
           </Link>
-          <a
-            href={`tel:${BUSINESS_INFO.phone.replace(/[^\d+]/g, '')}`}
-            className={cn(pressable, 'inline-flex h-12 items-center gap-2 rounded-full border border-line-strong bg-surface px-6 font-display text-md font-semibold text-ink-700 hover:border-ink-300 hover:bg-surface-2')}
-          >
-            <Headphones className="size-4" strokeWidth={2} aria-hidden="true" />
-            {BUSINESS_INFO.phone}
-          </a>
+          {info.phone && (
+            <a
+              href={`tel:${info.phone.replace(/[^\d+]/g, '')}`}
+              className={cn(pressable, 'inline-flex h-12 items-center gap-2 rounded-full border border-line-strong bg-surface px-6 font-display text-md font-semibold text-ink-700 hover:border-ink-300 hover:bg-surface-2')}
+            >
+              <Headphones className="size-4" strokeWidth={2} aria-hidden="true" />
+              {info.phone}
+            </a>
+          )}
         </div>
       </section>
     </div>

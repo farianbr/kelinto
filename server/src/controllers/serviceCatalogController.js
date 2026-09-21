@@ -53,5 +53,24 @@ const deleteService = asyncHandler(async (req, res) => {
   res.json(result);
 });
 
-export { listServices, getService, createService, updateService, deleteService };
-export default { listServices, getService, createService, updateService, deleteService };
+const importServices = asyncHandler(async (req, res) => {
+  const result = await serviceCatalogService.importServices(
+    req.body.text,
+    req.user._id,
+    req.businessScope,
+  );
+
+  await auditService.recordChange({
+    req,
+    action: 'service.import',
+    entity: { kind: 'service', id: 'import', label: 'Service price list' },
+    before: null,
+    after: { added: result.added, updated: result.updated, skipped: result.skipped },
+    description: `Imported services: ${result.added} added, ${result.updated} updated, ${result.skipped} skipped.`,
+  });
+
+  res.json(result);
+});
+
+export { listServices, getService, createService, updateService, deleteService, importServices };
+export default { listServices, getService, createService, updateService, deleteService, importServices };

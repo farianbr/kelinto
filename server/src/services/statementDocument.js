@@ -138,7 +138,7 @@ function summaryCard(label, value, { tone = INK, hint } = {}) {
  * @param {{ user: object, invoices: object[], nonce?: string }} input
  * @returns {string} A complete HTML document, ready to print.
  */
-export function renderStatementHtml({ user, invoices = [], nonce }) {
+export function renderStatementHtml({ user, invoices = [], nonce, business = BUSINESS_INFO }) {
   const rows = buildRows(invoices);
 
   const invoiced = invoices.reduce((sum, invoice) => sum + (invoice.amount ?? 0), 0);
@@ -149,7 +149,9 @@ export function renderStatementHtml({ user, invoices = [], nonce }) {
   const outstanding = invoiced - paid;
 
   const name = displayNameOf(user);
-  const business = BUSINESS_INFO;
+  // The business arrives from the caller, which resolved it for this request. The
+  // constant stays the default for a statement rendered with no business in
+  // context - a script, or a record older than businesses.
 
   const body = rows.length
     ? rows.map(rowHtml).join('')

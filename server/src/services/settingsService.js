@@ -1,9 +1,14 @@
-import Settings, {
+import {
   DEFAULT_PAYMENT_METHODS,
   DEFAULT_SHIPPING_METHODS,
   DEFAULT_TAX_RATES,
   DEFAULT_TIER_WARRANTY_BONUS,
 } from '../models/Settings.js';
+import { controlModels, db } from '../db/models.js';
+import { currentBusinessId } from '../db/context.js';
+import { BUSINESS_INFO } from '../../../shared/business.js';
+import { COUNTRIES } from '../../../shared/countries.js';
+import '../models/Settings.js';
 import ApiError from '../utils/ApiError.js';
 
 /**
@@ -42,6 +47,19 @@ const PROVINCE_CODES = new Set([
 const TAX_KINDS = new Set(['GST', 'HST', 'GST+PST', 'GST+QST']);
 
 /**
+ * A country's printable name from its two-letter code.
+ *
+ * Address fields store the code; a storefront prints the name. A code nobody
+ * recognises is returned as it was given rather than dropped - a wrong-looking
+ * country line is a data problem somebody can see and fix, where a missing one
+ * looks like an address that simply has no country.
+ */
+function countryName(code) {
+  if (!code) return '';
+  return COUNTRIES.find((row) => row.code === code)?.name ?? code;
+}
+
+/**
  * Which automatic-email toggles gate a path that actually runs (phase 11e).
  *
  * **This is the honest half of the Email Settings screen.** §6.15 lists eleven
@@ -60,12 +78,27 @@ const COMMUNICATIONS_WIRED = {
   invoiceReminders: true,
   paymentStatusUpdates: true,
 
-  // Not yet called from anywhere.
-  quoteOnCreate: false,
-  paymentConfirmation: false,
-  accountApproved: false,
-  accountRejected: false,
-  lowStockAlerts: false,
+  // Live since 2026-09-21: `adminService.approveUser` and `rejectUser` send
+  // these through `accountDecisionMail`.
+  accountApproved: true,
+  accountRejected: true,
+
+  /**
+   * Also live since 2026-09-21, through `transactionalMail`.
+   *
+   * - `quoteOnCreate` - `quoteService.createQuote`
+   * - `paymentConfirmation` - `invoicePaymentService.recordPayment`, the one
+   *   write path every payment goes through
+   * - `lowStockAlerts` - `lowStockAlertService.sendLowStockAlert`, its own job
+   *   rather than part of the invoice pass, because that pass exits early
+   *   unless invoice reminders are on and these are separate decisions
+   *
+   * Every entry in this map is now `true`, which is the point: the screen has
+   * nothing left to mark as unbuilt.
+   */
+  quoteOnCreate: true,
+  paymentConfirmation: true,
+  lowStockAlerts: true,
 };
 
 /**
@@ -79,10 +112,49 @@ const COMMUNICATIONS_WIRED = {
  * rather than in each screen.
  */
 async function get() {
-  const doc = await Settings.load();
+  const doc = await db().Settings.load();
+
+  /**
+   * Whether a kiosk PIN has ever been set.
+   *
+   * Its own query because `pinHash` is `select: false`, and widening
+   * `Settings.load()` to include it would put a credential into the forty other
+   * reads that call it - tax rates, shipping bands, invoice defaults. This asks
+   * for the one field, and never for its value: `hasPin` is a boolean the
+   * screen needs (change a PIN, or set the first one) and the hash itself never
+   * leaves the server.
+   */
+  const pinDoc = await db()
+    .Settings.findOne({ key: 'singleton' })
+    .select('+kiosk.pinHash')
+    .lean();
 
   return {
-    business: doc.business,
+    /**
+     * Defaulted field by field for the reason the blocks below give: a schema
+     * `default` only fires when a document is created, and every business
+     * already has a settings row. Passed through raw, the fields added after
+     * those rows existed read as `undefined`, and the Business Info form would
+     * save that back as a blank.
+     *
+     * **The two mailboxes are NOT defaulted to `email` here.** They fall back
+     * to it where they are read (`publicProfile` below), not where they are
+     * edited: this shape feeds the Business Info form, and handing that form a
+     * resolved value would have it save `email` back as an explicit support
+     * address - freezing a copy that stops tracking the main one the moment it
+     * changes. Empty has to survive the round trip to keep meaning "follow the
+     * main address".
+     */
+    business: {
+      ...doc.business,
+      logoUrl: doc.business?.logoUrl ?? '',
+      supportEmail: doc.business?.supportEmail ?? '',
+      billingEmail: doc.business?.billingEmail ?? '',
+      whatsapp: doc.business?.whatsapp ?? '',
+      mapUrl: doc.business?.mapUrl ?? '',
+      hours: doc.business?.hours ?? [],
+      social: doc.business?.social ?? [],
+    },
     financial: {
       timezone: doc.financial?.timezone ?? 'America/Toronto',
       // Fixed, not a preference. Cellvix sells in Canada and every amount in
@@ -159,20 +231,171 @@ async function get() {
       notifyAboveAmount: doc.communications?.notifyAboveAmount ?? 0,
       lowStockEmail: doc.communications?.lowStockEmail ?? '',
     },
+    /**
+     * The kiosk tablet's own copy and switches (Sales § Kiosk).
+     *
+     * **`pinHash` is never in this shape.** It is `select: false` on the model
+     * for the same reason `User.password` is, and the settings read is the
+     * single most-called read in the panel. `hasPin` is the only fact the
+     * screen needs: whether there is a PIN to change or one to set for the
+     * first time.
+     *
+     * Defaulted field by field rather than passed through, because a schema
+     * `default` only runs when a document is created and every business already
+     * has a settings record - so a passed-through read would hand the form
+     * `undefined` for each of these and blank the shop's welcome message the
+     * first time somebody pressed save.
+     */
+    kiosk: {
+      isEnabled: doc.kiosk?.isEnabled === true,
+      hasPin: Boolean(pinDoc?.kiosk?.pinHash),
+      welcomeMessage:
+        doc.kiosk?.welcomeMessage ?? 'Welcome! Check in your device in just a minute.',
+      thankYouMessage:
+        doc.kiosk?.thankYouMessage ?? "You're all set! Please hand your device to our team.",
+      readAloud: doc.kiosk?.readAloud !== false,
+      requireTerms: doc.kiosk?.requireTerms !== false,
+      termsText:
+        doc.kiosk?.termsText ??
+        "I agree to leave my device for diagnosis and to the shop's repair terms.",
+    },
     // Which toggles actually gate a live path today (§6b rule 4, applied to a
     // settings screen). Sent so the screen can mark the rest plainly instead of
     // presenting eleven switches that all look equally functional - a toggle
     // that changes nothing is worse than a missing one, because somebody will
     // switch it on and believe the emails are going out.
     communicationsWired: COMMUNICATIONS_WIRED,
-    operations: doc.operations,
+    /**
+     * Defaulted field by field, for the reason the financial block above gives:
+     * a schema `default` only fires when a document is created, and every
+     * business already has a settings row. Passed through raw, a document
+     * predating `lowStockThreshold` handed the form `undefined` - which the
+     * screen would then save back as a blank.
+     */
+    operations: {
+      rmaSlaDays: doc.operations?.rmaSlaDays ?? 14,
+      ticketSlaDays: doc.operations?.ticketSlaDays ?? 7,
+      lowStockThreshold: doc.operations?.lowStockThreshold ?? 50,
+    },
     updatedAt: doc.updatedAt,
+  };
+}
+
+/**
+ * What the storefront is allowed to know about the business it is serving.
+ *
+ * ## Why this is a separate shape
+ *
+ * `get()` is the admin read: it carries tax rates, invoice defaults, warranty
+ * tables and the kiosk's switches, and it sits behind `settings: view`. None of
+ * that belongs on a public route, so this is an **allowlist**, built field by
+ * field - the same posture `productService.serialize` takes for a product. A
+ * spread of `doc.business` would work today and leak the next field somebody
+ * adds to it.
+ *
+ * ## Why it exists at all
+ *
+ * `shared/business.js` is one hardcoded object holding Cellvix's name, address,
+ * phone, hours and social handles, and fifteen client files read it. That was
+ * correct while Cellvix was the only business. It stopped being correct the
+ * moment a second one existed: CellShoppe's storefront footer printed the
+ * wholesaler's address, its contact page offered the wholesaler's phone number,
+ * and its social row linked to `@cellvix`.
+ *
+ * `services/sendingBusiness.js` fixed exactly this for documents and email. The
+ * storefront half was never done, and it is the more visible one - an invoice
+ * is read once, a footer is on every page.
+ *
+ * ## The name comes from the record, not from Settings
+ *
+ * Same rule as `sendingBusiness`, and for the same reason: `Settings.business.name`
+ * defaults to `'Cellvix'` in the schema, so a business nobody filled that field
+ * in for still carries the wholesaler's name. The `Business` record's name is
+ * what a super admin typed when the business was created, so it is always
+ * right. Everything else has no such authoritative source and comes from
+ * Settings, which is the screen an owner edits.
+ */
+async function publicProfile() {
+  const doc = await db().Settings.load();
+  const info = doc?.business ?? {};
+
+  const businessId = currentBusinessId();
+  const record = businessId
+    ? await controlModels().Business.findById(businessId).select('name isDefault').lean()
+    : null;
+
+  const email = info.email ?? '';
+
+  return {
+    // The record wins, then Settings, then the house name - see the note above.
+    name: record?.name || info.name || BUSINESS_INFO.name,
+    tagline: info.tagline ?? '',
+    logoUrl: info.logoUrl ?? '',
+
+    /**
+     * Whether this is the house business - the one carrying `isDefault`.
+     *
+     * The storefront's bundled artwork (`/brand/logo.png`, the footer wordmark)
+     * is Cellvix's own, so it is right for exactly one business and wrong for
+     * every other. A business with no `logoUrl` of its own falls back to that
+     * artwork only when this is true, and to its name set as a wordmark
+     * otherwise - which is why the flag has to reach the client rather than
+     * being inferred from the name matching a string.
+     */
+    isHouse: record?.isDefault === true,
+
+    phone: info.phone ?? '',
+    email,
+    // Resolved here rather than on the way out of the editor, so a business
+    // that has not set a separate mailbox keeps following its main one.
+    supportEmail: info.supportEmail || email,
+    billingEmail: info.billingEmail || email,
+    whatsapp: info.whatsapp ?? '',
+    mapUrl: info.mapUrl ?? '',
+    website: info.website ?? '',
+
+    address: {
+      line1: info.address?.line1 ?? '',
+      line2: info.address?.line2 ?? '',
+      city: info.address?.city ?? '',
+      region: info.address?.region ?? '',
+      postal: info.address?.postal ?? '',
+      /**
+       * The country's **name**, not its code.
+       *
+       * Settings stores `'CA'`, because that is what a two-letter address field
+       * holds and what every other address in the system carries. The
+       * storefront prints this under a postal code, where "CA" reads as an
+       * abbreviation nobody asked for - the hardcoded constant it replaces said
+       * "Canada". Resolved here so each of the surfaces that print an address
+       * does not have to know the difference.
+       */
+      country: countryName(info.address?.country),
+    },
+
+    // Both default to an empty list, and every surface that renders them omits
+    // its block entirely when empty rather than printing a placeholder.
+    hours: (info.hours ?? []).map((row) => ({ days: row.days, time: row.time })),
+    social: (info.social ?? []).map((row) => ({
+      network: row.network,
+      url: row.url,
+      handle: row.handle ?? '',
+    })),
+
+    /**
+     * Deliberately absent: `taxNumber`.
+     *
+     * It belongs on an invoice, which is a document addressed to one customer,
+     * not on an unauthenticated route that answers anybody who asks. Nothing on
+     * the storefront prints it today, and this shape is what would make doing
+     * so accidental.
+     */
   };
 }
 
 /** The one way a section is written. Keeps rule 1 in a single place. */
 async function patch($set) {
-  await Settings.updateOne({ key: 'singleton' }, { $set }, { upsert: true });
+  await db().Settings.updateOne({ key: 'singleton' }, { $set }, { upsert: true });
   return get();
 }
 
@@ -192,6 +415,27 @@ async function updateBusiness(input) {
     'business.website': input.website ?? '',
     'business.taxNumber': input.taxNumber ?? '',
     'business.reviewUrl': input.reviewUrl ?? '',
+    'business.logoUrl': input.logoUrl ?? '',
+    'business.supportEmail': input.supportEmail ?? '',
+    'business.billingEmail': input.billingEmail ?? '',
+    'business.whatsapp': input.whatsapp ?? '',
+    'business.mapUrl': input.mapUrl ?? '',
+    /**
+     * Lists are replaced wholesale, unlike the warranty maps in `updateSale`.
+     *
+     * That is right here: the screen edits the whole list on one form and posts
+     * all of it back, so a row that is missing from the payload is one the staff
+     * member deleted. The merge in `updateSale` exists because a payload there
+     * names a subset of the grades by design.
+     *
+     * **But an ABSENT list is not an empty one.** Both fields are optional, so
+     * a client that predates them sends neither - and writing `[]` for those
+     * would let saving any other field on this form silently delete the hours
+     * a business had entered. Absent means "not edited"; `[]` means "cleared",
+     * and only the second is written.
+     */
+    ...(input.hours === undefined ? {} : { 'business.hours': input.hours }),
+    ...(input.social === undefined ? {} : { 'business.social': input.social }),
     'business.address': input.address,
   });
 }
@@ -228,7 +472,7 @@ async function updateSale(input) {
   // two - and a grade with no warranty length is not the same as a grade with
   // a zero-day one. RMA reads these to decide whether a return is in warranty,
   // so a quietly missing grade is a wrong answer rather than a missing screen.
-  const current = await Settings.load();
+  const current = await db().Settings.load();
   const existingWarranty = Object.fromEntries(
     current.financial?.warrantyByGrade instanceof Map
       ? current.financial.warrantyByGrade
@@ -267,6 +511,11 @@ async function updateSale(input) {
       ...(input.warrantyBonusByTier ?? {}),
     },
     'operations.rmaSlaDays': input.rmaSlaDays,
+    // Optional on the form for the same reason the two below are: a payload
+    // that predates the field must not blank a figure somebody already set.
+    ...(input.ticketSlaDays === undefined
+      ? {}
+      : { 'operations.ticketSlaDays': input.ticketSlaDays }),
     // Optional on the form, so an older payload that omits it must not write
     // `undefined` over a rate somebody already set.
     ...(input.travelRateCentsPerKm === undefined
@@ -289,7 +538,7 @@ async function updateSale(input) {
  * label, the description, the price and the free-shipping threshold.
  */
 async function updateShipping(input) {
-  const current = await Settings.load();
+  const current = await db().Settings.load();
   const existing = current.financial?.shippingMethods?.length
     ? current.financial.shippingMethods
     : DEFAULT_SHIPPING_METHODS;
@@ -361,6 +610,14 @@ async function updateInventory(input) {
   return patch({
     'inventory.defaultMarkupPercent': input.defaultMarkupPercent,
     'inventory.defaultMarginPercent': input.defaultMarginPercent,
+    // Filed under `operations` rather than `inventory` because that is where
+    // the field already lives and where `reportService` has always read it
+    // from; moving it to match this screen's name would orphan the value every
+    // running business has. Optional on the form, so an older payload that
+    // omits it must not write `undefined` over a threshold somebody set.
+    ...(input.lowStockThreshold === undefined
+      ? {}
+      : { 'operations.lowStockThreshold': input.lowStockThreshold }),
   });
 }
 
@@ -388,8 +645,32 @@ async function updateCommunications(input) {
   });
 }
 
+/**
+ * Kiosk (§6.15) - the copy and switches behind the check-in tablet.
+ *
+ * **The PIN is not written here.** It has its own audited route, and it is the
+ * one field on this screen that is a credential rather than a preference.
+ *
+ * `isEnabled` is the switch `kioskService.unlock` checks, so turning it off
+ * here locks every tablet in the shop at the next unlock. It does not sign out
+ * a tablet that is already unlocked: a customer halfway through a check-in
+ * should not lose what they have typed because somebody saved a settings form.
+ */
+async function updateKiosk(input) {
+  return patch({
+    'kiosk.isEnabled': input.isEnabled,
+    'kiosk.welcomeMessage': input.welcomeMessage,
+    'kiosk.thankYouMessage': input.thankYouMessage,
+    'kiosk.readAloud': input.readAloud,
+    'kiosk.requireTerms': input.requireTerms,
+    'kiosk.termsText': input.termsText,
+  });
+}
+
 export default {
   get,
+  publicProfile,
+  updateKiosk,
   updateBusiness,
   updateSale,
   updateShipping,
@@ -401,6 +682,8 @@ export default {
 export {
   COMMUNICATIONS_WIRED,
   get,
+  publicProfile,
+  updateKiosk,
   updateBusiness,
   updateSale,
   updateShipping,

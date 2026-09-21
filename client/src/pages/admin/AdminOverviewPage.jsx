@@ -15,6 +15,7 @@ import {
   Phone,
   Plus,
   Receipt,
+  Tablet,
   TrendingUp,
   Trophy,
   Truck,
@@ -51,8 +52,9 @@ import { ADMIN_ROUTES } from '@/lib/adminRoutes';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { featureEnabled } from '@shared/schemas/features';
 import { useAuth } from '@/hooks/useAuth';
+import { businessUrl } from '@/store/businessStore';
 
-import { useAdminStats, useAdminMutations } from '@/hooks/useAdmin';
+import { useAdminStats, useAdminMutations, useAdminSettings } from '@/hooks/useAdmin';
 import { pressable, pressableSurface } from '@/lib/motion';
 
 /**
@@ -457,6 +459,24 @@ export function AdminOverviewPage() {
    * screen rather than as a section this business does not have.
    */
   const hasOrders = !features || featureEnabled(features, 'sales.orders');
+
+  /**
+   * The check-in tablet, if this business has one.
+   *
+   * The kiosk lives at `/kiosk`, outside the panel, so there is nowhere else
+   * in the admin a staff member could find it - a tablet being set up on a
+   * counter is opened from the machine it will run on, and until this link
+   * existed that meant knowing a URL nobody had been told.
+   *
+   * Shown only when the business has the feature AND the kiosk is actually
+   * live: a button that opens a lock screen refusing every PIN is worse than
+   * no button, because it reads as a broken tablet rather than as setup that
+   * has not been finished. Settings is where that gets finished, and the link
+   * points there instead while it is unfinished.
+   */
+  const hasKiosk = features ? featureEnabled(features, 'sales.kiosk') : false;
+  const { data: settings } = useAdminSettings();
+  const kioskLive = Boolean(settings?.kiosk?.isEnabled) && Boolean(settings?.kiosk?.hasPin);
   // The range lives in the URL, so the whole dashboard is linkable (§6.1.2).
   const range = useDateRange('this-month');
   // Every figure below states the period it covers. A filtered dashboard that
@@ -591,6 +611,24 @@ export function AdminOverviewPage() {
                 New ticket
               </Button>
             </Link>
+            {/* The third shortcut is not a form: it opens the customer-facing
+                tablet, which lives outside this panel and has no other door
+                into it. A new tab rather than a navigation - the kiosk fills
+                the viewport and deliberately offers no way back. */}
+            {hasKiosk && kioskLive && (
+              <a href={businessUrl('/kiosk')} target="_blank" rel="noreferrer">
+                <Button size="sm" variant="outline" icon={Tablet}>
+                  Open kiosk
+                </Button>
+              </a>
+            )}
+            {hasKiosk && !kioskLive && (
+              <Link to="/admin/settings/kiosk">
+                <Button size="sm" variant="outline" icon={Tablet}>
+                  Set up kiosk
+                </Button>
+              </Link>
+            )}
           </>
         }
       />

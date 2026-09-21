@@ -1,10 +1,14 @@
 import { asyncHandler } from '../utils/ApiError.js';
+import { TICKET_OPEN_STATUSES } from '../models/Ticket.js';
 import {
   APPOINTMENT_KINDS,
   APPOINTMENT_STATUSES,
 } from '../models/Appointment.js';
 import { db } from '../db/models.js';
 import '../models/User.js';
+// Registered explicitly, like User above: `db().Ticket` compiles from the
+// default connection's schema, so the module has to have been loaded.
+import '../models/Ticket.js';
 
 /**
  * The scheduling board (§6.15 category 4 - **UI only, §6b U1–U2**, phase 11e).
@@ -30,10 +34,36 @@ const list = asyncHandler(async (req, res) => {
     if (to) filter.startAt.$lte = new Date(to);
   }
 
-  const [scheduled, unscheduled, staff] = await Promise.all([
+  const [scheduled, unscheduled, jobs, staff] = await Promise.all([
     db().Appointment.find(filter).sort({ startAt: 1 }).lean(),
     // The tray beside the board: everything with no date yet.
     db().Appointment.find({ startAt: null, status: { $ne: 'cancelled' } }).sort({ createdAt: -1 }).lean(),
+
+    /**
+     * Open repair tickets carrying no due date - the work the board cannot
+     * show because nobody has said when it happens.
+     *
+     * **Tickets, not appointments.** An appointment is a slot somebody booked;
+     * a ticket is a device on the bench. The tray beside the calendar was
+     * reading appointments only, so a shop with twenty repairs in progress and
+     * no bookings saw an empty board and an empty tray - which is the case
+     * where knowing what is unscheduled matters most.
+     *
+     * Open statuses only: a completed or cancelled ticket has no slot left to
+     * need. Capped, because this is a prompt to schedule rather than a
+     * worklist - a shop with three hundred open tickets has a different
+     * problem than this panel can help with.
+     */
+    db()
+      .Ticket.find({
+        status: { $in: TICKET_OPEN_STATUSES },
+        $or: [{ dueDate: null }, { dueDate: { $exists: false } }],
+      })
+      .sort({ createdAt: -1 })
+      .limit(60)
+      .populate('technician', 'contactName businessName email')
+      .lean(),
+
     // Who the board can be filtered by. Read live rather than hard-coded so the
     // filter is right the moment a staff account is added.
     db().User.find({ role: { $in: ['admin', 'staff'] } }).select('contactName businessName email').lean(),
@@ -51,9 +81,40 @@ const list = asyncHandler(async (req, res) => {
     relatedTo: row.relatedTo ?? null,
   });
 
+  /**
+   * A ticket as the board draws it.
+   *
+   * The device is the first one on the ticket: a ticket may hold several,
+   * but a card three lines tall can show one, and the first is the one the
+   * counter wrote down. `deviceBrand`/`deviceModel` are the older single-
+   * device fields, kept as the fallback so tickets written before the list
+   * existed still render.
+   */
+  const shapeJob = (row) => {
+    const first = row.devices?.[0];
+    const device =
+      [first?.brand ?? row.deviceBrand, first?.model ?? row.deviceModel]
+        .filter(Boolean)
+        .join(' ') || 'Device not named';
+
+    const tech = row.technician;
+
+    return {
+      id: row._id.toString(),
+      ticketNumber: row.ticketNumber,
+      device,
+      customerName: row.customerName ?? "",
+      status: row.status,
+      priority: row.priority ?? null,
+      technician: tech ? tech.contactName || tech.businessName || tech.email : null,
+      createdAt: row.createdAt,
+    };
+  };
+
   res.json({
     appointments: scheduled.map(shape),
     unscheduled: unscheduled.map(shape),
+    jobs: jobs.map(shapeJob),
     staff: staff.map((person) => ({
       id: person._id.toString(),
       name: person.contactName || person.businessName || person.email,

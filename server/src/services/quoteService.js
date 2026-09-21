@@ -5,6 +5,7 @@ import '../models/Ticket.js';
 import { nextTicketNumber, priceTicket } from './ticketService.js';
 import { db } from '../db/models.js';
 import ApiError from '../utils/ApiError.js';
+import { sendQuoteCreatedEmail } from './transactionalMail.js';
 import { likeRegex } from '../utils/regex.js';
 import notificationService from './notificationService.js';
 import orderBuilder from './orderBuilder.js';
@@ -394,6 +395,28 @@ async function createQuote(body, createdBy) {
 
   recomputeTotals(quote, rate);
   await quote.save();
+
+  /**
+   * Email the customer their quote, if this business has that switched on.
+   *
+   * Awaited but never allowed to throw: the quote is saved by this point, and a
+   * mail failure that rejected the request would show the staff member a failed
+   * save for a quote that exists - so they would raise it again. The failure is
+   * logged, which is where a mail problem belongs.
+   *
+   * `settings` is the document already loaded above for the tax rate, so the
+   * gate costs nothing extra.
+   */
+  if (settings?.communications?.quoteOnCreate) {
+    try {
+      const result = await sendQuoteCreatedEmail({ user, quote: quote.toObject() });
+      if (!result?.delivered) {
+        console.error(`  Quote ${quote.quoteNumber} mail not sent - ${result?.error}`);
+      }
+    } catch (error) {
+      console.error(`  Quote ${quote.quoteNumber} mail failed:`, error.message);
+    }
+  }
 
   return getQuote(quote._id.toString());
 }

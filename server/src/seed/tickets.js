@@ -1,11 +1,18 @@
 import mongoose from 'mongoose';
 import { connectDb, disconnectDb } from '../config/db.js';
-import { db } from '../db/models.js';
+import { db, dbFor } from '../db/models.js';
+import { runInBusiness } from '../db/context.js';
+import '../models/Business.js';
 import '../models/Ticket.js';
 import '../models/User.js';
 
 /**
  * Demo repair tickets (Sales § Ticket).
+ *
+ * **Seeds every business, each in its own database** (2026-09-21). It used to
+ * seed whichever database `MONGODB_URI` named, so on a multi-business install
+ * only the default business got tickets - and CellShoppe, the one that
+ * actually repairs things, was the business left with an empty board.
  *
  * **Insert-only, never wipe.** Unlike `run.js`, this is safe on a database with
  * real work in it: it adds the tickets whose numbers are missing and touches
@@ -268,15 +275,48 @@ async function seedTickets({ quiet = false } = {}) {
 // CLI entry: `npm run seed:tickets`
 if (process.argv[1] && process.argv[1].endsWith('tickets.js')) {
   (async () => {
-    console.log('\n  Seeding Cellvix demo repair tickets…\n');
+    console.log('\n  Seeding demo repair tickets…\n');
     await connectDb();
-    const result = await seedTickets();
-    console.log('\n  Done.', result, '\n');
+
+    const businesses = await db()
+      .Business.find({ deletedAt: null })
+      .select('name code')
+      .lean();
+
+    /**
+     * No businesses at all means a single-database install, so seed whatever
+     * the URI names - the same fallback every other business-scoped seed makes.
+     */
+    const targets = businesses.length ? businesses : [null];
+    const results = [];
+
+    for (const business of targets) {
+      if (business) console.log(`  ${business.name} (${business.code})`);
+
+      if (business) {
+        results.push(
+          await runInBusiness(
+            {
+              businessId: String(business._id),
+              code: business.code,
+              connection: dbFor(business.code),
+            },
+            () => seedTickets(),
+          ),
+        );
+      } else {
+        results.push(await seedTickets());
+      }
+    }
+
+    const added = results.reduce((sum, row) => sum + (row?.added ?? 0), 0);
+    console.log(`\n  Done. ${added} ticket(s) added across ${results.length} business(es).\n`);
     await disconnectDb();
     await mongoose.connection.close();
     process.exit(0);
-  })().catch((error) => {
-    console.error(error);
+  })().catch(async (error) => {
+    console.error(`\n  Seeding tickets failed: ${error.message}\n`);
+    await disconnectDb().catch(() => {});
     process.exit(1);
   });
 }

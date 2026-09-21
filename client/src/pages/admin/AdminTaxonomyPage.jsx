@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Boxes, Tag, Trash2, X } from 'lucide-react';
+import { useNavigate } from 'react-router';
+import { Boxes, FileSpreadsheet, Plus, Tag, Trash2, X } from 'lucide-react';
 
 import cn from '@/lib/cn';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
@@ -8,6 +9,7 @@ import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import Modal from '@/components/ui/Modal';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import DeleteWithPreview from '@/components/admin/DeleteWithPreview';
 import Pagination from '@/components/ui/Pagination';
 import PageHeader from '@/components/admin/PageHeader';
 import DataTable, { CountLine } from '@/components/admin/DataTable';
@@ -225,15 +227,17 @@ function EditDialog({ node, onClose }) {
       {/* The service still refuses a node that has products or children, and its
           message names the count. This stops the unused ones going out on a
           single click from inside an edit dialog. */}
-      <ConfirmDialog
-        open={confirmingDelete}
+      {/* Counts the children and the products behind this node before asking -
+          both of which the server refuses on, so a staff member now sees the
+          refusal as a reason rather than as an error after the click. */}
+      <DeleteWithPreview
+        type="taxonomy"
+        record={confirmingDelete ? node : null}
         onClose={() => setConfirmingDelete(false)}
         onConfirm={async () => {
           setConfirmingDelete(false);
           await remove();
         }}
-        title={`Delete ${node.name}?`}
-        body={`This ${KIND_LABEL[node.kind]?.toLowerCase() ?? 'node'} is removed from the taxonomy. To take it out of the filters without losing it, switch it inactive instead.`}
         confirmLabel="Delete"
         loading={deleteTaxonomyNode.isPending}
       />
@@ -242,6 +246,7 @@ function EditDialog({ node, onClose }) {
 }
 
 export function AdminTaxonomyPage() {
+  const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [kind, setKind] = useState('all');
   const [includeInactive, setIncludeInactive] = useState(false);
@@ -337,6 +342,20 @@ export function AdminTaxonomyPage() {
         icon={ADMIN_PAGE.icon}
         title={ADMIN_PAGE.title}
         description={ADMIN_PAGE.description}
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              icon={FileSpreadsheet}
+              onClick={() => navigate('/admin/settings/taxonomy/import')}
+            >
+              Import CSV
+            </Button>
+            <Button icon={Plus} onClick={() => navigate('/admin/settings/taxonomy/add')}>
+              Add model
+            </Button>
+          </div>
+        }
       />
 
       <KpiRow

@@ -1,10 +1,15 @@
 import { useEffect, useState } from 'react';
-import { useForm, Controller } from 'react-hook-form';
+import { useFieldArray, Controller } from 'react-hook-form';
+import useAdminForm from '@/hooks/useAdminForm';
+import { Plus, Trash2 } from 'lucide-react';
 import { zodResolver } from '@hookform/resolvers/zod';
 
 import { businessInfoSchema } from '@shared/schemas/admin';
 import { PROVINCES } from '@shared/schemas/checkout';
+import cn from '@/lib/cn';
+import { pressable } from '@/lib/motion';
 import Panel from '@/components/ui/Panel';
+import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import PhoneField from '@/components/ui/PhoneField';
 import SelectField from '@/components/ui/SelectField';
@@ -34,11 +39,46 @@ const EMPTY = {
   tagline: '',
   phone: '',
   email: '',
+  supportEmail: '',
+  billingEmail: '',
   website: '',
   taxNumber: '',
   reviewUrl: '',
+  logoUrl: '',
+  whatsapp: '',
+  mapUrl: '',
+  hours: [],
+  social: [],
   address: { line1: '', line2: '', city: '', region: 'ON', postal: '', country: 'CA' },
 };
+
+/**
+ * The networks the storefront has a glyph for, offered as a picker.
+ *
+ * Free text underneath would let a typo (`instgram`) through, which renders as
+ * a generic link chip labelled with the typo - working, but not what anybody
+ * meant. The list matches `lib/socialIcons.js`.
+ */
+const NETWORKS = [
+  { value: 'facebook', label: 'Facebook' },
+  { value: 'instagram', label: 'Instagram' },
+  { value: 'linkedin', label: 'LinkedIn' },
+  { value: 'youtube', label: 'YouTube' },
+];
+
+/**
+ * The document's `business` block, in the shape this form holds.
+ *
+ * The two lists have to be arrays even when the server sends nothing, because
+ * `useFieldArray` cannot map over undefined.
+ */
+const formValues = (business = {}) => ({
+  ...EMPTY,
+  ...business,
+  hours: business.hours ?? [],
+  social: business.social ?? [],
+  address: { ...EMPTY.address, ...business.address },
+});
 
 export function AdminBusinessInfoPage() {
   const { data, isLoading } = useAdminSettings();
@@ -52,13 +92,18 @@ export function AdminBusinessInfoPage() {
     reset,
     setError,
     formState: { errors, isDirty, isSubmitting },
-  } = useForm({ resolver: zodResolver(businessInfoSchema), defaultValues: EMPTY });
+  } = useAdminForm({ resolver: zodResolver(businessInfoSchema), defaultValues: EMPTY });
+
+  // Both are lists the staff member adds to and removes from, which is what a
+  // field array is for - unlike the address, whose fields are fixed.
+  const hours = useFieldArray({ control, name: 'hours' });
+  const social = useFieldArray({ control, name: 'social' });
 
   // The server is the source of truth, and a refetch must never overwrite an
   // edit in progress - so this syncs only while the form is untouched.
   useEffect(() => {
     if (!data?.business || isDirty) return;
-    reset({ ...EMPTY, ...data.business, address: { ...EMPTY.address, ...data.business.address } });
+    reset(formValues(data.business));
   }, [data, isDirty, reset]);
 
   async function onSubmit(values) {
@@ -67,7 +112,7 @@ export function AdminBusinessInfoPage() {
       const next = await saveBusinessInfo.mutateAsync(values);
       // Reset *to the server's answer*, not to what was typed: it is what the
       // document now holds, and it is what makes the form clean again.
-      reset({ ...EMPTY, ...next.business, address: { ...EMPTY.address, ...next.business.address } });
+      reset(formValues(next.business));
       setSaved(true);
     } catch (err) {
       setError('root', { message: err.message });
@@ -77,7 +122,7 @@ export function AdminBusinessInfoPage() {
   if (isLoading) return <p className="text-sm text-ink-500">Loading settings…</p>;
 
   return (
-    <>
+    <div className="form-page">
       <PageHeader
         icon={ADMIN_PAGE.icon}
         title={ADMIN_PAGE.title}
@@ -93,12 +138,29 @@ export function AdminBusinessInfoPage() {
       <form onSubmit={handleSubmit(onSubmit)} className="max-w-form space-y-4">
         <Panel title="Identity" description="The name and line that appear above every document.">
           <div className="grid gap-4 sm:grid-cols-2">
-            <Input label="Business name" error={errors.name?.message} {...register('name')} />
+            <Input
+              label="Business name"
+              placeholder="CellShoppe Phone & Laptop Fix"
+              required
+              error={errors.name?.message}
+              {...register('name')}
+            />
             <Input
               label="Tagline"
               hint="One line, under the name."
               error={errors.tagline?.message}
               {...register('tagline')}
+            />
+            {/* A URL rather than an upload: every other image in this system is
+                a path the catalogue already serves. Empty is the normal answer
+                and prints the business name as a wordmark. */}
+            <Input
+              label="Logo URL"
+              containerClassName="sm:col-span-2"
+              hint="Shown in the storefront header. Leave empty to show the business name as text instead."
+              placeholder="https://…/logo.png"
+              error={errors.logoUrl?.message}
+              {...register('logoUrl')}
             />
           </div>
         </Panel>
@@ -125,6 +187,30 @@ export function AdminBusinessInfoPage() {
               )}
             />
             <Input label="Email" type="email" error={errors.email?.message} {...register('email')} />
+            {/* Both fall back to the main address when left empty, which is why
+                the hint says so rather than the field being pre-filled: a
+                pre-filled copy would stop following the main one the moment it
+                changed. */}
+            <Input
+              label="Support email"
+              type="email"
+              hint="Orders, returns and warranty. Leave empty to use the main email."
+              error={errors.supportEmail?.message}
+              {...register('supportEmail')}
+            />
+            <Input
+              label="Billing email"
+              type="email"
+              hint="Invoices and statements. Leave empty to use the main email."
+              error={errors.billingEmail?.message}
+              {...register('billingEmail')}
+            />
+            <Input
+              label="WhatsApp number"
+              hint="Shown as a contact channel in the storefront footer. Leave empty to hide it."
+              error={errors.whatsapp?.message}
+              {...register('whatsapp')}
+            />
             <Input
               label="Website"
               hint="Include https://"
@@ -183,10 +269,133 @@ export function AdminBusinessInfoPage() {
               error={errors.address?.postal?.message}
               {...register('address.postal')}
             />
+            <Input
+              label="Map link"
+              containerClassName="sm:col-span-2"
+              hint="Where the Location row in the storefront footer opens. Leave empty to hide that row."
+              placeholder="https://maps.google.com/?q=…"
+              error={errors.mapUrl?.message}
+              {...register('mapUrl')}
+            />
+          </div>
+        </Panel>
+
+        {/* Printed, never computed. "Mon – Fri" and "By appointment" are both
+            real answers, which is why both halves are free text rather than a
+            weekday grid with open and close times. */}
+        <Panel
+          title="Opening hours"
+          description="Shown on the contact page and in the storefront footer. Leave empty to show none."
+        >
+          <div className="space-y-3">
+            {hours.fields.map((row, index) => (
+              <div key={row.id} className="flex items-start gap-2">
+                <Input
+                  label={index === 0 ? 'Days' : undefined}
+                  aria-label={index === 0 ? undefined : 'Days'}
+                  containerClassName="flex-1"
+                  placeholder="Mon – Fri"
+                  error={errors.hours?.[index]?.days?.message}
+                  {...register(`hours.${index}.days`)}
+                />
+                <Input
+                  label={index === 0 ? 'Hours' : undefined}
+                  aria-label={index === 0 ? undefined : 'Hours'}
+                  containerClassName="flex-1"
+                  placeholder="9:00 AM – 6:00 PM ET"
+                  error={errors.hours?.[index]?.time?.message}
+                  {...register(`hours.${index}.time`)}
+                />
+                <button
+                  type="button"
+                  onClick={() => hours.remove(index)}
+                  aria-label={`Remove ${row.days || 'this row'}`}
+                  className={cn(
+                    pressable,
+                    'flex size-9 shrink-0 items-center justify-center rounded-md border border-line text-ink-400 hover:border-danger hover:text-danger',
+                    index === 0 && 'mt-6.5',
+                  )}
+                >
+                  <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
+                </button>
+              </div>
+            ))}
+
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => hours.append({ days: '', time: '' })}
+            >
+              <Plus className="size-3.5" strokeWidth={2.25} aria-hidden="true" />
+              Add a row
+            </Button>
+          </div>
+        </Panel>
+
+        {/* One row per profile the business actually has. The storefront draws
+            an icon per row, so a business on one network gets one icon rather
+            than four with three of them dead. */}
+        <Panel
+          title="Social profiles"
+          description="Shown in the storefront footer and the mobile menu. Leave empty to show none."
+        >
+          <div className="space-y-3">
+            {social.fields.map((row, index) => (
+              <div key={row.id} className="flex items-start gap-2">
+                <SelectField
+                  control={control}
+                  name={`social.${index}.network`}
+                  label={index === 0 ? 'Network' : undefined}
+                  options={NETWORKS}
+                  containerClassName="w-36 shrink-0"
+                  error={errors.social?.[index]?.network?.message}
+                />
+                <Input
+                  label={index === 0 ? 'Profile URL' : undefined}
+                  aria-label={index === 0 ? undefined : 'Profile URL'}
+                  containerClassName="flex-1"
+                  placeholder="https://…"
+                  error={errors.social?.[index]?.url?.message}
+                  {...register(`social.${index}.url`)}
+                />
+                <Input
+                  label={index === 0 ? 'Handle' : undefined}
+                  aria-label={index === 0 ? undefined : 'Handle'}
+                  containerClassName="w-36 shrink-0"
+                  placeholder="@name"
+                  error={errors.social?.[index]?.handle?.message}
+                  {...register(`social.${index}.handle`)}
+                />
+                <button
+                  type="button"
+                  onClick={() => social.remove(index)}
+                  aria-label={`Remove ${row.network || 'this profile'}`}
+                  className={cn(
+                    pressable,
+                    'flex size-9 shrink-0 items-center justify-center rounded-md border border-line text-ink-400 hover:border-danger hover:text-danger',
+                    index === 0 && 'mt-6.5',
+                  )}
+                >
+                  <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
+                </button>
+              </div>
+            ))}
+
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => social.append({ network: 'facebook', url: '', handle: '' })}
+            >
+              <Plus className="size-3.5" strokeWidth={2.25} aria-hidden="true" />
+              Add a profile
+            </Button>
           </div>
         </Panel>
 
         <SettingsFormActions
+          unsavedLabel="this business's details"
           dirty={isDirty}
           saving={isSubmitting || saveBusinessInfo.isPending}
           saved={saved}
@@ -197,7 +406,7 @@ export function AdminBusinessInfoPage() {
           }}
         />
       </form>
-    </>
+    </div>
   );
 }
 

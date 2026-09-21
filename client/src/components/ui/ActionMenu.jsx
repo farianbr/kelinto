@@ -15,8 +15,9 @@ import { pressable } from '@/lib/motion';
  * implementation of "the actions that did not earn a button", which matters
  * because it is the thing a staff member learns once and expects everywhere.
  *
- * `items` are `{ key, label, icon, tone, disabled, hidden, onSelect }`. Both
- * `disabled` and `hidden` accept a value **or** a predicate, so `DataTable` can
+ * `items` are `{ key, label, icon, tone, disabled, hidden, hint, onSelect }`.
+ * `disabled`, `hidden` and `hint` accept a value **or** a predicate, so
+ * `DataTable` can
  * keep passing row-aware functions while a page passes plain booleans.
  *
  * ```jsx
@@ -64,12 +65,23 @@ export function ActionMenu({ items = [], context, label = 'More actions', trigge
     >
       {usable.map((item) => {
         const Icon = item.icon;
+        const disabled = resolve(item.disabled);
+        /*
+          Why a disabled item gets a line of its own.
+
+          An action greyed out with nothing else said is a dead end: the reason
+          it cannot run is exactly what the person needs, and it is known right
+          here. The hint renders only when the item is actually disabled, so an
+          available action stays one line.
+        */
+        const hint = disabled ? resolve(item.hint) : null;
+
         return (
           <button
             key={item.key ?? item.label}
             type="button"
             role="menuitem"
-            disabled={resolve(item.disabled)}
+            disabled={disabled}
             onClick={() => {
               setOpen(false);
               item.onSelect?.(context);
@@ -84,7 +96,10 @@ export function ActionMenu({ items = [], context, label = 'More actions', trigge
             )}
           >
             {Icon && <Icon className="size-3.5 shrink-0" strokeWidth={2.25} aria-hidden="true" />}
-            {typeof item.label === 'function' ? item.label(context) : item.label}
+            <span className="min-w-0 flex-1">
+              {typeof item.label === 'function' ? item.label(context) : item.label}
+              {hint && <span className="mt-0.5 block text-2xs text-ink-400">{hint}</span>}
+            </span>
           </button>
         );
       })}

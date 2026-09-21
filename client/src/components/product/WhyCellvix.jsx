@@ -1,7 +1,8 @@
 import { Link } from 'react-router';
 import { ArrowUpRight, Check, MapPin, Stamp } from 'lucide-react';
 import cn from '@/lib/cn';
-import { BUSINESS_INFO, GRADES } from '@/lib/constants';
+import { GRADES } from '@/lib/constants';
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 import { pressable } from '@/lib/motion';
 
 /**
@@ -31,10 +32,17 @@ const WORKSHOP_CHECKS = [
   { label: 'Flex', detail: 'Connector wear, kinks, evidence of re-seating' },
 ];
 
-const CLAUSES = [
+/**
+ * Built from the business on screen rather than at import.
+ *
+ * The first clause named both the province and the city from the hardcoded
+ * constant, so every business's product page claimed to ship from the
+ * wholesaler's warehouse. The heading now follows the address it describes.
+ */
+const clausesFor = (info) => [
   {
-    title: 'Ships from Ontario',
-    body: `Stock sits in the ${BUSINESS_INFO.address.city} warehouse. In-stock parts ordered before 3:00 PM ET leave the same business day - no customs step in the middle.`,
+    title: info.address?.region ? `Ships from ${info.address.region}` : 'Ships from our warehouse',
+    body: `Stock sits in ${info.address?.city ? `the ${info.address.city} warehouse` : 'our own warehouse'}. In-stock parts ordered before 3:00 PM ET leave the same business day - no customs step in the middle.`,
   },
   {
     title: 'Wholesale pricing, on terms',
@@ -52,6 +60,8 @@ const CLAUSES = [
 
 export function WhyCellvix({ product = null, className }) {
   const grade = product ? (GRADES[product.grade] ?? null) : null;
+  const info = useBusinessInfo();
+  const clauses = clausesFor(info);
 
   return (
     <section
@@ -89,10 +99,12 @@ export function WhyCellvix({ product = null, className }) {
                   Graded {grade?.label ?? product.grade} · {product.specs?.Warranty ?? '30 days'}{' '}
                   warranty
                 </span>
-                <span className="mt-1.5 inline-flex items-center gap-1 text-xs text-ink-400">
-                  <MapPin className="size-3.5" strokeWidth={2.25} aria-hidden="true" />
-                  {BUSINESS_INFO.address.city}, {BUSINESS_INFO.address.region}
-                </span>
+                {info.address?.city && (
+                  <span className="mt-1.5 inline-flex items-center gap-1 text-xs text-ink-400">
+                    <MapPin className="size-3.5" strokeWidth={2.25} aria-hidden="true" />
+                    {[info.address.city, info.address.region].filter(Boolean).join(', ')}
+                  </span>
+                )}
               </span>
             </div>
           ) : (
@@ -133,7 +145,7 @@ export function WhyCellvix({ product = null, className }) {
         <div className="p-5 lg:p-6">
           <div className="mb-4 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
             <h2 id="why-cellvix" className="text-xl sm:text-xl">
-              What buying from {BUSINESS_INFO.name} gets you
+              What buying from {info.name} gets you
             </h2>
             <Link
               to="/about"
@@ -147,7 +159,7 @@ export function WhyCellvix({ product = null, className }) {
           {/* Numbered clauses on hairlines, not tiles in boxes: this is a terms
               sheet, and it should read like one. */}
           <ol className="border-t border-line">
-            {CLAUSES.map((clause, index) => (
+            {clauses.map((clause, index) => (
               <li key={clause.title} className="flex gap-4 border-b border-line py-3.5">
                 <span className="tnum mt-0.5 shrink-0 font-mono text-xs font-medium text-brand">
                   {String(index + 1).padStart(2, '0')}

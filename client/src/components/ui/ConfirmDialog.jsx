@@ -376,18 +376,29 @@ export function ConfirmDialog({
             <Button size="sm" variant="ghost" onClick={onClose} disabled={loading}>
               {cancelLabel}
             </Button>
-            <Button
-              size="sm"
-              variant={confirmVariant}
-              loading={loading}
-              disabled={!armed}
-              onClick={onConfirm}
-              // With a phrase to type, focus belongs in the field. Without one,
-              // the confirm button is the only thing to land on.
-              {...(confirmPhrase ? {} : { 'data-autofocus': true })}
-            >
-              {confirmLabel}
-            </Button>
+            {/*
+              `confirmLabel={null}` drops the button entirely.
+
+              For a dialog that has already established the action cannot
+              happen - a delete the server will refuse - where the body is the
+              answer and there is nothing to confirm. A disabled button there
+              offers a decision the person does not have, and invites them to
+              hunt for the way to enable it.
+            */}
+            {confirmLabel !== null && (
+              <Button
+                size="sm"
+                variant={confirmVariant}
+                loading={loading}
+                disabled={!armed}
+                onClick={onConfirm}
+                // With a phrase to type, focus belongs in the field. Without
+                // one, the confirm button is the only thing to land on.
+                {...(confirmPhrase ? {} : { 'data-autofocus': true })}
+              >
+                {confirmLabel}
+              </Button>
+            )}
           </div>
         </footer>
       </div>

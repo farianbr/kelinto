@@ -21,7 +21,7 @@ import {
 import cn from '@/lib/cn';
 import { pressable } from '@/lib/motion';
 import api from '@/lib/api';
-import { BUSINESS_INFO } from '@/lib/constants';
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 import { COUNTRY_OPTIONS, DEFAULT_COUNTRY } from '@shared/countries';
 import Modal from '@/components/ui/Modal';
 import Input from '@/components/ui/Input';
@@ -886,45 +886,61 @@ function SignUpTab({ onSwitch }) {
 }
 
 function ContactTab() {
+  const info = useBusinessInfo();
+
   return (
     <div className="space-y-5">
       <p className="text-md leading-relaxed text-ink-500">
         Our sales desk answers account, pricing and stock questions during business hours.
       </p>
 
+      {/* A row the business has not filled in is dropped rather than printed
+          with a blank value beside its icon. */}
       <ul className="space-y-3">
         {[
-          { icon: Phone, label: 'Phone', value: BUSINESS_INFO.phone },
-          { icon: Mail, label: 'Email', value: BUSINESS_INFO.email },
+          { icon: Phone, label: 'Phone', value: info.phone },
+          { icon: Mail, label: 'Email', value: info.email },
           {
             icon: MapPin,
             label: 'Warehouse',
-            value: `${BUSINESS_INFO.address.line1}, ${BUSINESS_INFO.address.city}, ${BUSINESS_INFO.address.region} ${BUSINESS_INFO.address.postal}`,
+            value: [
+              info.address?.line1,
+              info.address?.city,
+              [info.address?.region, info.address?.postal].filter(Boolean).join(' '),
+            ]
+              .filter(Boolean)
+              .join(', '),
           },
-        ].map(({ icon: Icon, label, value }) => (
-          <li key={label} className="flex items-start gap-3 rounded-md border border-line p-3">
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-ink-500" aria-hidden="true">
-              <Icon className="size-4" strokeWidth={2} />
-            </span>
-            <span>
-              <span className="eyebrow block text-ink-300">{label}</span>
-              <span className="mt-0.5 block text-md font-medium text-ink-900">{value}</span>
-            </span>
-          </li>
-        ))}
-      </ul>
-
-      <div className="rounded-md border border-line p-3">
-        <span className="eyebrow mb-2 block text-ink-300">Hours</span>
-        <ul className="space-y-1">
-          {BUSINESS_INFO.hours.map((row) => (
-            <li key={row.days} className="flex justify-between gap-4 text-sm">
-              <span className="text-ink-500">{row.days}</span>
-              <span className="font-medium text-ink-900">{row.time}</span>
+        ]
+          .filter((row) => row.value)
+          .map(({ icon: Icon, label, value }) => (
+            <li key={label} className="flex items-start gap-3 rounded-md border border-line p-3">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-ink-500" aria-hidden="true">
+                <Icon className="size-4" strokeWidth={2} />
+              </span>
+              <span>
+                <span className="eyebrow block text-ink-300">{label}</span>
+                <span className="mt-0.5 block text-md font-medium text-ink-900">{value}</span>
+              </span>
             </li>
           ))}
-        </ul>
-      </div>
+      </ul>
+
+      {/* The whole card goes when the business has not entered its hours - an
+          "Hours" heading over an empty list says less than nothing. */}
+      {info.hours.length > 0 && (
+        <div className="rounded-md border border-line p-3">
+          <span className="eyebrow mb-2 block text-ink-300">Hours</span>
+          <ul className="space-y-1">
+            {info.hours.map((row) => (
+              <li key={row.days} className="flex justify-between gap-4 text-sm">
+                <span className="text-ink-500">{row.days}</span>
+                <span className="font-medium text-ink-900">{row.time}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

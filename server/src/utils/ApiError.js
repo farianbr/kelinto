@@ -36,6 +36,19 @@ class ApiError extends Error {
   static conflict(message, code = 'CONFLICT') {
     return new ApiError(409, code, message);
   }
+
+  /**
+   * The request was fine; this installation cannot serve it right now.
+   *
+   * Distinct from a 500 on purpose: nothing crashed and there is no stack to
+   * read. It is what a request gets when it cannot be matched to a business -
+   * an unknown host, or an installation with no default - where the honest
+   * answer is "not configured for you" rather than an empty result set that
+   * reads as "no matches".
+   */
+  static serviceUnavailable(message, code = 'SERVICE_UNAVAILABLE') {
+    return new ApiError(503, code, message);
+  }
 }
 
 /** Wraps an async route handler so rejections reach the error middleware. */

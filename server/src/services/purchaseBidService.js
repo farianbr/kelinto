@@ -6,6 +6,7 @@ import * as agreementService from './agreementService.js';
 import * as notificationService from './notificationService.js';
 import * as supplierMail from './supplierMail.js';
 import { renderProformaHtml } from './proformaDocument.js';
+import { sendingBusiness } from './sendingBusiness.js';
 
 /**
  * Supplier bidding on a purchase order - ask several, negotiate, confirm one
@@ -1474,7 +1475,10 @@ async function proformaDocument(id, supplierId, { nonce = null } = {}) {
   }
 
   const supplier = await db().Supplier.findById(bid.supplier).select('name email phone address').lean();
-  const html = renderProformaHtml({ po, bid, supplier, nonce });
+  // The business being billed. "Billed to" on a proforma is who the supplier
+  // will invoice, so the house constant here would point a supplier's paperwork
+  // at the wrong company entirely.
+  const html = renderProformaHtml({ po, bid, supplier, nonce, business: await sendingBusiness() });
   if (!html) throw ApiError.notFound('No proforma invoice on this order.', 'PROFORMA_NOT_FOUND');
 
   return html;

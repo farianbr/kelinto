@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useForm } from 'react-hook-form';
+import useAdminForm from '@/hooks/useAdminForm';
 import { zodResolver } from '@hookform/resolvers/zod';
 
 import { saleSettingsSchema } from '@shared/schemas/admin';
@@ -16,6 +16,7 @@ import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { GRADES, GRADE_ORDER } from '@/lib/constants';
 import { MEMBERSHIP_TIERS } from '@shared/schemas/admin';
 import { useAdminSettings, useAdminMutations } from '@/hooks/useAdmin';
+import useActiveBusinessName from '@/hooks/useActiveBusinessName';
 import SelectMenu from '@/components/ui/SelectMenu';
 
 /**
@@ -50,8 +51,12 @@ const TAX_KINDS = [
 ];
 
 /**
- * Timezones Cellvix plausibly operates in. A free-text field here is a way to
- * store a string no date library can resolve.
+ * Timezones a business on this platform plausibly operates in. A free-text
+ * field here is a way to store a string no date library can resolve.
+ *
+ * UTC is last rather than first: it is right for a business reporting across
+ * regions, and wrong for the single-location shop that is the common case and
+ * wants its own wall clock on a day's takings.
  */
 const TIMEZONES = [
   { value: 'America/St_Johns', label: 'Newfoundland - America/St_Johns' },
@@ -60,6 +65,7 @@ const TIMEZONES = [
   { value: 'America/Winnipeg', label: 'Central - America/Winnipeg' },
   { value: 'America/Edmonton', label: 'Mountain - America/Edmonton' },
   { value: 'America/Vancouver', label: 'Pacific - America/Vancouver' },
+  { value: 'UTC', label: 'UTC - Coordinated Universal Time' },
 ];
 
 const provinceName = (code) => PROVINCES.find((p) => p.value === code)?.label ?? code;
@@ -70,6 +76,7 @@ const toFraction = (percent) => Math.round(Number(percent) * 1e4) / 1e6;
 
 export function AdminSaleSettingsPage() {
   const t = useTableClasses();
+  const businessName = useActiveBusinessName();
   const { data, isLoading } = useAdminSettings();
   const { saveSaleSettings } = useAdminMutations();
   const [saved, setSaved] = useState(false);
@@ -81,7 +88,7 @@ export function AdminSaleSettingsPage() {
     reset,
     setError,
     formState: { errors, isDirty, isSubmitting },
-  } = useForm({
+  } = useAdminForm({
     // The form works in percentages and the API in fractions, so the resolver
     // cannot be the shared schema directly - validation of the converted values
     // happens server-side, and the fields below carry their own bounds.
@@ -90,6 +97,7 @@ export function AdminSaleSettingsPage() {
       timezone: 'America/Toronto',
       defaultDueDays: 30,
       rmaSlaDays: 14,
+      ticketSlaDays: 7,
       // Cents, not dollars: the CRA rate carries a tenth of a cent.
       travelRateCentsPerKm: 56.7,
       // The floor the tier bonuses add to. 90 matches the schema default.
@@ -112,6 +120,7 @@ export function AdminSaleSettingsPage() {
       timezone: data.financial.timezone,
       defaultDueDays: data.financial.defaultDueDays,
       rmaSlaDays: data.operations?.rmaSlaDays ?? 14,
+      ticketSlaDays: data.operations?.ticketSlaDays ?? 7,
       travelRateCentsPerKm: data.financial?.travelRateCentsPerKm ?? 56.7,
       warrantyBaseDays: data.financial?.warrantyBaseDays ?? 90,
       warrantyByGrade: Object.fromEntries(
@@ -153,6 +162,7 @@ export function AdminSaleSettingsPage() {
         timezone: next.financial.timezone,
         defaultDueDays: next.financial.defaultDueDays,
         rmaSlaDays: next.operations?.rmaSlaDays ?? 14,
+        ticketSlaDays: next.operations?.ticketSlaDays ?? 7,
         travelRateCentsPerKm: next.financial?.travelRateCentsPerKm ?? 56.7,
         warrantyBaseDays: next.financial?.warrantyBaseDays ?? 90,
         warrantyByGrade: Object.fromEntries(
@@ -189,7 +199,7 @@ export function AdminSaleSettingsPage() {
   if (isLoading) return <p className="text-sm text-ink-500">Loading settings…</p>;
 
   return (
-    <>
+    <div className="form-page">
       <PageHeader
         icon={ADMIN_PAGE.icon}
         title={ADMIN_PAGE.title}
@@ -203,7 +213,10 @@ export function AdminSaleSettingsPage() {
       </PlaceholderNotice>
 
       <form onSubmit={handleSubmit(onSubmit)} className="max-w-form space-y-4">
-        <Panel title="Application & regional" description="Where Cellvix operates, and in what currency.">
+        <Panel
+          title="Application & regional"
+          description={`Where ${businessName} operates, and in what currency.`}
+        >
           <div className="grid gap-4 sm:grid-cols-2">
             <SelectField
               control={control}
@@ -225,7 +238,7 @@ export function AdminSaleSettingsPage() {
 
         <Panel
           title="Invoicing"
-          description="The defaults a new invoice and a new RMA are created with."
+          description="The defaults a new invoice carries, and how long a return or a repair may sit before it is overdue."
         >
           <div className="grid gap-4 sm:grid-cols-2">
             <Input
@@ -247,6 +260,22 @@ export function AdminSaleSettingsPage() {
               hint="How long an RMA may sit before it is flagged as overdue."
               error={errors.rmaSlaDays?.message}
               {...register('rmaSlaDays')}
+            />
+            {/*
+              Its own figure, not the RMA one reused. A return is goods in
+              transit and is paced by a courier; a repair is work at a bench and
+              is paced by the shop. The ticket board has measured against this
+              since tickets shipped - nothing could set it until now.
+            */}
+            <Input
+              type="number"
+              min="1"
+              max="365"
+              label="Ticket service level"
+              suffix="days"
+              hint="How long a repair may stay open before the board flags it as overdue."
+              error={errors.ticketSlaDays?.message}
+              {...register('ticketSlaDays')}
             />
             <Input
               type="number"
@@ -405,6 +434,7 @@ export function AdminSaleSettingsPage() {
         </Panel>
 
         <SettingsFormActions
+          unsavedLabel="the sale settings"
           dirty={dirty}
           saving={isSubmitting || saveSaleSettings.isPending}
           saved={saved}
@@ -427,7 +457,7 @@ export function AdminSaleSettingsPage() {
           }}
         />
       </form>
-    </>
+    </div>
   );
 }
 

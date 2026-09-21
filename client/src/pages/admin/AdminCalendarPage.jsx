@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AlertCircle, CalendarDays, ChevronLeft, ChevronRight, Inbox } from 'lucide-react';
+import { AlertCircle, CalendarDays, ChevronLeft, ChevronRight, Clock, Inbox, Wrench } from 'lucide-react';
 
 import cn from '@/lib/cn';
 import Panel from '@/components/ui/Panel';
@@ -8,8 +8,10 @@ import PageHeader from '@/components/admin/PageHeader';
 import { ADMIN_ROUTES } from '@/lib/adminRoutes';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { useAdminAppointments } from '@/hooks/useAdmin';
+import { TICKET_STATUS_LABELS } from '@shared/schemas/admin';
 import { pressable } from '@/lib/motion';
 import SelectMenu from '@/components/ui/SelectMenu';
+import { Link } from 'react-router';
 import { date, dateShort } from '@/lib/format';
 
 /**
@@ -47,6 +49,109 @@ const STATUS_TONE = {
   cancelled: 'danger',
 };
 
+/**
+ * The tone a ticket status carries on a job card.
+ *
+ * Only the ones that mean something at a glance: work that is blocked
+ * (waiting for parts) and work that is finished but still here (ready to
+ * pick up). Everything else is neutral, because a board where every card is
+ * coloured has no colour left to say anything with.
+ */
+const JOB_TONE = {
+  waiting_for_parts: 'warn',
+  ready_to_pickup: 'ok',
+  diagnosis: 'info',
+};
+
+/**
+ * One unscheduled repair.
+ *
+ * The ticket number leads because it is what a staff member says out loud
+ * and what they search by; the device is what they recognise it as. The
+ * technician line reads "Unassigned" rather than going blank, since nobody
+ * being on it is the actionable state and an empty row hides that.
+ */
+function JobCard({ job }) {
+  return (
+    <Link
+      to={`/admin/tickets/${job.id}`}
+      className={cn(
+        pressable,
+        'flex flex-col gap-1 rounded-lg border border-line bg-surface p-3 text-left',
+        'hover:border-line-strong',
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 font-mono text-xs font-semibold text-ink-900">
+          <span
+            className={cn(
+              'size-1.5 shrink-0 rounded-full',
+              job.status === 'waiting_for_parts' ? 'bg-warn' : 'bg-brand',
+            )}
+            aria-hidden="true"
+          />
+          {job.ticketNumber}
+        </span>
+        <Badge tone={JOB_TONE[job.status] ?? "neutral"} size="sm">
+          {TICKET_STATUS_LABELS[job.status] ?? job.status}
+        </Badge>
+      </div>
+
+      <span className="truncate text-sm font-medium text-ink-900">{job.device}</span>
+
+      <span className="truncate text-xs text-ink-400">
+        {job.customerName || 'No name'} · {job.technician || 'Unassigned'}
+      </span>
+    </Link>
+  );
+}
+
+/**
+ * Every open repair with no date on it.
+ *
+ * **Full width, under the board, not in the sidebar tray.** The tray beside
+ * the calendar showed appointments only and rendered each as a title on one
+ * line, so a shop with twenty devices on the bench and no bookings saw an
+ * empty board above an empty tray - exactly the case where "what still needs
+ * a slot" is the question. These are tickets, they are the real backlog, and
+ * at this width a card can carry the four facts somebody needs to decide what
+ * to schedule next.
+ */
+function UnscheduledJobs({ jobs, isLoading }) {
+  return (
+    <Panel
+      className="mt-4"
+      title={
+        <span className="flex flex-wrap items-center gap-2">
+          <Clock className="size-4 shrink-0 text-ink-400" strokeWidth={2} aria-hidden="true" />
+          Unscheduled jobs
+          {jobs.length > 0 && (
+            <Badge tone="warn" size="sm">
+              {jobs.length}
+            </Badge>
+          )}
+        </span>
+      }
+      description="Open repairs with no due date yet. Set one on the ticket and it appears on the board above."
+    >
+      {isLoading ? (
+        <p className="text-sm text-ink-500">Loading jobs…</p>
+      ) : jobs.length === 0 ? (
+        <p className="flex items-center gap-2 text-sm text-ink-500">
+          <Wrench className="size-4 text-ink-300" strokeWidth={2} aria-hidden="true" />
+          Every open repair has a date on it.
+        </p>
+      ) : (
+        <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {jobs.map((job) => (
+            <JobCard key={job.id} job={job} />
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 export function AdminCalendarPage() {
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [staffFilter, setStaffFilter] = useState('all');
@@ -57,7 +162,7 @@ export function AdminCalendarPage() {
     return end;
   }, [weekStart]);
 
-  const { data } = useAdminAppointments({
+  const { data, isLoading } = useAdminAppointments({
     from: weekStart.toISOString(),
     to: weekEnd.toISOString(),
   });
@@ -242,6 +347,8 @@ export function AdminCalendarPage() {
           </Panel>
         </div>
       </div>
+
+      <UnscheduledJobs jobs={data?.jobs ?? []} isLoading={isLoading} />
     </>
   );
 }

@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
-import { useFieldArray, useForm, useWatch } from 'react-hook-form';
+import { useFieldArray, useWatch } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
 import {
   AlertCircle,
   Ban,
@@ -34,7 +36,7 @@ import BadgeExplainer from '@/components/admin/BadgeExplainer';
 import { TERMS } from '@/components/admin/ApproveClientForm';
 import { Section, DeviceBlock } from '@/components/admin/DeviceLines';
 import { PROVINCES } from '@shared/schemas/checkout';
-import { TAX_RATES, INVOICE_SERVICE_TYPES } from '@shared/schemas/admin';
+import { TAX_RATES, INVOICE_SERVICE_TYPES, invoicePaymentSchema } from '@shared/schemas/admin';
 import KpiRow from '@/components/admin/KpiRow';
 import FilterStrip from '@/components/admin/FilterStrip';
 import BulkBar from '@/components/admin/BulkBar';
@@ -177,7 +179,15 @@ function todayIso() {
  */
 function PaymentForm({ invoice, onSubmit, onCancel, isPending, error }) {
   const outstanding = invoice.balance;
-  const { register, handleSubmit, control } = useForm({
+  const {
+    register,
+    handleSubmit,
+    control,
+    formState: { errors },
+  } = useAdminForm({
+    // The same schema the route validates against - it takes dollars, so it
+    // describes this form exactly.
+    resolver: zodResolver(invoicePaymentSchema),
     defaultValues: {
       amountDollars: (outstanding / 100).toFixed(2),
       at: todayIso(),
@@ -205,7 +215,15 @@ function PaymentForm({ invoice, onSubmit, onCancel, isPending, error }) {
       )}
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <Input label="Amount" inputMode="decimal" suffix="CAD" {...register('amountDollars')} />
+        <Input
+          label="Amount"
+          inputMode="decimal"
+          suffix="CAD"
+          placeholder="0.00"
+          required
+          error={errors.amountDollars?.message}
+          {...register('amountDollars')}
+        />
         <Input label="Received on" type="date" max={todayIso()} {...register('at')} />
       </div>
 
@@ -233,7 +251,7 @@ function PaymentForm({ invoice, onSubmit, onCancel, isPending, error }) {
 
 /** Voiding forgives the balance and keeps the row, so the reason is required. */
 function VoidForm({ invoice, onSubmit, onCancel, isPending, error }) {
-  const { register, handleSubmit } = useForm({ defaultValues: { reason: '' } });
+  const { register, handleSubmit } = useAdminForm({ defaultValues: { reason: '' } });
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
@@ -292,7 +310,7 @@ function VoidForm({ invoice, onSubmit, onCancel, isPending, error }) {
  * like the form ignored what was typed.
  */
 function InvoiceForm({ clients, technicians = [], defaultUser, onSubmit, onCancel, isPending, error }) {
-  const { register, handleSubmit, control, watch, setValue } = useForm({
+  const { register, handleSubmit, control, watch, setValue } = useAdminForm({
     defaultValues: {
       // `defaultUser` is how the customer profile raises an invoice against the
       // account already on screen (`?new=1&client=<id>`): it pre-picks the

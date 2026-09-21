@@ -28,7 +28,10 @@ import { money, date } from '@/lib/format';
  * without a payment behind it, and attribution is fixed at registration and
  * shown read-only.
  */
-const ADMIN_PAGE = { ...ADMIN_ROUTES['/admin/marketing/referrals'], icon: adminIcon('Gift') };
+const ROUTE = ADMIN_ROUTES['/admin/marketing/referrals'];
+// The icon comes from the route entry rather than being named twice: this
+// screen moved categories on 2026-09-21 and its glyph moved with it.
+const ADMIN_PAGE = { ...ROUTE, icon: adminIcon(ROUTE.icon) };
 
 /**
  * The rate control.

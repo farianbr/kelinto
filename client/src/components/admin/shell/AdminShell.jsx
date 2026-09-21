@@ -1,6 +1,6 @@
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import useDocumentTitle from '@/hooks/useDocumentTitle';
-import { Outlet, useLocation } from 'react-router';
+import { Navigate, Outlet, useLocation } from 'react-router';
 import { ShieldAlert } from 'lucide-react';
 import Skeleton from '@/components/ui/Skeleton';
 import Breadcrumbs from '@/components/admin/Breadcrumbs';
@@ -13,6 +13,10 @@ import {
   rememberBusiness,
   subscribeBusiness,
 } from '@/store/businessStore';
+import { matchAdminRoute } from '@/lib/adminRoutes';
+import { featureEnabled } from '@shared/schemas/features';
+import { DensityProvider } from '@/components/ui/density';
+import SettingsTabs from '@/components/admin/settings/SettingsTabs';
 import SignOutConfirm from '@/components/account/SignOutConfirm';
 import ImpersonationBanner from '@/components/admin/ImpersonationBanner';
 import AdminSidebar from './AdminSidebar';
@@ -33,7 +37,7 @@ export function AdminShell() {
   // The browser tab, per route. One call per surface rather than one per
   // page: the titles live in the route table beside the breadcrumbs.
   useDocumentTitle();
-  const { user, isLoading, canUseAdmin, isStaff, impersonation } = useAuth();
+  const { user, isLoading, canUseAdmin, isStaff, impersonation, features } = useAuth();
   const signOut = useSignOut();
   const { data: stats } = useAdminStats();
   const location = useLocation();
@@ -161,10 +165,32 @@ export function AdminShell() {
         <p className="mt-3 text-md leading-relaxed text-ink-500">
           {unassigned
             ? 'Your staff account does not have a role assigned yet. An administrator needs to grant you access before this panel opens.'
-            : 'This area is restricted to Cellvix staff accounts.'}
+            : 'This area is restricted to staff accounts.'}
         </p>
       </div>
     );
+  }
+
+  /**
+   * A screen this business does not have is not a screen (SAAS_PLATFORM §3.1
+   * rule 1).
+   *
+   * The card grid and the command palette already drop these, so the only way
+   * to arrive here is a typed URL or an old bookmark - which is exactly the
+   * path that used to render the whole screen around a 404. A device list that
+   * fails to load looks identical to an empty one, so a service screen opened
+   * by a parts wholesaler read as "no devices yet" rather than as a feature
+   * nobody granted them.
+   *
+   * It redirects rather than drawing a wall, and to `/admin` - the same place
+   * the catch-all sends an address that does not exist. That is the point: off
+   * means invisible, so a switched-off feature and a nonexistent path should be
+   * indistinguishable from the outside. A "you do not have this feature" page
+   * would answer the question the 404 gate is refusing to answer.
+   */
+  const routeFeature = matchAdminRoute(location.pathname)?.feature;
+  if (routeFeature && features && !featureEnabled(features, routeFeature)) {
+    return <Navigate to="/admin" replace />;
   }
 
   // Badge counters the sidebar reads by name. These are the unranged figures
@@ -186,6 +212,7 @@ export function AdminShell() {
   return (
     // The provider wraps both the trail and the business: a detail page publishes
     // its record name, and the breadcrumb - a sibling, not a child - reads it.
+    <DensityProvider value="compact">
     <RecordLabelProvider>
       {/*
         The panel is a fixed-height app on screen and a flowing document on
@@ -250,6 +277,12 @@ export function AdminShell() {
                   The skeleton still earns its place on a first paint, where the
                   screen is genuinely empty - the screens keep their own
                   `isLoading` skeletons for that. */}
+              {/* Above the outlet rather than inside each screen: twenty
+                  settings pages would otherwise each import and place the same
+                  row, and the twentieth would be the one that forgot. It
+                  renders nothing outside settings. */}
+              <SettingsTabs />
+
               <Suspense fallback={null}>
                 <Outlet />
               </Suspense>
@@ -266,6 +299,7 @@ export function AdminShell() {
         <SignOutConfirm />
       </div>
     </RecordLabelProvider>
+    </DensityProvider>
   );
 }
 

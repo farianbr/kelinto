@@ -1,6 +1,8 @@
-import { AlertCircle, CheckCircle2, RotateCcw } from 'lucide-react';
+import { AlertCircle, CheckCircle2, RotateCcw, Save } from 'lucide-react';
 
 import Button from '@/components/ui/Button';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import useUnsavedGuard from '@/hooks/useUnsavedGuard';
 import { pressable } from '@/lib/motion';
 import cn from '@/lib/cn';
 
@@ -21,10 +23,38 @@ import cn from '@/lib/cn';
  * form matches the server, and saying so is clearer than a live button that
  * writes the same values back.
  */
-export function SettingsFormActions({ dirty, saving, saved, error, onReset, saveLabel = 'Save changes' }) {
+export function SettingsFormActions({
+  dirty,
+  saving,
+  saved,
+  error,
+  onReset,
+  saveLabel = 'Save changes',
+  /**
+   * What the confirmation calls the thing being abandoned - "the payment
+   * methods", "this business's details". Named because "Your changes have not
+   * been saved" on eleven screens tells a staff member nothing about which
+   * screen they are leaving.
+   */
+  unsavedLabel = 'your changes',
+}) {
+  /**
+   * Leaving a dirty form asks first.
+   *
+   * Armed from the same `dirty` flag the Save button reads, so it can never
+   * disagree with what the footer says - and it lives here rather than in each
+   * screen because every settings form already renders this component and
+   * already passes `dirty`. Wiring it eleven times is how the twelfth screen
+   * ends up without it.
+   */
+  const guard = useUnsavedGuard(dirty);
+
   return (
     <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-line pt-5">
-      <Button type="submit" loading={saving} disabled={!dirty}>
+      {/* The glyph is the same on every settings form, so it lives here rather
+          than being passed in eleven times. `loading` swaps it for the spinner
+          on its own. */}
+      <Button type="submit" icon={Save} loading={saving} disabled={!dirty}>
         {saveLabel}
       </Button>
 
@@ -60,6 +90,21 @@ export function SettingsFormActions({ dirty, saving, saved, error, onReset, save
           {error}
         </span>
       )}
+
+      {/* Names the screen and the consequence rather than asking "Are you
+          sure?" about nothing in particular (Instructions §3.0.1). Staying is
+          the safe default, so it is the plain button and leaving is the
+          danger one. */}
+      <ConfirmDialog
+        open={guard.blocked}
+        onClose={guard.stay}
+        onConfirm={guard.leave}
+        title="Leave without saving?"
+        body={`You have edited ${unsavedLabel} and not saved. Leaving this page now discards those edits.`}
+        confirmLabel="Leave without saving"
+        cancelLabel="Stay on this page"
+        tone="danger"
+      />
     </div>
   );
 }

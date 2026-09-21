@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router';
-import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
 import {
   AlertCircle,
   AlertTriangle,
@@ -82,7 +83,7 @@ function statusLabel(status) {
  * their condition.
  */
 function InspectForm({ rma, onSubmit, onCancel, isPending, error }) {
-  const { register, handleSubmit, control } = useForm({
+  const { register, handleSubmit, control } = useAdminForm({
     defaultValues: {
       inspectionNotes: rma.inspectionNotes ?? '',
       items: Object.fromEntries(
@@ -161,7 +162,7 @@ function InspectForm({ rma, onSubmit, onCancel, isPending, error }) {
 function ResolveForm({ rma, refund, onSubmit, onCancel, isPending, error }) {
   const proposed = Math.min(refund.proposed, refund.refundable);
 
-  const { register, handleSubmit, control, watch } = useForm({
+  const { register, handleSubmit, control, watch } = useAdminForm({
     defaultValues: {
       resolution: 'refund',
       amountDollars: (proposed / 100).toFixed(2),

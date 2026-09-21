@@ -1,7 +1,7 @@
 import env from '../config/env.js';
 import { sendMail } from './mailer.js';
 import { MAIL, escapeHtml } from './welcomeMail.js';
-import { BUSINESS_INFO } from '../../../shared/business.js';
+import { sendingBusiness } from './sendingBusiness.js';
 
 /**
  * Mail to suppliers - the portal invitation, and everything a purchase order
@@ -26,7 +26,7 @@ const CAD = new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' 
 const money = (cents) => CAD.format((cents ?? 0) / 100);
 
 /** The card shell every message below fills. Kept in one place, as in the buyer mail. */
-function shell({ preheader, title, intro, blocks, footerNote }) {
+function shell({ preheader, title, intro, blocks, footerNote, business }) {
   const { display, body, ink900, ink500, ink300, line, surface2 } = MAIL;
 
   return `<!doctype html>
@@ -50,7 +50,7 @@ function shell({ preheader, title, intro, blocks, footerNote }) {
 
         <tr><td style="padding:36px 36px 8px;">
           <div style="font:700 ${MAIL.micro}/1 ${display};letter-spacing:0.14em;text-transform:uppercase;color:${ink300};">
-            ${escapeHtml(BUSINESS_INFO.name)}
+            ${escapeHtml(business.name)}
           </div>
           <h1 style="margin:14px 0 0;font:700 ${MAIL.hero}/1.2 ${display};letter-spacing:-0.02em;color:${ink900};">
             ${escapeHtml(title)}
@@ -63,7 +63,7 @@ function shell({ preheader, title, intro, blocks, footerNote }) {
         <tr><td style="padding:28px 36px 36px;">
           <p style="margin:0;font:400 ${MAIL.small}/1.6 ${body};color:${ink300};border-top:1px solid ${line};padding-top:16px;">
             ${footerNote}<br />
-            ${escapeHtml(BUSINESS_INFO.name)} · ${escapeHtml(BUSINESS_INFO.address.city)}, ${escapeHtml(BUSINESS_INFO.address.region)}
+            ${escapeHtml(business.name)} · ${escapeHtml(business.address.city)}, ${escapeHtml(business.address.region)}
           </p>
         </td></tr>
 
@@ -126,6 +126,9 @@ async function sendSupplierPortalInvite({ supplier, password }) {
   }
 
   try {
+    // The business placing this order, not the house brand - a supplier who
+    // deals with two businesses on one platform must see which one is writing.
+    const business = await sendingBusiness();
     const origin = env.publicOrigin;
     const portal = `${origin}/supplier`;
 
@@ -151,7 +154,7 @@ async function sendSupplierPortalInvite({ supplier, password }) {
       button(portal, 'Open the supplier portal');
 
     const text = [
-      `Your ${BUSINESS_INFO.name} supplier portal is open.`,
+      `Your ${business.name} supplier portal is open.`,
       '',
       `  Portal    ${portal}`,
       `  Email     ${supplier.email}`,
@@ -166,15 +169,16 @@ async function sendSupplierPortalInvite({ supplier, password }) {
         : []),
       'Sign in to see the requests for quote we send you and to price them.',
       '',
-      `${BUSINESS_INFO.name} · ${BUSINESS_INFO.address.city}, ${BUSINESS_INFO.address.region}`,
+      `${business.name} · ${business.address.city}, ${business.address.region}`,
       'Reply to this email and it reaches our purchasing team.',
     ].join('\n');
 
     return await sendMail({
       to: supplier.email,
       from: env.MAIL_FROM_ADMIN,
-      subject: `Your ${BUSINESS_INFO.name} supplier portal`,
+      subject: `Your ${business.name} supplier portal`,
       html: shell({
+        business,
         preheader: 'Your sign-in details for the supplier portal are inside.',
         title: 'Your supplier portal is ready',
         intro,
@@ -205,6 +209,9 @@ async function sendSupplierResetEmail({ supplier, link, expiresDays = 7 }) {
   }
 
   try {
+    // The business placing this order, not the house brand - a supplier who
+    // deals with two businesses on one platform must see which one is writing.
+    const business = await sendingBusiness();
     const text = [
       `Somebody asked to reset the supplier portal password for ${supplier.email}.`,
       '',
@@ -213,7 +220,7 @@ async function sendSupplierResetEmail({ supplier, link, expiresDays = 7 }) {
       `The link works once and expires in ${expiresDays} days.`,
       'If this was not you, ignore this message - nothing has changed.',
       '',
-      `${BUSINESS_INFO.name} · ${BUSINESS_INFO.address.city}, ${BUSINESS_INFO.address.region}`,
+      `${business.name} · ${business.address.city}, ${business.address.region}`,
     ].join('\n');
 
     return await sendMail({
@@ -221,6 +228,7 @@ async function sendSupplierResetEmail({ supplier, link, expiresDays = 7 }) {
       from: env.MAIL_FROM_ADMIN,
       subject: 'Reset your supplier portal password',
       html: shell({
+        business,
         preheader: `Choose a new password. The link expires in ${expiresDays} days.`,
         title: 'Reset your password',
         intro: `Somebody asked to reset the supplier portal password for <strong style="color:${MAIL.ink900};font-weight:600;">${escapeHtml(supplier.email)}</strong>. Use the button below within ${expiresDays} days.`,
@@ -249,6 +257,9 @@ async function sendPurchaseOrderInvitation({ supplier, po }) {
   }
 
   try {
+    // The business placing this order, not the house brand - a supplier who
+    // deals with two businesses on one platform must see which one is writing.
+    const business = await sendingBusiness();
     const origin = env.publicOrigin;
     const link = `${origin}/supplier/orders/${po._id ?? po.id}`;
 
@@ -281,7 +292,7 @@ async function sendPurchaseOrderInvitation({ supplier, po }) {
         </td></tr>` + button(link, 'Send us your price');
 
     const text = [
-      `${BUSINESS_INFO.name} is asking for a price - ${po.poNumber}.`,
+      `${business.name} is asking for a price - ${po.poNumber}.`,
       '',
       ...(po.items ?? []).map(
         (item) => `  ${item.qtyOrdered} x ${item.name ?? ''} (${item.sku ?? ''})`,
@@ -290,7 +301,7 @@ async function sendPurchaseOrderInvitation({ supplier, po }) {
       ...(po.closesAt ? [`Answers close ${new Date(po.closesAt).toDateString()}.`, ''] : []),
       `  Quote here  ${link}`,
       '',
-      `${BUSINESS_INFO.name} · ${BUSINESS_INFO.address.city}, ${BUSINESS_INFO.address.region}`,
+      `${business.name} · ${business.address.city}, ${business.address.region}`,
     ].join('\n');
 
     return await sendMail({
@@ -298,6 +309,7 @@ async function sendPurchaseOrderInvitation({ supplier, po }) {
       from: env.MAIL_FROM_ADMIN,
       subject: `Purchase order ${po.poNumber} - your price, please`,
       html: shell({
+        business,
         preheader: `We would like a price for ${(po.items ?? []).length} line${(po.items ?? []).length === 1 ? '' : 's'}.`,
         title: 'Request for your price',
         intro: `We would like a price from <strong style="color:${MAIL.ink900};font-weight:600;">${escapeHtml(supplier.name)}</strong> for the parts below${po.closesAt ? `, by ${escapeHtml(new Date(po.closesAt).toDateString())}` : ''}. Prices go in the portal - the button is at the bottom.`,
@@ -328,6 +340,9 @@ async function sendPurchaseOrderOutcome({ supplier, po, won }) {
   }
 
   try {
+    // The business placing this order, not the house brand - a supplier who
+    // deals with two businesses on one platform must see which one is writing.
+    const business = await sendingBusiness();
     const origin = env.publicOrigin;
     const link = `${origin}/supplier/orders/${po._id ?? po.id}`;
 
@@ -350,7 +365,7 @@ async function sendPurchaseOrderOutcome({ supplier, po, won }) {
             'We have placed this order elsewhere on this occasion, and we will be in touch with the next one.',
           ]),
       '',
-      `${BUSINESS_INFO.name} · ${BUSINESS_INFO.address.city}, ${BUSINESS_INFO.address.region}`,
+      `${business.name} · ${business.address.city}, ${business.address.region}`,
     ].join('\n');
 
     return await sendMail({
@@ -360,6 +375,7 @@ async function sendPurchaseOrderOutcome({ supplier, po, won }) {
         ? `Your price was accepted - ${po.poNumber}`
         : `Purchase order ${po.poNumber}`,
       html: shell({
+        business,
         preheader: won ? 'We would like to go ahead.' : 'Thank you for pricing.',
         title: won ? 'Your price was accepted' : 'Thank you for pricing',
         intro,
@@ -389,6 +405,9 @@ async function sendNegotiationEmail({ supplier, po, askedTotal, note, subject })
   }
 
   try {
+    // The business placing this order, not the house brand - a supplier who
+    // deals with two businesses on one platform must see which one is writing.
+    const business = await sendingBusiness();
     const origin = env.publicOrigin;
     const link = `${origin}/supplier/orders/${po._id ?? po.id}`;
 
@@ -413,7 +432,7 @@ async function sendNegotiationEmail({ supplier, po, askedTotal, note, subject })
       '',
       `  Revise here  ${link}`,
       '',
-      `${BUSINESS_INFO.name} · ${BUSINESS_INFO.address.city}, ${BUSINESS_INFO.address.region}`,
+      `${business.name} · ${business.address.city}, ${business.address.region}`,
     ].join('\n');
 
     return await sendMail({
@@ -421,6 +440,7 @@ async function sendNegotiationEmail({ supplier, po, askedTotal, note, subject })
       from: env.MAIL_FROM_ADMIN,
       subject: subject ?? `We would like to revisit ${po.poNumber}`,
       html: shell({
+        business,
         preheader: 'We would like to talk about the price.',
         title: 'About your price',
         intro: `Thank you for pricing <strong style="color:${MAIL.ink900};font-weight:600;">${escapeHtml(po.poNumber)}</strong>. Before we place it we would like to see whether there is any movement on the figure below.`,
@@ -456,8 +476,10 @@ async function sendNegotiationEmail({ supplier, po, askedTotal, note, subject })
  * `User`, and a supplier is not one (rule 4).
  */
 async function sendSupplierMessage({ supplier, channel, po, askedTotal, note }) {
+  // The business placing this order, not the house brand.
+  const business = await sendingBusiness();
   const body = [
-    `${BUSINESS_INFO.name}: we would like to revisit ${po.poNumber}.`,
+    `${business.name}: we would like to revisit ${po.poNumber}.`,
     askedTotal != null ? `Our target is ${money(askedTotal)}.` : null,
     note,
     `${env.publicOrigin}/supplier/orders/${po._id ?? po.id}`,
@@ -484,6 +506,9 @@ async function sendPurchaseAdminAlert({ subject, po, supplierName, kind, status 
   if (!to) return { delivered: false, via: null, error: 'No admin address configured.' };
 
   try {
+    // The business placing this order, not the house brand - a supplier who
+    // deals with two businesses on one platform must see which one is writing.
+    const business = await sendingBusiness();
     const origin = env.publicOrigin;
     const link = `${origin}/admin/purchase-orders/${po._id ?? po.id}`;
 
@@ -507,6 +532,7 @@ async function sendPurchaseAdminAlert({ subject, po, supplierName, kind, status 
       from: env.MAIL_FROM_ADMIN,
       subject,
       html: shell({
+        business,
         preheader: subject,
         title: kind === 'proforma' ? 'Proforma invoice received' : 'Delivery update',
         intro,

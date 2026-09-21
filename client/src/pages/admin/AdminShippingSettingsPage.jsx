@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
-import { useForm, useFieldArray } from 'react-hook-form';
+import { useFieldArray } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
 import { Truck } from 'lucide-react';
 
 import Panel from '@/components/ui/Panel';
@@ -35,6 +38,24 @@ const toCents = (dollars) =>
     ? null
     : Math.round(Number(dollars) * 100);
 
+/** What the form holds: dollars, and a blank `freeOver` meaning "never". */
+const shippingFormSchema = z.object({
+  methods: z
+    .array(
+      z.object({
+        code: z.string().trim().min(1),
+        label: z.string().trim().min(1, 'Name this method.').max(60),
+        detail: z.string().trim().max(120).optional().or(z.literal('')),
+        cost: z.coerce.number({ invalid_type_error: 'Enter a rate, or 0.' }).min(0, 'Cannot be negative.'),
+        etaDays: z.coerce.number().int().min(0).max(60, 'Sixty days at most.'),
+        freeOver: z
+          .union([z.literal(''), z.null(), z.coerce.number().min(0, 'Cannot be negative.')])
+          .optional(),
+      }),
+    )
+    .min(1),
+});
+
 export function AdminShippingSettingsPage() {
   const { data, isLoading } = useAdminSettings();
   const { saveShippingSettings } = useAdminMutations();
@@ -52,7 +73,18 @@ export function AdminShippingSettingsPage() {
     // shared schema does not describe this shape. `shippingSettingsSchema`
     // validates the converted payload server-side, and the numeric bounds the
     // staff member can hit are on the fields themselves.
-  } = useForm({ defaultValues: { methods: [] } });
+  } = useAdminForm({
+    /*
+      The form's shape, in dollars.
+
+      `shippingSettingsSchema` holds `cost` and `freeOver` in cents, because
+      that is what the route stores; this form shows dollars and converts on
+      save. `freeOver` is genuinely empty-able - blank means "never ships
+      free", which is different from zero.
+    */
+    resolver: zodResolver(shippingFormSchema),
+    defaultValues: { methods: [] },
+  });
 
   const { fields } = useFieldArray({ control, name: 'methods' });
   const watched = watch('methods');
@@ -98,7 +130,7 @@ export function AdminShippingSettingsPage() {
   if (isLoading) return <p className="text-sm text-ink-500">Loading settings…</p>;
 
   return (
-    <>
+    <div className="form-page">
       <PageHeader
         icon={ADMIN_PAGE.icon}
         title={ADMIN_PAGE.title}
@@ -130,6 +162,8 @@ export function AdminShippingSettingsPage() {
                 <Input
                   label="Name"
                   hint="What the buyer sees at checkout."
+                  required
+                  error={errors.methods?.[index]?.label?.message}
                   {...register(`methods.${index}.label`)}
                 />
                 {/* The hint used to quote “2–4 business days” as its example,
@@ -150,6 +184,9 @@ export function AdminShippingSettingsPage() {
                   step="0.01"
                   label="Rate"
                   suffix="CAD"
+                  placeholder="0.00"
+                  required
+                  error={errors.methods?.[index]?.cost?.message}
                   {...register(`methods.${index}.cost`)}
                 />
                 <Input
@@ -159,6 +196,8 @@ export function AdminShippingSettingsPage() {
                   label="Estimated days"
                   suffix="days"
                   hint="Drives the delivery estimate on an order."
+                  required
+                  error={errors.methods?.[index]?.etaDays?.message}
                   {...register(`methods.${index}.etaDays`)}
                 />
                 <Input
@@ -169,6 +208,7 @@ export function AdminShippingSettingsPage() {
                   suffix="CAD"
                   containerClassName="sm:col-span-2"
                   hint="Order value at which this band ships free. Leave empty for never."
+                  error={errors.methods?.[index]?.freeOver?.message}
                   {...register(`methods.${index}.freeOver`)}
                 />
               </div>
@@ -183,6 +223,7 @@ export function AdminShippingSettingsPage() {
         </p>
 
         <SettingsFormActions
+          unsavedLabel="the shipping rates"
           dirty={isDirty}
           saving={isSubmitting || saveShippingSettings.isPending}
           saved={saved}
@@ -193,7 +234,7 @@ export function AdminShippingSettingsPage() {
           }}
         />
       </form>
-    </>
+    </div>
   );
 }
 

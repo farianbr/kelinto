@@ -6,6 +6,9 @@ import PageHeader from '@/components/admin/PageHeader';
 import { ADMIN_ROUTES, SETTINGS_CATEGORIES } from '@/lib/adminRoutes';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { pressable } from '@/lib/motion';
+import { featureEnabled } from '@shared/schemas/features';
+import { byTabOrder } from '@/components/admin/settings/SettingsTabs';
+import { useAuth } from '@/hooks/useAuth';
 
 /**
  * Settings - Summary and the seven category landings (§6.15, phase 11).
@@ -25,15 +28,40 @@ import { pressable } from '@/lib/motion';
  */
 const ADMIN_PAGE = { ...ADMIN_ROUTES['/admin/settings'], icon: adminIcon('LayoutGrid') };
 
-/** Every routed settings page, grouped by its category. */
-function pagesByCategory() {
+/**
+ * Every routed settings page, grouped by its category.
+ *
+ * A page carrying a `feature` key is dropped when this business does not have
+ * that feature. Its route already answers 404, so leaving the card would offer
+ * a tile that opens onto nothing - and it would also tell a business about a
+ * capability it has not been given, which is the one thing a feature flag is
+ * supposed to prevent.
+ */
+function pagesByCategory(features) {
   const grouped = new Map(SETTINGS_CATEGORIES.map((category) => [category.key, []]));
 
   for (const [path, meta] of Object.entries(ADMIN_ROUTES)) {
-    if (!meta.parent?.startsWith('settings:')) continue;
-    const key = meta.parent.slice('settings:'.length);
+    /**
+     * Two ways a page joins a category, matching the tab row's rule exactly -
+     * see `components/admin/settings/SettingsTabs.jsx`.
+     *
+     * `parent` is for a page that lives here. `settingsTab` lends one that
+     * lives elsewhere: Services is in the Sales nav because the counter uses
+     * it daily, and it is a Financial setting all the same. Reading only
+     * `parent` here is what left it in the tab row but off this grid, so the
+     * map and the tabs disagreed about what Financial contains.
+     */
+    const key = meta.parent?.startsWith('settings:')
+      ? meta.parent.slice('settings:'.length)
+      : meta.settingsTab;
+    if (!key) continue;
+    if (meta.feature && features && !featureEnabled(features, meta.feature)) continue;
     grouped.get(key)?.push({ ...meta, path });
   }
+
+  // The same order the tab row uses, so the map and the tabs cannot disagree
+  // about what comes first. See `byTabOrder` in `settings/SettingsTabs.jsx`.
+  for (const list of grouped.values()) list.sort(byTabOrder);
 
   return grouped;
 }
@@ -127,10 +155,24 @@ function CategoryPanel({ category, pages, heading }) {
 export function AdminSettingsPage() {
   const [params] = useSearchParams();
   const active = params.get('cat');
-  const grouped = pagesByCategory();
+  const { features } = useAuth();
+  const grouped = pagesByCategory(features);
 
-  const category = SETTINGS_CATEGORIES.find((c) => c.key === active) ?? null;
-  const shown = category ? [category] : SETTINGS_CATEGORIES;
+  /**
+   * A category with nothing left in it is not drawn.
+   *
+   * Every page in a category can be dropped by the filter above - Scheduling
+   * holds exactly two, both gated on `scheduling.appointments` - and the panel
+   * rendered its heading and description regardless. That left a business
+   * reading "Scheduling & Booking · The weekly board and the appointment grid"
+   * above an empty grid, which describes a capability nobody granted it in the
+   * same breath as showing it has none. The tab row is filtered on the same
+   * list so it cannot offer a landing that would be empty either.
+   */
+  const populated = SETTINGS_CATEGORIES.filter((entry) => (grouped.get(entry.key)?.length ?? 0) > 0);
+
+  const category = populated.find((c) => c.key === active) ?? null;
+  const shown = category ? [category] : populated;
 
   return (
     <>
@@ -156,7 +198,7 @@ export function AdminSettingsPage() {
             Summary
           </Link>
 
-          {SETTINGS_CATEGORIES.map((tab) => (
+          {populated.map((tab) => (
             <Link
               key={tab.key}
               to={`/admin/settings?cat=${tab.key}`}

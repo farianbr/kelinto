@@ -5,9 +5,11 @@ import { db, dbFor } from '../db/models.js';
 import { runInBusiness } from '../db/context.js';
 import '../models/DeviceCatalog.js';
 import '../models/Service.js';
+import '../models/Product.js';
 import '../models/Business.js';
 import { slugFor } from '../services/deviceCatalogService.js';
 import { DEVICE_TREE, SERVICES } from './service-business.data.js';
+import { SERVICE_PARTS } from './service-parts.data.js';
 
 /**
  * A repair shop's starting lists: the devices it takes in, and the labour it
@@ -26,8 +28,12 @@ import { DEVICE_TREE, SERVICES } from './service-business.data.js';
  * fixtures into a business whose feature flags hide both. The loop below skips
  * on `businessType`, which is the same test the flags default from.
  *
- * Parts are NOT seeded here. They are the shop's own `Product` inventory, which
- * already exists per-business and has its own seed.
+ * **Parts are seeded here too, as of 2026-09-21.** This used to say they were
+ * somebody else's job; nobody had that job, so CellShoppe ran with three
+ * suppliers and zero products - an empty Inventory screen, and a purchase-order
+ * seeder that skipped the business for having nothing to order. A repair shop
+ * does keep stock; it keeps a short shelf rather than a catalogue, which is
+ * what `service-parts.data.js` is.
  */
 
 /**
@@ -129,11 +135,55 @@ async function seedServices({ quiet = false, business = null } = {}) {
   return { added: missing.length, existing: have.size };
 }
 
+/**
+ * The shelf: the parts this shop keeps in stock.
+ *
+ * Upsert by SKU, never wipe, for the same reason the other two lists are:
+ * a ticket line and a purchase-order line point at these by id, and
+ * re-inserting would orphan both. A part somebody has re-priced or counted
+ * stays exactly as they left it.
+ *
+ * `slug` and `sku` are unique across the collection, and each business owns
+ * its own database, so the `CS-` prefix is for a human reading a row rather
+ * than for uniqueness.
+ */
+async function seedParts({ quiet = false } = {}) {
+  const log = quiet ? () => {} : (...args) => console.log(...args);
+
+  const existing = await db().Product.find({}).select('sku').lean();
+  const have = new Set(existing.map((product) => product.sku));
+
+  const missing = SERVICE_PARTS.filter((part) => !have.has(part.sku)).map((part) => ({
+    sku: part.sku,
+    name: part.name,
+    slug: part.sku.toLowerCase(),
+    // What the part is for, in the words the counter uses. The catalogue
+    // taxonomy is a wholesaler concern and this shop has none.
+    description: `Replacement ${part.partTypeLabel.toLowerCase()} for ${part.deviceLabel}.`,
+    partType: part.partType,
+    partTypeLabel: part.partTypeLabel,
+    grade: part.grade,
+    price: part.price,
+    cost: part.cost,
+    stock: part.stock,
+    minStock: part.minStock,
+    isActive: true,
+  }));
+
+  if (missing.length) await db().Product.insertMany(missing);
+
+  log(`    parts: ${missing.length} added, ${have.size} already present`);
+  return { added: missing.length, existing: have.size };
+}
+
 /** Both lists, for the business the current context names. */
 async function seedServiceBusiness(options = {}) {
   const devices = await seedDevices(options);
   const services = await seedServices(options);
-  return { devices, services };
+  // `seedParts` takes no `business`: `Product` is scoped by the database it
+  // lives in rather than by a stamped id - see the model.
+  const parts = await seedParts(options);
+  return { devices, services, parts };
 }
 
 // CLI entry: `npm run seed:service-business`
@@ -190,5 +240,5 @@ if (process.argv[1] && process.argv[1].endsWith('service-business.js')) {
   });
 }
 
-export { seedDevices, seedServices, seedServiceBusiness };
+export { seedDevices, seedServices, seedParts, seedServiceBusiness };
 export default seedServiceBusiness;

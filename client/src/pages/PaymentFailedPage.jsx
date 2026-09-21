@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from 'react-router';
 import { ArrowLeft, Headphones, Mail, RefreshCw, ShieldCheck, ShoppingCart } from 'lucide-react';
 import { money } from '@/lib/format';
-import { BUSINESS_INFO } from '@/lib/constants';
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 import Button from '@/components/ui/Button';
 import BrandScene from '@/components/ui/BrandScene';
 import { useCart } from '@/hooks/useCart';
@@ -52,6 +52,7 @@ export function PaymentFailedPage() {
   const navigate = useNavigate();
   const { state } = useLocation();
   const { count, subtotal, priceVisible } = useCart();
+  const info = useBusinessInfo();
 
   const code = state?.code ?? null;
   const reason = REASONS[code] ?? REASONS.DEFAULT;
@@ -131,20 +132,27 @@ export function PaymentFailedPage() {
                   </Link>
                   .
                 </li>
+                {/* Says "over the phone" only where there is a number to call.
+                    A business reachable by the contact form alone still offers
+                    the route, just not one the customer cannot take. */}
                 <li>
                   <span className="font-medium text-ink-900">Let the sales desk place it.</span>{' '}
-                  Quote your cart over the phone and they will raise the order against your account.
+                  {info.phone
+                    ? 'Quote your cart over the phone and they will raise the order against your account.'
+                    : 'Get in touch with your cart and they will raise the order against your account.'}
                 </li>
               </ul>
 
               <div className="mt-5 flex flex-col gap-2">
-                <a
-                  href={`tel:${BUSINESS_INFO.phone.replace(/[^\d+]/g, '')}`}
-                  className={cn(pressable, 'inline-flex h-11 items-center justify-center gap-2 rounded-md border border-line-strong bg-surface font-display text-md font-semibold text-ink-700 hover:border-ink-300 hover:bg-surface-2')}
-                >
-                  <Headphones className="size-4" strokeWidth={2} aria-hidden="true" />
-                  {BUSINESS_INFO.phone}
-                </a>
+                {info.phone && (
+                  <a
+                    href={`tel:${info.phone.replace(/[^\d+]/g, '')}`}
+                    className={cn(pressable, 'inline-flex h-11 items-center justify-center gap-2 rounded-md border border-line-strong bg-surface font-display text-md font-semibold text-ink-700 hover:border-ink-300 hover:bg-surface-2')}
+                  >
+                    <Headphones className="size-4" strokeWidth={2} aria-hidden="true" />
+                    {info.phone}
+                  </a>
+                )}
                 <Link
                   to="/contact"
                   className={cn(pressable, 'inline-flex h-11 items-center justify-center gap-2 rounded-md border border-line bg-surface-2 font-display text-md font-semibold text-ink-700 hover:bg-surface-3')}

@@ -191,7 +191,7 @@ export function AdminApiKeysPage() {
   if (isLoading) return <p className="text-sm text-ink-500">Loading providers…</p>;
 
   return (
-    <>
+    <div className="form-page">
       <PageHeader
         icon={ADMIN_PAGE.icon}
         title={ADMIN_PAGE.title}
@@ -201,13 +201,6 @@ export function AdminApiKeysPage() {
       {/* The security posture, stated on the screen rather than only in a doc.
           A staff member who does not know a key cannot be read back will keep
           looking for the button that reads it. */}
-      {/* The measure wraps the notice as well as the panels.
-
-          It sat outside the capped container, so a full-bleed banner ran the
-          shell's whole width above content that stopped at the form measure
-          the page disagreed with itself about where its own edge was, and the
-          notice read as belonging to the shell rather than to this screen. */}
-      <div className="max-w-form">
       <div className="mb-5 flex items-start gap-2.5 rounded-lg border border-info/20 bg-info-50 px-3.5 py-3 text-sm leading-relaxed text-ink-700">
         <ShieldCheck className="mt-0.5 size-4 shrink-0 text-info" strokeWidth={2} aria-hidden="true" />
         <span>
@@ -233,8 +226,7 @@ export function AdminApiKeysPage() {
           the value.
         </span>
       </p>
-      </div>
-    </>
+    </div>
   );
 }
 

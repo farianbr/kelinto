@@ -114,7 +114,22 @@ function SupplierForm({ supplier, onSubmit, onCancel, isPending, error }) {
    */
   const [componentTypes, setComponentTypes] = useState(supplier?.componentTypes ?? []);
 
-  const { register, handleSubmit, control, setValue } = useForm({
+  const {
+    register,
+    handleSubmit,
+    control,
+    setValue,
+    formState: { errors },
+  } = useAdminForm({
+    /*
+      The shared schema, minus the two fields this form does not hold.
+
+      `componentTypes` and `contactConsent` are attached in `submit` from
+      state kept outside the form, so validating them here would fail on
+      values the form has no control over. Everything else is exactly the
+      payload the route receives.
+    */
+    resolver: zodResolver(supplierSchema.omit({ componentTypes: true, contactConsent: true })),
     defaultValues: {
       name: supplier?.name ?? '',
       code: supplier?.code ?? '',
@@ -163,6 +178,7 @@ function SupplierForm({ supplier, onSubmit, onCancel, isPending, error }) {
           label="Supplier name"
           required
           placeholder="e.g. MobileSentrix Canada"
+          error={errors.name?.message}
           {...register('name')}
         />
         {/* A code is 3–4 characters. 100px holds that with room to spare. */}
@@ -267,7 +283,13 @@ function SupplierForm({ supplier, onSubmit, onCancel, isPending, error }) {
           one mid-domain while a 6-character postal box sits at the same width
           is what made this form feel oversized. Phone and website pair up
           because neither fills half of it. */}
-      <Input label="Email" type="email" placeholder="orders@supplier.com" {...register('email')} />
+      <Input
+        label="Email"
+        type="email"
+        placeholder="orders@supplier.com"
+        error={errors.email?.message}
+        {...register('email')}
+      />
 
       <div className="grid gap-3 sm:grid-cols-2">
         <Controller
@@ -286,7 +308,12 @@ function SupplierForm({ supplier, onSubmit, onCancel, isPending, error }) {
             />
           )}
         />
-        <Input label="Website" placeholder="https://…" {...register('website')} />
+        <Input
+          label="Website"
+          placeholder="https://…"
+          error={errors.website?.message}
+          {...register('website')}
+        />
       </div>
 
       {/* Unit first, then street - the order they are said and written on an

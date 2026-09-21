@@ -15,6 +15,7 @@ import useDocumentTitle from '@/hooks/useDocumentTitle';
 import useBusinessTheme from '@/hooks/useBusinessTheme';
 import { pressable } from '@/lib/motion';
 import { useKioskConfig, useKioskDevices, useKioskMutations, useSpeech } from '@/hooks/useKiosk';
+import { getBusiness, setBusiness } from '@/store/businessStore';
 
 /**
  * Self-service check-in (Sales § Kiosk).
@@ -40,6 +41,44 @@ import { useKioskConfig, useKioskDevices, useKioskMutations, useSpeech } from '@
  * produce a record that looks like evidence and is not. The counter completes
  * the ticket afterwards under `intake.awaitingReview`.
  */
+
+/**
+ * Take the business out of the kiosk's own URL, once, before anything fetches.
+ *
+ * **A kiosk tab starts with no business.** The selected business lives in
+ * `sessionStorage`, which a new tab does not inherit, and the kiosk is opened
+ * in one - from the panel, or from a shortcut on the tablet itself. With
+ * nothing stored the request names no business, and on localhost, where there
+ * is no host to read, the server falls back to the default business: a staff
+ * member at CellShoppe pressed Open kiosk and was shown Cellvix's kiosk, which
+ * is switched off, so the tablet said "Kiosk is switched off" about a kiosk
+ * that was on.
+ *
+ * `?business=` is already rule 3 of `resolveBusiness`, and `lib/api.js` already
+ * puts it on every call - it just had nothing to send. So the link carries the
+ * id and this adopts it, which is the same trick `apiUrl` plays for a document
+ * opened in a new tab.
+ *
+ * **In a `useState` initialiser rather than an effect**: an effect runs after
+ * the first render, and the first render is where `useKioskConfig` fires. The
+ * config would go out unscoped, resolve to the default business, and the
+ * corrected one would only arrive on a refetch.
+ *
+ * In production the host names the business and the parameter is redundant.
+ */
+function useAdoptBusinessFromUrl() {
+  useState(() => {
+    try {
+      const wanted = new URLSearchParams(window.location.search).get('business');
+      // Written only when it actually differs, so a tablet that has been
+      // running all day is not storing the same id on every remount.
+      if (wanted && wanted !== getBusiness()) setBusiness(wanted);
+    } catch {
+      // A malformed URL is not a reason to refuse a customer a check-in: with
+      // nothing adopted the kiosk falls back to whatever the host resolves.
+    }
+  });
+}
 
 /** The lock screen's keypad, in phone order. */
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
@@ -266,6 +305,8 @@ function Bubble() {
  * further than this page needs to.
  */
 export function KioskPage() {
+  useAdoptBusinessFromUrl();
+
   const { data: config } = useKioskConfig();
   const theme = useBusinessTheme(config?.colorToken, { portals: false });
 

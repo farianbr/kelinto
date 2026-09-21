@@ -8,6 +8,7 @@ import { adminIcon } from './adminIcons';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useAdminSearch } from '@/hooks/useAdmin';
 import { visibleNav } from '@/lib/permissions';
+import { featureEnabled } from '@shared/schemas/features';
 import { useAuth } from '@/hooks/useAuth';
 
 /**
@@ -69,6 +70,13 @@ function buildIndex(permissions, features) {
     if (path.includes(':')) continue;
     if (rows.some((row) => row.to.split('?')[0] === path)) continue;
     if (meta.section && !visibleSections.has(meta.section)) continue;
+    // A route carrying its own flag is filtered on it here, because the section
+    // check above cannot do it: every settings screen belongs to `settings`,
+    // which is visible to anyone who can open the panel at all. Without this
+    // the Kiosk, Devices and Calendar screens were offered by name to a
+    // business that does not have them - the one thing their 404 gate is
+    // withholding, handed over by the search box instead.
+    if (meta.feature && features && !featureEnabled(features, meta.feature)) continue;
     rows.push({ to: path, label: meta.title ?? meta.label, group: null, icon: meta.icon });
   }
 

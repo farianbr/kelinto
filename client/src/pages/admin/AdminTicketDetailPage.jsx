@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
-import { useForm } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
 import {
   AlertCircle,
   ArrowRight,
@@ -147,6 +149,17 @@ const LIFECYCLE = [
  * where the strip stops. Without that a cancelled ticket showed as stopped at
  * Diagnosis whether it was cancelled at the counter or on the workshop.
  */
+/** Taking a deposit on a ticket. The box starts empty, so this is the one that most needed a rule. */
+const depositFormSchema = z
+  .object({
+    amountDollars: z.coerce
+      .number({ invalid_type_error: 'Enter an amount.' })
+      .positive('Enter an amount greater than zero.'),
+  })
+  // Everything else on these small dialogs is a picker or a note, and is
+  // passed through rather than restated.
+  .passthrough();
+
 function stationOf(ticket, invoiced) {
   if (invoiced) return 'invoiced';
 
@@ -524,7 +537,7 @@ function StageCard({ ticket, disabled, isPending, error, onMove }) {
   const currentIndex = TICKET_STATUSES.indexOf(ticket.status);
   const next = TICKET_STATUSES[currentIndex + 1];
 
-  const { register, handleSubmit, control, watch } = useForm({
+  const { register, handleSubmit, control, watch } = useAdminForm({
     defaultValues: { status: next ?? ticket.status, note: '', notify: true },
   });
 
@@ -609,7 +622,14 @@ function StageCard({ ticket, disabled, isPending, error, onMove }) {
  * explain why it is being recorded on a ticket rather than against a bill.
  */
 function DepositCard({ ticket, invoiced, isPending, error, onRecord, onRemove }) {
-  const { register, handleSubmit, control, reset } = useForm({
+  const {
+    register,
+    handleSubmit,
+    control,
+    reset,
+    formState: { errors },
+  } = useAdminForm({
+    resolver: zodResolver(depositFormSchema),
     defaultValues: { amountDollars: '', method: 'cash', note: '' },
   });
 
@@ -687,6 +707,7 @@ function DepositCard({ ticket, invoiced, isPending, error, onRecord, onRemove })
                 inputMode="decimal"
                 placeholder="0.00"
                 className={COMPACT_FIELD}
+                error={errors.amountDollars?.message}
                 {...register('amountDollars')}
               />
               <SelectField
@@ -909,7 +930,7 @@ function Lifecycle({ ticket, invoiced, className }) {
  * what will be carried so the conversion is not a leap of faith.
  */
 function ConvertModal({ open, ticket, balance, isPending, error, onClose, onConfirm }) {
-  const { handleSubmit, control } = useForm({ defaultValues: { terms: 'prepaid' } });
+  const { handleSubmit, control } = useAdminForm({ defaultValues: { terms: 'prepaid' } });
 
   return (
     <Modal open={open} onClose={onClose} title="Convert to invoice" size="md" align="top">

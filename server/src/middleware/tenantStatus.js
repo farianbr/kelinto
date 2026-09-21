@@ -1,6 +1,5 @@
 import ApiError from '../utils/ApiError.js';
-import Business from '../models/Business.js';
-import Tenant from '../models/Tenant.js';
+import { businessConfig } from './businessConfigCache.js';
 
 /**
  * What a tenant's subscription state still permits (SAAS_PLATFORM §6 phase 19).
@@ -121,10 +120,18 @@ async function enforceTenantStatus(req, _res, next) {
     const scope = req.businessScope;
     if (!scope) return next();
 
-    const business = await Business.findById(scope).select('tenant').lean();
-    if (!business?.tenant) return next();
-
-    const tenant = await Tenant.findById(business.tenant).select('status name').lean();
+    /**
+     * One cached read instead of two live ones.
+     *
+     * This was `Business.findById` and then `Tenant.findById` - sequential,
+     * because the tenant's id comes out of the business - so **every request in
+     * the application paid two full round trips** to decide a status that
+     * changes when somebody's card fails. `businessConfigCache` makes that pair
+     * happen once a minute per business, and `feature.js` reads the same entry
+     * rather than fetching the same document a third time.
+     */
+    const config = await businessConfig(scope);
+    const tenant = config?.tenant;
     if (!tenant || tenant.status === 'active') return next();
 
     req.tenantStatus = tenant.status;

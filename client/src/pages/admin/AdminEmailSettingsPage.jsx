@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useForm } from 'react-hook-form';
+import useAdminForm from '@/hooks/useAdminForm';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Info } from 'lucide-react';
 
 import cn from '@/lib/cn';
 import { communicationsSettingsSchema } from '@shared/schemas/admin';
@@ -77,7 +76,7 @@ const TOGGLES = [
     key: 'lowStockAlerts',
     label: 'Email an alert when stock runs low',
     detail:
-      'Notifies the address below when a part drops under its low-stock threshold. Goes to Cellvix, never to a customer.',
+      'Notifies the address below when a part drops under its low-stock threshold. Goes to your own team, never to a customer.',
   },
 ];
 
@@ -115,14 +114,15 @@ function Toggle({ toggle, checked, wired, onChange }) {
           {/* §6b rule 4, applied to a settings screen: a switch in front of code
               nobody has written yet says so, rather than looking identical to
               the three that work. */}
-          {!wired && <Badge tone="warn">Not wired yet</Badge>}
+          {!wired && <Badge tone="warn">Not built yet</Badge>}
         </span>
         <span className="mt-1 block text-sm leading-relaxed text-ink-500">
           {toggle.detail}
           {!wired && (
             <span className="mt-1 block text-warn">
-              Nothing sends this yet. The setting is saved and will take effect when the email is
-              built.
+              This particular message has not been written yet - it is not an email problem.
+              Everything else on this page sends. The setting is saved and takes effect the moment
+              the message exists.
             </span>
           )}
         </span>
@@ -146,7 +146,7 @@ export function AdminEmailSettingsPage() {
     setValue,
     setError,
     formState: { errors, isDirty, isSubmitting },
-  } = useForm({
+  } = useAdminForm({
     resolver: zodResolver(communicationsSettingsSchema),
     defaultValues: {},
   });
@@ -179,28 +179,12 @@ export function AdminEmailSettingsPage() {
   if (isLoading) return <p className="text-sm text-ink-500">Loading settings…</p>;
 
   return (
-    <>
+    <div className="form-page">
       <PageHeader
         icon={ADMIN_PAGE.icon}
         title={ADMIN_PAGE.title}
         description={ADMIN_PAGE.description}
       />
-
-      {/* The measure wraps the notice as well as the panels.
-
-          It sat outside the capped container, so a full-bleed banner ran the
-          shell's whole width above content that stopped at the form measure
-          the page disagreed with itself about where its own edge was, and the
-          notice read as belonging to the shell rather than to this screen. */}
-      <div className="max-w-form">
-      <p className="mb-5 flex items-start gap-2.5 rounded-lg border border-info/20 bg-info-50 px-3.5 py-3 text-sm leading-relaxed text-ink-700">
-        <Info className="mt-0.5 size-4 shrink-0 text-info" strokeWidth={2} aria-hidden="true" />
-        <span>
-          Everything that emails a customer ships <strong className="font-semibold">off</strong>,
-          except the invoice sent at checkout, which has been running since the storefront opened.
-          Switch one on deliberately, having read what it sends.
-        </span>
-      </p>
 
       <form onSubmit={handleSubmit(onSubmit)} className=" space-y-4">
         <Panel title="Automatic emails" description="What the system sends without being asked.">
@@ -222,7 +206,7 @@ export function AdminEmailSettingsPage() {
 
         <Panel
           title="Reminders & notifications"
-          description="When the invoice messages fire, and who at Cellvix hears about what."
+          description="When the invoice messages fire, and who on your team hears about what."
         >
           <div className="grid gap-4 sm:grid-cols-2">
             <Input
@@ -291,6 +275,7 @@ export function AdminEmailSettingsPage() {
         </Panel>
 
         <SettingsFormActions
+          unsavedLabel="the email settings"
           dirty={isDirty}
           saving={isSubmitting || saveCommunications.isPending}
           saved={saved}
@@ -308,8 +293,7 @@ export function AdminEmailSettingsPage() {
           }}
         />
       </form>
-      </div>
-    </>
+    </div>
   );
 }
 

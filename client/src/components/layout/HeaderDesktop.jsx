@@ -2,7 +2,7 @@ import { Link } from 'react-router';
 import { ChevronDown, Grid3x3, Headphones, ShoppingCart, User } from 'lucide-react';
 import cn from '@/lib/cn';
 import { money } from '@/lib/format';
-import { BUSINESS_INFO } from '@/lib/constants';
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 import LiveSearch from '@/components/search/LiveSearch';
 import MegaMenu from './MegaMenu';
 import useUiStore from '@/store/uiStore';
@@ -98,19 +98,31 @@ export function HeaderDesktop() {
   const cartOpen = useUiStore((s) => s.cartFlyoutOpen);
 
   const { count: cartCount, subtotal } = useCart();
+  const info = useBusinessInfo();
+  const isHouse = info.isHouse !== false;
 
   return (
     <div className="relative hidden lg:block">
       <div className="mx-auto flex max-w-[1400px] items-center gap-5 px-6 py-3.5">
-        <Link to="/" className="shrink-0" aria-label={`${BUSINESS_INFO.name} home`}>
-          <img
-            src="/brand/logo.png"
-            srcSet="/brand/logo.png 1x, /brand/logo@2x.png 2x"
-            alt={`${BUSINESS_INFO.name} - ${BUSINESS_INFO.tagline}`}
-            width="1000"
-            height="254"
-            className="h-9 w-auto"
-          />
+        {/* A business that has uploaded a mark gets it; one that has not gets
+            its name set as a wordmark. The bundled Cellvix PNG is the fallback
+            only for the house business - serving it to every business made
+            CellShoppe's storefront carry the wholesaler's logo. */}
+        <Link to="/" className="shrink-0" aria-label={`${info.name} home`}>
+          {info.logoUrl ? (
+            <img src={info.logoUrl} alt={info.name} className="h-9 w-auto" />
+          ) : isHouse ? (
+            <img
+              src="/brand/logo.png"
+              srcSet="/brand/logo.png 1x, /brand/logo@2x.png 2x"
+              alt={`${info.name} - ${info.tagline}`}
+              width="1000"
+              height="254"
+              className="h-9 w-auto"
+            />
+          ) : (
+            <span className="font-display text-xl font-bold text-ink-900">{info.name}</span>
+          )}
         </Link>
 
         <button
@@ -136,18 +148,22 @@ export function HeaderDesktop() {
 
         {/* ---- utility cluster ------------------------------------------- */}
         <div className="flex shrink-0 items-center gap-1">
-          <a
-            href={`tel:${BUSINESS_INFO.phone.replace(/[^\d+]/g, '')}`}
-            className={cn(pressable, 'hidden items-center gap-2.5 rounded-md px-3 py-2 hover:bg-surface-2 xl:flex')}
-          >
-            <Headphones className="size-5 shrink-0 text-ink-400" strokeWidth={1.5} aria-hidden="true" />
-            <span className="leading-tight">
-              <span className="eyebrow block text-ink-300">Sales desk</span>
-              <span className="block font-display text-sm font-semibold text-ink-900">
-                {BUSINESS_INFO.phone}
+          {/* Dropped entirely for a business with no number on file, rather
+              than rendered as a `tel:` that dials nothing. */}
+          {info.phone && (
+            <a
+              href={`tel:${info.phone.replace(/[^\d+]/g, '')}`}
+              className={cn(pressable, 'hidden items-center gap-2.5 rounded-md px-3 py-2 hover:bg-surface-2 xl:flex')}
+            >
+              <Headphones className="size-5 shrink-0 text-ink-400" strokeWidth={1.5} aria-hidden="true" />
+              <span className="leading-tight">
+                <span className="eyebrow block text-ink-300">Sales desk</span>
+                <span className="block font-display text-sm font-semibold text-ink-900">
+                  {info.phone}
+                </span>
               </span>
-            </span>
-          </a>
+            </a>
+          )}
 
           <AccountControl />
 

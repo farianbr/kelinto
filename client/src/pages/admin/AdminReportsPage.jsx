@@ -37,6 +37,7 @@ import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { useAdminReport } from '@/hooks/useAdmin';
 import Skeleton from '@/components/ui/Skeleton';
 import { pressable } from '@/lib/motion';
+import useActiveBusinessName from '@/hooks/useActiveBusinessName';
 
 /**
  * Reports - the eight analytics tabs (ERP rework §6.12).
@@ -161,6 +162,7 @@ function TableCard({ title, description, columns, rows, empty, emptyIcon = FileT
 // ---- tabs -------------------------------------------------------------------
 
 function SummaryTab({ data }) {
+  const businessName = useActiveBusinessName();
   const kpis = data.kpis ?? {};
   const ar = data.receivables ?? {};
   const pl = data.profitAndLoss ?? {};
@@ -176,7 +178,7 @@ function SummaryTab({ data }) {
           { key: 'cogs', label: 'Cost of goods', value: money(kpis.costOfGoods), hint: 'From each line’s own cost snapshot', tone: 'warn', icon: Boxes },
           { key: 'expenses', label: 'Expenses', value: money(kpis.expenses), hint: 'Money out in range', tone: 'warn', icon: Receipt },
           { key: 'tax', label: 'GST/HST collected', value: money(kpis.taxCollected), hint: 'On orders in range', tone: 'info', icon: Percent },
-          { key: 'outstanding', label: 'Outstanding', value: money(kpis.outstanding), hint: 'Owed to Cellvix, as of today', tone: (kpis.outstanding ?? 0) > 0 ? 'danger' : 'ok', icon: AlertCircle },
+          { key: 'outstanding', label: 'Outstanding', value: money(kpis.outstanding), hint: `Owed to ${businessName}, as of today`, tone: (kpis.outstanding ?? 0) > 0 ? 'danger' : 'ok', icon: AlertCircle },
         ]}
       />
 
@@ -229,7 +231,7 @@ function SummaryTab({ data }) {
 
         <Panel
           title="Outstanding"
-          description="Owed to Cellvix, as of today - a position, not a flow."
+          description={`Owed to ${businessName}, as of today - a position, not a flow.`}
           action={
             <Link to="/admin/invoices?status=overdue" className="text-sm font-semibold text-brand hover:underline">
               View all →
@@ -743,6 +745,7 @@ function InventoryTab({ data }) {
 }
 
 function TaxTab({ data }) {
+  const businessName = useActiveBusinessName();
   const kpis = data.kpis ?? {};
   const totals = data.totals ?? {};
   const net = kpis.net ?? 0;
@@ -755,7 +758,7 @@ function TaxTab({ data }) {
           { label: 'GST/HST paid', hint: 'Input tax on expenses', value: money(kpis.paid ?? 0), tone: 'text-ink-900' },
           {
             label: 'Net payable',
-            hint: net < 0 ? 'Negative - a refund or credit is due to Cellvix' : 'Owed to the tax authority',
+            hint: net < 0 ? `Negative - a refund or credit is due to ${businessName}` : 'Owed to the tax authority',
             // Signed once: negative means money comes back, and the hint says
             // so rather than a second "refund due" tile contradicting this one.
             value: `${net < 0 ? '−' : ''}${money(Math.abs(net))}`,
@@ -806,7 +809,7 @@ function TaxTab({ data }) {
 
         <TableCard
           title="By province"
-          description="Cellvix ships Canada-wide, so this is a primary output rather than a footnote. Rates come from Settings."
+          description={`${businessName} ships Canada-wide, so this is a primary output rather than a footnote. Rates come from Settings.`}
           rows={data.byProvince ?? []}
           empty="No orders in this period."
           emptyIcon={Percent}

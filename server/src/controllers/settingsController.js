@@ -16,6 +16,23 @@ const get = asyncHandler(async (req, res) => {
 });
 
 /**
+ * The business behind the storefront, for anybody (§6.15 category 1).
+ *
+ * **Unauthenticated, so the shape is an allowlist** - see
+ * `settingsService.publicProfile`. A shopper has to be able to read the footer
+ * before they have an account, which is the whole reason this is not behind
+ * `settings: view`.
+ *
+ * Cached for a minute at the edge. These fields change when an owner edits
+ * them, which is rarely, and the alternative is a settings read on every page
+ * of every visit.
+ */
+const publicProfile = asyncHandler(async (req, res) => {
+  res.set('Cache-Control', 'public, max-age=60');
+  res.json(await settingsService.publicProfile());
+});
+
+/**
  * Every settings write is audited (§7.5, phase 11b).
  *
  * These change what the whole system charges and promises - a tax rate, a
@@ -64,15 +81,21 @@ function sectionOf(settings, section) {
         taxRatesByProvince: settings.financial?.taxRatesByProvince,
         warrantyByGrade: settings.financial?.warrantyByGrade,
         rmaSlaDays: settings.operations?.rmaSlaDays,
+        ticketSlaDays: settings.operations?.ticketSlaDays,
       };
     case 'shipping':
       return { shippingMethods: settings.financial?.shippingMethods };
     case 'payment-methods':
       return { paymentMethods: settings.financial?.paymentMethods };
     case 'inventory':
-      return settings.inventory;
+      // `lowStockThreshold` is stored under `operations` - where it has always
+      // lived and where the reports read it - but it is edited on the Inventory
+      // Settings screen, so the section this screen posts back has to carry it.
+      return { ...settings.inventory, lowStockThreshold: settings.operations?.lowStockThreshold };
     case 'communications':
       return settings.communications;
+    case 'kiosk':
+      return settings.kiosk;
     default:
       return {};
   }
@@ -102,6 +125,20 @@ const updatePaymentMethods = auditedWrite(
   'payment methods',
 );
 
+/**
+ * The kiosk screen writes everything but the PIN.
+ *
+ * Audited like every other settings write, and for a sharper reason than most:
+ * `isEnabled` is what decides whether a tablet on the counter will unlock at
+ * all, and the terms text is what a customer is shown they are agreeing to.
+ * Both are worth being able to say who changed, and when.
+ */
+const updateKiosk = auditedWrite(
+  'kiosk',
+  (body) => settingsService.updateKiosk(body),
+  'kiosk settings',
+);
+
 const updateCommunications = auditedWrite(
   'communications',
   (body) => settingsService.updateCommunications(body),
@@ -114,4 +151,4 @@ const updateInventory = auditedWrite(
   'inventory defaults',
 );
 
-export { get, updateBusiness, updateSale, updateShipping, updatePaymentMethods, updateCommunications, updateInventory };
+export { get, publicProfile, updateBusiness, updateSale, updateShipping, updatePaymentMethods, updateCommunications, updateInventory, updateKiosk };

@@ -4,6 +4,7 @@ import { SERVICE_CATEGORIES } from '../models/Service.js';
 import { db } from '../db/models.js';
 import ApiError from '../utils/ApiError.js';
 import { likeRegex } from '../utils/regex.js';
+import { parseCsv, rowsWithoutHeader } from '../utils/csv.js';
 
 /**
  * The repair services a shop sells (Sales § Services).
@@ -297,6 +298,112 @@ async function deleteService(id) {
   return { deleted: true, name: service.name };
 }
 
+/**
+ * Bulk-add services from a pasted or uploaded CSV.
+ *
+ * Same shape as the taxonomy importer, for the same reason: a shop arriving
+ * with a price list already in a spreadsheet should not have to retype forty
+ * rows into a modal one at a time.
+ *
+ * ## The format
+ *
+ * `Name, Category, Price, Duration (minutes), Warranty (days)` - name is the
+ * only required column, and everything after it may be blank or absent. A
+ * header row is optional and detected by its first cell.
+ *
+ * ## Why it updates rather than refuses
+ *
+ * A name already on the list is **updated**, not rejected. Re-importing an
+ * edited export is the normal way somebody does a price rise, and refusing the
+ * whole file because forty of its rows already exist turns the common case
+ * into an error. Only the columns this format carries are touched, so a
+ * service deactivated on the screen stays deactivated.
+ *
+ * One bad row never fails the file: each is caught and reported by number, so
+ * a forty-row import with one unparseable price adds thirty-nine and says
+ * which one it could not read.
+ */
+async function importServices(text, actor, business = null) {
+  const rows = rowsWithoutHeader(parseCsv(text), 'Name');
+
+  if (!rows.length) {
+    throw ApiError.badRequest('There are no rows in that file.', 'CSV_EMPTY');
+  }
+  if (rows.length > 2000) {
+    throw ApiError.badRequest(
+      `That file has ${rows.length} rows. Import 2000 or fewer at a time.`,
+      'CSV_TOO_LARGE',
+    );
+  }
+
+  const results = { added: 0, updated: 0, skipped: 0, rows: [] };
+
+  for (const [index, cells] of rows.entries()) {
+    const rowNumber = index + 1;
+    const [nameCell, categoryCell, priceCell, durationCell, warrantyCell] = cells;
+    const name = String(nameCell ?? '').trim();
+
+    if (!name) {
+      results.skipped += 1;
+      results.rows.push({ row: rowNumber, name: '', status: 'skipped', error: 'No name in this row.' });
+      continue;
+    }
+
+    // Blank stays blank rather than becoming zero: an empty price column means
+    // "this file does not carry prices", and writing 0 would silently make
+    // every service free.
+    const number = (cell) => {
+      const raw = String(cell ?? '').replace(/[$,]/g, '').trim();
+      if (!raw) return undefined;
+      const value = Number(raw);
+      return Number.isFinite(value) ? value : undefined;
+    };
+
+    const category = String(categoryCell ?? '').trim().toLowerCase();
+
+    const payload = {
+      name,
+      category: SERVICE_CATEGORIES.includes(category) ? category : 'other',
+      price: number(priceCell),
+      durationMinutes: number(durationCell),
+      warrantyDays: number(warrantyCell),
+    };
+
+    // Undefined keys would overwrite a stored value with nothing on update.
+    for (const key of Object.keys(payload)) {
+      if (payload[key] === undefined) delete payload[key];
+    }
+
+    try {
+      const existing = await db()
+        .Service.findOne({ business: business ?? null, name })
+        .select('_id')
+        .lean();
+
+      if (existing) {
+        await updateService(existing._id.toString(), payload);
+        results.updated += 1;
+        results.rows.push({ row: rowNumber, name, status: 'updated' });
+        continue;
+      }
+
+      await createService(payload, actor, business);
+      results.added += 1;
+      results.rows.push({ row: rowNumber, name, status: 'added' });
+    } catch (error) {
+      results.skipped += 1;
+      results.rows.push({
+        row: rowNumber,
+        name,
+        status: 'skipped',
+        error: error?.message ?? 'Could not import this row.',
+      });
+    }
+  }
+
+  return results;
+}
+
 export {
   listServices,
   getService,
@@ -305,6 +412,7 @@ export {
   deleteService,
   usageCount,
   shapeService,
+  importServices,
 };
 export default {
   listServices,
@@ -312,4 +420,5 @@ export default {
   createService,
   updateService,
   deleteService,
+  importServices,
 };

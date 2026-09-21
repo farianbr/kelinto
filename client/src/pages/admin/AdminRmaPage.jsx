@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
-import { useFieldArray, useForm } from 'react-hook-form';
+import { useFieldArray } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
 import {
   AlertCircle,
   AlertTriangle,
@@ -76,8 +79,38 @@ function statusLabel(status) {
  * against the order's own lines and refuses anything that was not sold - or
  * more units than were.
  */
+/**
+ * What the RETURN FORM holds.
+ *
+ * A return needs the order it came off - that is the rule the whole record
+ * rests on (a return is goods coming back from a completed sale), and it was
+ * only ever enforced on the server, which meant a blank order number came back
+ * as a banner rather than marking the field it belongs to.
+ */
+const rmaFormSchema = z.object({
+  orderNumber: z.string().trim().min(1, 'Enter the order these parts came off.').max(40),
+  reason: z.string().trim().max(2000).optional().or(z.literal('')),
+  items: z
+    .array(
+      z.object({
+        sku: z.string().trim().optional().or(z.literal('')),
+        qty: z.coerce.number().int().min(1, 'At least one.'),
+        reason: z.string().trim().max(500).optional().or(z.literal('')),
+      }),
+    )
+    .refine((rows) => rows.some((row) => String(row.sku ?? '').trim()), {
+      message: 'Add at least one item coming back.',
+    }),
+});
+
 function RmaForm({ onSubmit, onCancel, isPending, error }) {
-  const { register, handleSubmit, control } = useForm({
+  const {
+    register,
+    handleSubmit,
+    control,
+    formState: { errors },
+  } = useAdminForm({
+    resolver: zodResolver(rmaFormSchema),
     defaultValues: {
       orderNumber: '',
       reason: '',
@@ -100,11 +133,19 @@ function RmaForm({ onSubmit, onCancel, isPending, error }) {
         label="Order number"
         placeholder="CVX-2026-10001"
         hint="The order these parts were bought on."
+        required
+        error={errors.orderNumber?.message}
         {...register('orderNumber')}
       />
 
       <div>
         <p className="eyebrow mb-2 text-ink-400">Items coming back</p>
+
+        {errors.items?.root?.message && (
+          <p role="alert" className="mb-2 text-sm text-danger">
+            {errors.items.root.message}
+          </p>
+        )}
 
         <div className="space-y-2">
           {fields.map((field, index) => (

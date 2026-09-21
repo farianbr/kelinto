@@ -28,7 +28,6 @@ async function main() {
   // have to be wiped to gain a table of constants.
   try {
     await ensureBuiltInRoles();
-    await ensureDefaultBusiness();
     // Same reasoning, phase 11d: the built-in invoice messages are constants, and
     // all four ship inactive, so creating them sends nobody anything.
     await ensureBuiltInRules();
@@ -36,6 +35,42 @@ async function main() {
     // Never fatal: the API is still useful without them, and crashing the server
     // over a bootstrap upsert would turn a missing role into an outage.
     console.warn(`  Access bootstrap skipped - ${error.message}`);
+  }
+
+  /**
+   * The default business is **not** in that best-effort block, and the
+   * difference is the whole reason this comment exists.
+   *
+   * A missing role degrades one screen. A missing default business takes the
+   * whole installation down on any host that names no business - which is every
+   * request on `localhost`, and every request on a VPS until DNS is pointed.
+   * `resolveBusiness` falls through to the `isDefault` lookup, finds nothing,
+   * leaves the scope null, and `businessDb` opens the CONTROL database - where
+   * there are no products and no customer accounts. The storefront serves an
+   * empty catalogue with a 200 and sign-in rejects accounts that plainly exist.
+   *
+   * That is exactly what happened, and it was invisible for a week because this
+   * failure was a caught warning: `ensureDefaultBusiness` threw on an unrelated
+   * stale field, logged one line among the boot output, and the server reported
+   * itself healthy. **A platform with no default business is not healthy**, so
+   * it now refuses to start and says why. A server that will not boot gets
+   * fixed in minutes; a server that boots and serves nothing gets debugged for
+   * days.
+   */
+  try {
+    const business = await ensureDefaultBusiness();
+    if (!business) throw new Error('no business could be established');
+  } catch (error) {
+    console.error(
+      `\n  Refusing to start: no default business.\n` +
+        `\n  ${error.message}\n` +
+        `\n  Every request that does not name a business by host, header or` +
+        `\n  ?business= resolves through the default. Without one the server` +
+        `\n  reads the control database: an empty catalogue, and no account can` +
+        `\n  sign in. Set one in Settings > Businesses, or let this bootstrap` +
+        `\n  create it once the error above is cleared.\n`,
+    );
+    process.exit(1);
   }
 
   // Seeding is never automatic: `seedDatabase` wipes products, users, orders and
@@ -54,7 +89,8 @@ async function main() {
   // reads it. Never hardcode one here - a literal port binds a socket Passenger
   // is not proxying to, and every request 502s.
   const server = app.listen(env.PORT, () => {
-    console.log(`  Cellvix API listening on port ${env.PORT}\n`);
+    // The PLATFORM is what is listening. Cellvix is one business served by it.
+    console.log(`  Kelinto API listening on port ${env.PORT}\n`);
   });
 
   // Node's own keep-alive timeout is 5s - exactly the idle timeout of the agent

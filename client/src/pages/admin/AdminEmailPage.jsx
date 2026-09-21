@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useForm } from 'react-hook-form';
+import useAdminForm from '@/hooks/useAdminForm';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
   AlertCircle,
@@ -73,7 +73,7 @@ function CampaignForm({ campaign, onSubmit, onCancel, isPending, error }) {
     handleSubmit,
     control,
     formState: { errors },
-  } = useForm({
+  } = useAdminForm({
     resolver: zodResolver(campaignSchema),
     defaultValues: {
       name: campaign?.name ?? '',

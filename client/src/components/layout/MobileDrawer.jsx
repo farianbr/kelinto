@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import { iconFor } from '@/lib/icons';
-import { ChevronLeft, ChevronRight, Facebook, Instagram, Linkedin, LogOut, Mail, MapPin, Phone, Youtube } from 'lucide-react';
+import { ChevronLeft, ChevronRight, LogOut, Mail, MapPin, Phone } from 'lucide-react';
 import cn from '@/lib/cn';
 import { count as formatCount } from '@/lib/format';
-import { BUSINESS_INFO } from '@/lib/constants';
+import { socialIcon } from '@/lib/socialIcons';
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 import Drawer from '@/components/ui/Drawer';
 import LiveSearch from '@/components/search/LiveSearch';
 import useUiStore from '@/store/uiStore';
@@ -58,13 +59,6 @@ const ADMIN_LINKS = [
   { label: 'Contact us', to: '/contact' },
 ];
 
-const SOCIAL = [
-  { icon: Facebook, key: 'facebook', label: 'Facebook' },
-  { icon: Instagram, key: 'instagram', label: 'Instagram' },
-  { icon: Linkedin, key: 'linkedin', label: 'LinkedIn' },
-  { icon: Youtube, key: 'youtube', label: 'YouTube' },
-];
-
 /**
  * Left slide-in navigation drawer (brief §4.2).
  *
@@ -76,6 +70,7 @@ export function MobileDrawer() {
   const open = useUiStore((s) => s.mobileNavOpen);
   const close = useUiStore((s) => s.closeMobileNav);
   const setPath = useApplyFilterPath();
+  const info = useBusinessInfo();
 
   // The tab lives in the store, not here: the bottom bar's Categories button
   // opens this drawer straight onto the drill-down.
@@ -114,48 +109,71 @@ export function MobileDrawer() {
       side="left"
       header={
         <div>
-          <img
-            src="/brand/logo.png"
-            alt={BUSINESS_INFO.name}
-            width="1000"
-            height="254"
-            className="h-7 w-auto"
-          />
-          <p className="eyebrow mt-1.5 text-ink-400">{BUSINESS_INFO.tagline}</p>
+          {/* The business's own mark, the bundled artwork for the house
+              business only, then its name as a wordmark - the same ladder both
+              headers use. */}
+          {info.logoUrl ? (
+            <img src={info.logoUrl} alt={info.name} className="h-7 w-auto" />
+          ) : info.isHouse !== false ? (
+            <img
+              src="/brand/logo.png"
+              alt={info.name}
+              width="1000"
+              height="254"
+              className="h-7 w-auto"
+            />
+          ) : (
+            <span className="block font-display text-lg font-bold text-ink-900">{info.name}</span>
+          )}
+          {info.tagline && <p className="eyebrow mt-1.5 text-ink-400">{info.tagline}</p>}
         </div>
       }
       bodyClassName="flex flex-col"
       footer={
         <div className="space-y-3 bg-surface-2 p-4">
-          <div className="flex gap-2">
-            {SOCIAL.map(({ icon: Icon, key, label }) => (
-              <a
-                key={key}
-                href={BUSINESS_INFO.social[key]}
-                aria-label={label}
-                className={cn(pressable, 'flex size-9 items-center justify-center rounded-full border border-line bg-surface text-ink-500 hover:border-brand hover:text-brand')}
-              >
-                <Icon className="size-4" strokeWidth={2} />
-              </a>
-            ))}
-          </div>
+          {info.social.length > 0 && (
+            <div className="flex gap-2">
+              {info.social.map((row) => {
+                const { icon: Icon, label } = socialIcon(row.network);
+                return (
+                  <a
+                    key={row.network}
+                    href={row.url}
+                    aria-label={label}
+                    className={cn(pressable, 'flex size-9 items-center justify-center rounded-full border border-line bg-surface text-ink-500 hover:border-brand hover:text-brand')}
+                  >
+                    <Icon className="size-4" strokeWidth={2} />
+                  </a>
+                );
+              })}
+            </div>
+          )}
 
+          {/* Each row is dropped when the business has not entered it, rather
+              than printing an icon beside nothing. */}
           <ul className="space-y-1.5 text-sm text-ink-500">
-            <li className="flex items-center gap-2">
-              <Phone className="size-3.5 shrink-0 text-ink-300" strokeWidth={2.25} aria-hidden="true" />
-              {BUSINESS_INFO.phone}
-            </li>
-            <li className="flex items-center gap-2">
-              <Mail className="size-3.5 shrink-0 text-ink-300" strokeWidth={2.25} aria-hidden="true" />
-              {BUSINESS_INFO.email}
-            </li>
-            <li className="flex items-start gap-2">
-              <MapPin className="mt-0.5 size-3.5 shrink-0 text-ink-300" strokeWidth={2.25} aria-hidden="true" />
-              <span>
-                {BUSINESS_INFO.address.line1}, {BUSINESS_INFO.address.city},{' '}
-                {BUSINESS_INFO.address.region}
-              </span>
-            </li>
+            {info.phone && (
+              <li className="flex items-center gap-2">
+                <Phone className="size-3.5 shrink-0 text-ink-300" strokeWidth={2.25} aria-hidden="true" />
+                {info.phone}
+              </li>
+            )}
+            {info.email && (
+              <li className="flex items-center gap-2">
+                <Mail className="size-3.5 shrink-0 text-ink-300" strokeWidth={2.25} aria-hidden="true" />
+                {info.email}
+              </li>
+            )}
+            {info.address?.city && (
+              <li className="flex items-start gap-2">
+                <MapPin className="mt-0.5 size-3.5 shrink-0 text-ink-300" strokeWidth={2.25} aria-hidden="true" />
+                <span>
+                  {[info.address.line1, info.address.city, info.address.region]
+                    .filter(Boolean)
+                    .join(', ')}
+                </span>
+              </li>
+            )}
           </ul>
         </div>
       }

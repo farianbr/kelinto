@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
-import { useForm } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
 import useCreateParam from '@/hooks/useCreateParam';
 import {
   AlertCircle,
@@ -82,8 +84,35 @@ function isoDay(value) {
     .slice(0, 10);
 }
 
+/**
+ * What the FORM holds.
+ *
+ * Money is typed in dollars here and stored in cents, so `expenseSchema`'s
+ * `amount` is this form's `amountDollars` and the conversion happens on
+ * submit. A blank amount is caught here rather than arriving as `NaN` cents.
+ */
+const expenseFormSchema = z.object({
+  date: z.string().trim().min(1, 'Pick a date.'),
+  description: z.string().trim().min(1, 'Say what this was for.').max(200),
+  category: z.string().trim().min(1, 'Choose a category.'),
+  payee: z.string().trim().max(120).optional().or(z.literal('')),
+  method: z.string().trim(),
+  status: z.string().trim(),
+  amountDollars: z.coerce.number({ invalid_type_error: 'Enter an amount.' }).min(0.01, 'Enter an amount.'),
+  taxDollars: z.coerce.number({ invalid_type_error: 'Enter a number, or 0.' }).min(0),
+  taxIncluded: z.boolean(),
+  reference: z.string().trim().max(120).optional().or(z.literal('')),
+  notes: z.string().trim().max(2000).optional().or(z.literal('')),
+});
+
 function ExpenseForm({ expense, categories, onSubmit, onCancel, isPending, error }) {
-  const { register, handleSubmit, control } = useForm({
+  const {
+    register,
+    handleSubmit,
+    control,
+    formState: { errors },
+  } = useAdminForm({
+    resolver: zodResolver(expenseFormSchema),
     defaultValues: {
       date: isoDay(expense?.date),
       description: expense?.description ?? '',
@@ -109,8 +138,14 @@ function ExpenseForm({ expense, categories, onSubmit, onCancel, isPending, error
       )}
 
       <div className="grid gap-3 sm:grid-cols-[140px_1fr]">
-        <Input label="Date" type="date" {...register('date')} />
-        <Input label="Description" {...register('description')} />
+        <Input label="Date" type="date" required error={errors.date?.message} {...register('date')} />
+        <Input
+          label="Description"
+          placeholder="Bench supplies"
+          required
+          error={errors.description?.message}
+          {...register('description')}
+        />
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -120,7 +155,7 @@ function ExpenseForm({ expense, categories, onSubmit, onCancel, isPending, error
           label="Category"
           options={categories.map((category) => ({ value: category.id, label: category.name }))}
         />
-        <Input label="Payee" {...register('payee')} />
+        <Input label="Payee" placeholder="Who it was paid to" error={errors.payee?.message} {...register('payee')} />
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -137,8 +172,23 @@ function ExpenseForm({ expense, categories, onSubmit, onCancel, isPending, error
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <Input label="Amount" inputMode="decimal" suffix="CAD" {...register('amountDollars')} />
-        <Input label="Tax" inputMode="decimal" suffix="CAD" {...register('taxDollars')} />
+        <Input
+          label="Amount"
+          inputMode="decimal"
+          suffix="CAD"
+          placeholder="0.00"
+          required
+          error={errors.amountDollars?.message}
+          {...register('amountDollars')}
+        />
+        <Input
+          label="Tax"
+          inputMode="decimal"
+          suffix="CAD"
+          placeholder="0.00"
+          error={errors.taxDollars?.message}
+          {...register('taxDollars')}
+        />
       </div>
 
       <Checkbox label="Tax is included in the amount" {...register('taxIncluded')} />

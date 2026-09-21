@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, Link } from 'react-router';
-import { useFieldArray, useForm, useWatch } from 'react-hook-form';
+import { useFieldArray, useWatch } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
 import {
   AlertCircle,
   ArrowLeft,
@@ -118,7 +120,7 @@ export function AdminServiceInvoiceFormPage() {
    */
   const ratePerKm = Number(settingsData?.financial?.travelRateCentsPerKm ?? 0);
 
-  const { register, control, handleSubmit, setValue } = useForm({
+  const { register, control, handleSubmit, setValue } = useAdminForm({
     defaultValues: {
       user: '',
       issuedAt: today(),

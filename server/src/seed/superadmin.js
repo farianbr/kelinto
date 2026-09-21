@@ -68,17 +68,41 @@ async function seedSuperAdmin({ quiet = false } = {}) {
    * never become how a real staff member is onboarded - that path is a super admin
    * creating another from the console.
    */
-  let admin = await SuperAdmin.findOne({ email: 'super@cellvix.ca' });
+  /**
+   * **The super admin belongs to the platform, so it is a Kelinto address.**
+   * Cellvix is a tenant's business, and platform staff are not staff of one of
+   * their customers - `super@cellvix.ca` read as though the wholesaler operated
+   * the console the wholesaler is administered from.
+   *
+   * The old address is still looked up, and that is not tidiness: an existing
+   * installation already has that account, with its own password and its own
+   * audit history. Seeding only the new address would create a SECOND super
+   * admin rather than rename the first, leaving two live logins to the platform
+   * console - the last thing this particular account should quietly acquire.
+   */
+  const SUPER_ADMIN_EMAIL = 'super@kelinto.com';
+  const LEGACY_SUPER_ADMIN_EMAIL = 'super@cellvix.ca';
+
+  let admin = await SuperAdmin.findOne({
+    email: { $in: [SUPER_ADMIN_EMAIL, LEGACY_SUPER_ADMIN_EMAIL] },
+  });
+
   if (!admin) {
     admin = await SuperAdmin.create({
       name: 'Platform Staff member',
-      email: 'super@cellvix.ca',
+      email: SUPER_ADMIN_EMAIL,
       passwordHash: await bcrypt.hash(DEMO_PASSWORD, 10),
       isActive: true,
     });
     log(`  super admin: ${admin.email} (created)`);
   } else {
-    log(`  super admin: ${admin.email} (already there)`);
+    log(
+      `  super admin: ${admin.email} (already there${
+        admin.email === LEGACY_SUPER_ADMIN_EMAIL
+          ? ` - sign in with this; rename it to ${SUPER_ADMIN_EMAIL} from the console when convenient`
+          : ''
+      })`,
+    );
   }
 
   // ---- tenant #1, and the businesses it owns -------------------------------

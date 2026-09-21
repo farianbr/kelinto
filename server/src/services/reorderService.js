@@ -1,5 +1,6 @@
 import { db } from '../db/models.js';
 import '../models/Product.js';
+import { classify, lowStockThreshold, reorderPoint } from './lowStockService.js';
 
 /**
  * The reorder queue - what needs buying, computed once.
@@ -20,12 +21,14 @@ import '../models/Product.js';
  *
  * Two rules:
  *
- * **1. The classifier is `purchaseService`'s, not a second opinion.** `stock`
- * against `minStock`, falling back to the shared threshold when no reorder
- * point is set. The bell used to apply a *different* rule - treating an unset
- * `minStock` as "never low" while the Inventory screen treated it as a
+ * **1. The classifier is `lowStockService`'s, not a second opinion.** `stock`
+ * against `minStock`, falling back to this business's configured threshold when
+ * no reorder point is set. The bell used to apply a *different* rule - treating
+ * an unset `minStock` as "never low" while the Inventory screen treated it as a
  * fallback - so the badge and the screen it linked to disagreed about how many
- * products needed attention. One rule, one number.
+ * products needed attention. One rule, one number, and since the threshold
+ * moved into Settings that number is the one its owner set rather than a
+ * literal repeated in four files.
  *
  * **2. Quantities are suggestions, and every screen says so.** Nothing in the
  * data model records how much of a part we want on hand, only the point below
@@ -44,31 +47,15 @@ import '../models/Product.js';
 const REORDER_MULTIPLE = 2;
 
 /**
- * The reorder point assumed for a product that has none set.
- *
- * Mirrors `purchaseService.LOW_STOCK_FALLBACK`. Duplicated as a constant rather
- * than imported because that one is not exported, and the two must stay equal
- * if you change one, change both.
- */
-const LOW_STOCK_FALLBACK = 50;
-
-/** `stock` against its reorder point - the Inventory screen's exact rule. */
-function classify(product) {
-  const threshold = product.minStock > 0 ? product.minStock : LOW_STOCK_FALLBACK;
-  if (product.stock <= 0) return 'out';
-  return product.stock <= threshold ? 'low' : 'in';
-}
-
-/**
  * How many to buy: enough to clear the reorder point with headroom.
  *
  * Floored at one so a product whose threshold is zero and whose shelf is empty
  * still appears on the draft with a quantity somebody can edit, rather than a
  * line for zero units that reads as an error.
  */
-function suggestQty(product) {
-  const threshold = product.minStock > 0 ? product.minStock : LOW_STOCK_FALLBACK;
-  return Math.max(1, Math.ceil(threshold * REORDER_MULTIPLE) - Math.max(0, product.stock));
+function suggestQty(product, threshold) {
+  const point = reorderPoint(product, threshold);
+  return Math.max(1, Math.ceil(point * REORDER_MULTIPLE) - Math.max(0, product.stock));
 }
 
 /**
@@ -80,6 +67,10 @@ function suggestQty(product) {
  * top of the list is the most urgent rather than the alphabetically first.
  */
 async function getReorderQueue({ scope = {} } = {}) {
+  // Resolved once and threaded down: `classify` runs per product, and reading
+  // settings inside it would be a round-trip per row of the catalogue.
+  const threshold = await lowStockThreshold();
+
   const products = await db()
     .Product.find({ ...scope, isActive: { $ne: false } })
     // `barcode` is carried for the create screen, whose line rows show it
@@ -90,7 +81,7 @@ async function getReorderQueue({ scope = {} } = {}) {
     .lean();
 
   const flagged = products
-    .map((product) => ({ product, status: classify(product) }))
+    .map((product) => ({ product, status: classify(product, threshold) }))
     .filter((row) => row.status !== 'in');
 
   const items = flagged
@@ -114,7 +105,7 @@ async function getReorderQueue({ scope = {} } = {}) {
       // its unit cost without the page having to reshape every item first.
       lastCost: product.cost ?? 0,
       cost: product.cost ?? 0,
-      suggestedQty: suggestQty(product),
+      suggestedQty: suggestQty(product, threshold),
       supplier: product.supplier?.name
         ? { id: product.supplier._id.toString(), name: product.supplier.name }
         : null,
@@ -123,8 +114,8 @@ async function getReorderQueue({ scope = {} } = {}) {
       if (a.status !== b.status) return a.status === 'out' ? -1 : 1;
       // Furthest below its own reorder point first, so a product 90% short
       // outranks one a unit under.
-      const aGap = (a.minStock > 0 ? a.minStock : LOW_STOCK_FALLBACK) - a.stock;
-      const bGap = (b.minStock > 0 ? b.minStock : LOW_STOCK_FALLBACK) - b.stock;
+      const aGap = reorderPoint(a, threshold) - a.stock;
+      const bGap = reorderPoint(b, threshold) - b.stock;
       return bGap - aGap;
     });
 
@@ -139,4 +130,4 @@ async function getReorderQueue({ scope = {} } = {}) {
   };
 }
 
-export { getReorderQueue, LOW_STOCK_FALLBACK, REORDER_MULTIPLE };
+export { getReorderQueue, REORDER_MULTIPLE };

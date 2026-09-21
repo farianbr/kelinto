@@ -1,5 +1,6 @@
 import { asyncHandler } from '../utils/ApiError.js';
 import marketingService from '../services/marketingService.js';
+import auditService from '../services/auditService.js';
 
 /**
  * Marketing - calls, SMS, WhatsApp, email campaigns and consent (§6.13, phase 9).
@@ -111,4 +112,30 @@ const summary = asyncHandler(async (_req, res) => {
   res.json(await marketingService.summary());
 });
 
-export { listMessages, sendSms, sendWhatsapp, sendEmail, logCall, logNote, listTemplates, createTemplate, updateTemplate, deleteTemplate, listCampaigns, getCampaign, createCampaign, updateCampaign, deleteCampaign, sendCampaign, listUnsubscribes, resubscribe, unsubscribe, summary };
+const listLimits = asyncHandler(async (_req, res) => {
+  res.json(await marketingService.listLimits());
+});
+
+/**
+ * Changing a send cap is audited.
+ *
+ * It decides how many customers can be contacted before the system refuses,
+ * so raising one is exactly the change somebody would want a record of after
+ * an incident.
+ */
+const saveLimit = asyncHandler(async (req, res) => {
+  const result = await marketingService.saveLimit(req.body);
+
+  await auditService.recordChange({
+    req,
+    action: 'marketing.limit.save',
+    entity: { kind: 'setting', id: `limit:${req.body.channel}`, label: `${req.body.channel} send cap` },
+    before: null,
+    after: { daily: req.body.daily, monthly: req.body.monthly },
+    description: `Set the ${req.body.channel} send cap to ${req.body.daily} a day, ${req.body.monthly} a month.`,
+  });
+
+  res.json(result);
+});
+
+export { listMessages, sendSms, sendWhatsapp, sendEmail, logCall, logNote, listTemplates, createTemplate, updateTemplate, deleteTemplate, listCampaigns, getCampaign, createCampaign, updateCampaign, deleteCampaign, sendCampaign, listUnsubscribes, resubscribe, unsubscribe, summary, listLimits, saveLimit };

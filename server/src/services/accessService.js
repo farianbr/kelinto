@@ -1,19 +1,25 @@
 import mongoose from 'mongoose';
 
-import { PERMISSION_AREAS, PERMISSION_LEVELS } from '../models/Role.js';
+import { PERMISSION_AREAS, PERMISSION_LEVELS, SETTINGS_SUBAREAS } from '../models/Role.js';
 /**
  * `Role` is a PER-BUSINESS collection, so it is read off the request's own
  * connection rather than imported - each business holds its own roles, and a
  * module-level import would bind them all to the default database.
  *
- * The rest of this file keeps its direct imports on purpose: `Business` is
- * control-plane (the registry routes it there whatever connection is ambient),
- * and `User` is resolved the same way. This service decides *which* database to
- * open, so it cannot resolve everything through the one it is choosing.
+ * `Business` keeps its direct import on purpose: it is control-plane, and the
+ * registry routes it to the control database whatever connection is ambient.
+ *
+ * **`User` does NOT, and used to.** It is a per-business collection - CLAUDE.md
+ * says so and `CONTROL_MODELS` does not list it - so a module-level import bound
+ * every staff read and write in this file to the default database. A staff
+ * account created here was written somewhere `authService` never looks, so it
+ * could not sign in at all; the staff list, the member counts and the lock
+ * controls were reading the same wrong place. Fixed 2026-09-21: every `User`
+ * access goes through `db()`, like `Role` one paragraph up and for the same
+ * reason.
  */
 import { db } from '../db/models.js';
 import Business from '../models/Business.js';
-import User from '../models/User.js';
 import ApiError from '../utils/ApiError.js';
 import { likeRegex } from '../utils/regex.js';
 /**
@@ -22,7 +28,13 @@ import { likeRegex } from '../utils/regex.js';
  * written before the identity palette existed would reach the panel carrying a
  * token it cannot paint.
  */
-import { DEFAULT_BUSINESS_COLOR, migrateColorToken } from '../../../shared/businessPalette.js';
+import {
+  BUSINESS_COLOR_TOKENS,
+  DEFAULT_BUSINESS_COLOR,
+  migrateColorToken,
+} from '../../../shared/businessPalette.js';
+import { forgetBusinessConfig } from '../middleware/businessConfigCache.js';
+import { resetBusinessResolution } from '../middleware/resolveBusiness.js';
 
 /**
  * Businesses, roles and staff accounts (ERP rework §6.14, §6.15/3, §7.6 - phase 8).
@@ -122,15 +134,85 @@ async function ensureBuiltInRoles() {
  * One location today (§0.9), but the switcher and every `business` field need a
  * row to point at from day one.
  */
+/**
+ * Repair `colorToken` values that predate the identity palette.
+ *
+ * **A schema setter never runs on stored data.** `Business.colorToken` has had
+ * `migrateColorToken` on it since the palette split, which covers every value
+ * arriving through a form or a seed - and covers nothing already in the
+ * database, because a setter fires on assignment and a document read back is
+ * not an assignment. So every business written before that change kept a value
+ * the enum no longer accepts, and stayed one `save()` away from refusing to
+ * write for reasons unrelated to what was being written.
+ *
+ * Idempotent, targeted and additive: only documents holding a value outside the
+ * current list are touched, so this costs one indexed count on a healthy
+ * installation and never rewrites a business that is already correct.
+ */
+async function migrateBusinessColors() {
+  const stale = await Business.find({ colorToken: { $nin: BUSINESS_COLOR_TOKENS } })
+    .select('_id colorToken')
+    .lean();
+
+  for (const business of stale) {
+    await Business.updateOne(
+      { _id: business._id },
+      { $set: { colorToken: migrateColorToken(business.colorToken) } },
+    );
+  }
+
+  return stale.length;
+}
+
 async function ensureDefaultBusiness() {
-  const existing = await Business.findOne({ isDefault: true });
+  // Before anything else: a stale colour is what turns an ordinary write on
+  // this collection into a validation failure, so it is repaired first rather
+  // than worked around at each call site.
+  await migrateBusinessColors();
+
+  const existing = await Business.findOne({ isDefault: true, deletedAt: null });
   if (existing) return existing;
 
-  const any = await Business.findOne();
+  const any = await Business.findOne({ deletedAt: null }).sort({ code: 1 });
   if (any) {
-    any.isDefault = true;
-    await any.save();
-    return any;
+    /**
+     * `updateOne`, not `save()` - **the whole platform once hung on this.**
+     *
+     * `save()` validates the entire document, so ONE stale field anywhere on it
+     * refuses a write that touches a different field entirely. That is not
+     * hypothetical: `colorToken` left the enum when the identity palette
+     * replaced the status palette, every business stored before that kept the
+     * old value, and promoting one to default threw
+     * `colorToken: 'brand' is not a valid enum value`. `index.js` caught it,
+     * logged "Access bootstrap skipped" and booted - so no business was the
+     * default, `resolveBusiness` fell through its last step, `businessDb`
+     * opened the control database, and the storefront served an empty
+     * catalogue with a 200. Four safeguards degraded gracefully and together
+     * hid a total outage.
+     *
+     * A targeted update writes the one field this function is responsible for
+     * and leaves the rest of the document alone, which is the honest scope: a
+     * bootstrap that establishes a default must not also be a referendum on
+     * every other field's validity.
+     *
+     * The stale value is repaired rather than ignored - `migrateColorToken` is
+     * the same mapping the schema setter applies, and a setter only fires on
+     * assignment, never on a document loaded from the database. That is why the
+     * migration existed and had still never run on stored data.
+     */
+    await Business.updateOne(
+      { _id: any._id },
+      { $set: { isDefault: true, colorToken: migrateColorToken(any.colorToken) } },
+    );
+    // Anything else claiming the flag loses it, so exactly one wins - the same
+    // guarantee `setDefaultBusiness` gives.
+    await Business.updateMany({ _id: { $ne: any._id } }, { $set: { isDefault: false } });
+    // This runs at boot, before any request, so the caches are almost certainly
+    // empty - but this function is also called from scripts and tests inside a
+    // live process, and a promotion nobody told the resolver about is exactly
+    // the silent staleness the rest of this file now guards against.
+    resetBusinessResolution();
+    return Business.findById(any._id);
   }
 
   return Business.create({
@@ -194,7 +276,7 @@ async function listBusinesses({ search, status } = {}) {
     maintenance: all.filter((o) => o.status === 'maintenance').length,
   };
 
-  const staffCounts = await User.aggregate([
+  const staffCounts = await db().User.aggregate([
     { $match: { role: 'staff', business: { $ne: null } } },
     { $group: { _id: '$business', count: { $sum: 1 } } },
   ]);
@@ -216,7 +298,7 @@ async function getBusiness(id) {
   const business = await Business.findById(id).lean();
   if (!business) throw ApiError.notFound('Business not found.');
 
-  const staff = await User.find({ business: id, role: 'staff' })
+  const staff = await db().User.find({ business: id, role: 'staff' })
     .select('contactName email staffRole lockedAt')
     .populate('staffRole', 'name slug')
     .lean();
@@ -237,6 +319,10 @@ async function createBusiness(payload) {
     // nothing else for an unattributed movement to point at.
     isDefault: (await Business.countDocuments()) === 0,
   });
+  // The resolver caches how many businesses exist - that count decides the
+  // single-business shortcut, so adding the second one has to drop it or every
+  // request keeps resolving the first by a rule that no longer applies.
+  resetBusinessResolution();
   return business.toPublic();
 }
 
@@ -250,6 +336,10 @@ async function updateBusiness(id, payload) {
   const { code, isDefault, ...editable } = payload;
   Object.assign(business, editable);
   await business.save();
+  // `businessType` and the tenant link are cached by the middleware chain, and
+  // both are editable here - so the edit has to drop the entry or the panel
+  // keeps rendering the old business type for up to a minute.
+  forgetBusinessConfig(id);
   return business.toPublic();
 }
 
@@ -265,6 +355,14 @@ async function setDefaultBusiness(id) {
   await Business.updateMany({ _id: { $ne: id } }, { $set: { isDefault: false } });
   business.isDefault = true;
   await business.save();
+  /**
+   * **The resolver caches which business is the default**, because it answers
+   * that question on every request whose host names no business. Without this
+   * call the console would move the flag in the database and every request would
+   * keep resolving the old business until the process restarted - a setting that
+   * appears to save and changes nothing.
+   */
+  resetBusinessResolution();
   return business.toPublic();
 }
 
@@ -284,7 +382,7 @@ async function deleteBusiness(id) {
     );
   }
 
-  const staffCount = await User.countDocuments({ business: id });
+  const staffCount = await db().User.countDocuments({ business: id });
   if (staffCount > 0) {
     throw ApiError.badRequest(
       `${staffCount} staff ${staffCount === 1 ? 'member is' : 'members are'} assigned to this business. Reassign them first.`,
@@ -293,6 +391,10 @@ async function deleteBusiness(id) {
   }
 
   await business.deleteOne();
+  // Same reasoning as creating one: the count and any cached host mapping for
+  // this business are now wrong.
+  resetBusinessResolution();
+  forgetBusinessConfig(id);
   return { deleted: true };
 }
 
@@ -301,7 +403,7 @@ async function deleteBusiness(id) {
 async function listRoles() {
   const roles = await db().Role.find().sort({ isSystem: -1, isBuiltIn: -1, name: 1 });
 
-  const counts = await User.aggregate([
+  const counts = await db().User.aggregate([
     { $match: { role: 'staff', staffRole: { $ne: null } } },
     { $group: { _id: '$staffRole', count: { $sum: 1 } } },
   ]);
@@ -309,7 +411,7 @@ async function listRoles() {
 
   // Admins hold no Role row - they bypass the system - so the system role's
   // member count is the admin headcount, which is what the screen means by it.
-  const adminCount = await User.countDocuments({ role: 'admin' });
+  const adminCount = await db().User.countDocuments({ role: 'admin' });
 
   return roles.map((role) => ({
     ...role.toPublic(),
@@ -317,6 +419,16 @@ async function listRoles() {
   }));
 }
 
+/**
+ * A flat `areas` payload, split into the two shapes the model stores.
+ *
+ * The client sends one map keyed by area - `settings`, `settings.financial` -
+ * because that is the address the whole permission system uses. The model keeps
+ * the seven top-level areas in `areas` and the settings categories in
+ * `settingsAreas`, for the Mongoose path reason documented there. This is the
+ * one place that knows about the split on the way in; `toPublic` is the one
+ * place that knows about it on the way out.
+ */
 function normaliseAreas(input = {}) {
   const areas = {};
   for (const area of PERMISSION_AREAS) {
@@ -325,7 +437,24 @@ function normaliseAreas(input = {}) {
     // payload must never be the reason somebody gains access.
     areas[area] = PERMISSION_LEVELS.includes(level) ? level : 'none';
   }
-  return areas;
+
+  const settingsAreas = {};
+  for (const area of SETTINGS_SUBAREAS) {
+    const level = input[`settings.${area}`];
+    /**
+     * Unrecognised falls back to `inherit`, not `none`.
+     *
+     * The top-level default above is `none` because an unnamed area is one
+     * nobody granted. A sub-area is different: unnamed means *not pinned*, and
+     * the safe reading of that is "whatever Settings says" - which is how every
+     * role written before these existed has to keep behaving. Defaulting to
+     * `none` here would silently revoke settings access from every one of them
+     * the first time somebody saved a role.
+     */
+    settingsAreas[area] = ['inherit', ...PERMISSION_LEVELS].includes(level) ? level : 'inherit';
+  }
+
+  return { areas, settingsAreas };
 }
 
 function slugify(name) {
@@ -343,7 +472,13 @@ async function createRole({ name, areas }) {
   const clash = await db().Role.findOne({ slug });
   if (clash) throw ApiError.badRequest('A role with that name already exists.', 'ROLE_EXISTS');
 
-  const role = await db().Role.create({ name: name.trim(), slug, areas: normaliseAreas(areas) });
+  const normalised = normaliseAreas(areas);
+  const role = await db().Role.create({
+    name: name.trim(),
+    slug,
+    areas: normalised.areas,
+    settingsAreas: normalised.settingsAreas,
+  });
   return role.toPublic();
 }
 
@@ -367,7 +502,11 @@ async function updateRole(id, { name, areas }) {
     role.slug = slug;
   }
 
-  if (areas) role.areas = normaliseAreas(areas);
+  if (areas) {
+    const normalised = normaliseAreas(areas);
+    role.areas = normalised.areas;
+    role.settingsAreas = normalised.settingsAreas;
+  }
 
   await role.save();
   return role.toPublic();
@@ -388,7 +527,7 @@ async function deleteRole(id) {
     );
   }
 
-  const members = await User.countDocuments({ staffRole: id });
+  const members = await db().User.countDocuments({ staffRole: id });
   if (members > 0) {
     throw ApiError.badRequest(
       `${members} staff ${members === 1 ? 'member holds' : 'members hold'} this role. Reassign them first.`,
@@ -437,14 +576,14 @@ async function listStaff({ search, role, status } = {}) {
     filter.$or = [{ contactName: rx }, { businessName: rx }, { email: rx }];
   }
 
-  const users = await User.find(filter)
+  const users = await db().User.find(filter)
     .select('contactName businessName email phone role staffRole business lockedAt lastLoginAt createdAt')
     .populate('staffRole', 'name slug')
     .populate('business', 'name code')
     .sort({ createdAt: -1 })
     .lean();
 
-  const all = await User.find({ role: { $in: ['admin', 'staff'] } })
+  const all = await db().User.find({ role: { $in: ['admin', 'staff'] } })
     .select('role lockedAt')
     .lean();
 
@@ -488,12 +627,12 @@ async function assertRoleAndBusiness({ accountType, staffRole, business }) {
 async function createStaff(payload) {
   const { name, email, password, phone, accountType = 'staff', staffRole, business } = payload;
 
-  const existing = await User.findOne({ email: String(email).toLowerCase() });
+  const existing = await db().User.findOne({ email: String(email).toLowerCase() });
   if (existing) throw ApiError.badRequest('That email already has an account.', 'EMAIL_IN_USE');
 
   await assertRoleAndBusiness({ accountType, staffRole, business });
 
-  const user = new User({
+  const user = new (db().User)({
     // A staff account is a person, not a business, but `businessName` is
     // required on the model - Cellvix is the business they belong to.
     businessName: 'Cellvix',
@@ -513,7 +652,7 @@ async function createStaff(payload) {
   if (business) await Business.updateOne({ _id: business }, { $addToSet: { staff: user._id } });
 
   return staffRow(
-    await User.findById(user._id)
+    await db().User.findById(user._id)
       .populate('staffRole', 'name slug')
       .populate('business', 'name code')
       .lean(),
@@ -522,7 +661,7 @@ async function createStaff(payload) {
 
 async function updateStaff(id, payload, actorId) {
   if (!mongoose.isValidObjectId(id)) throw ApiError.notFound('User not found.');
-  const user = await User.findById(id);
+  const user = await db().User.findById(id);
   if (!user) throw ApiError.notFound('User not found.');
   if (user.role === 'buyer') {
     throw ApiError.badRequest('That is a customer account, not a staff account.', 'NOT_STAFF');
@@ -548,7 +687,7 @@ async function updateStaff(id, payload, actorId) {
   const losingAdmin =
     user.role === 'admin' && (nextType !== 'admin' || locked === true);
   if (losingAdmin) {
-    const admins = await User.countDocuments({ role: 'admin', lockedAt: null });
+    const admins = await db().User.countDocuments({ role: 'admin', lockedAt: null });
     if (admins <= 1) {
       throw ApiError.badRequest(
         'This is the last active administrator. Promote another account first.',
@@ -582,7 +721,7 @@ async function updateStaff(id, payload, actorId) {
   }
 
   return staffRow(
-    await User.findById(id)
+    await db().User.findById(id)
       .populate('staffRole', 'name slug')
       .populate('business', 'name code')
       .lean(),
@@ -595,14 +734,14 @@ async function deleteStaff(id, actorId) {
     throw ApiError.badRequest('You cannot delete your own account.', 'SELF_DELETE');
   }
 
-  const user = await User.findById(id);
+  const user = await db().User.findById(id);
   if (!user) throw ApiError.notFound('User not found.');
   if (user.role === 'buyer') {
     throw ApiError.badRequest('That is a customer account, not a staff account.', 'NOT_STAFF');
   }
 
   if (user.role === 'admin') {
-    const admins = await User.countDocuments({ role: 'admin', lockedAt: null });
+    const admins = await db().User.countDocuments({ role: 'admin', lockedAt: null });
     if (admins <= 1) {
       throw ApiError.badRequest(
         'This is the last active administrator. Promote another account first.',
@@ -638,7 +777,7 @@ async function getRoleSnapshot(id) {
 /** The same, for a staff account. Uses `staffRow` so it matches what the API returns. */
 async function getStaffSnapshot(id) {
   if (!mongoose.isValidObjectId(id)) return null;
-  const user = await User.findById(id)
+  const user = await db().User.findById(id)
     .populate('staffRole', 'name slug')
     .populate('business', 'name code')
     .lean();

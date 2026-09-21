@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
-import { useForm, Controller } from 'react-hook-form';
+import { Controller } from 'react-hook-form';
+import useAdminForm from '@/hooks/useAdminForm';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { AlertCircle, Building2, Mail, MapPin, Phone, UserRound } from 'lucide-react';
 import { businessSchema, BUSINESS_COLOR_TOKENS } from '@shared/schemas/admin';
@@ -130,7 +131,7 @@ export function AdminBusinessFormPage() {
     setValue,
     setError,
     formState: { errors, isSubmitting },
-  } = useForm({
+  } = useAdminForm({
     resolver: zodResolver(businessSchema),
     defaultValues: {
       name: '',

@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import useDocumentTitle from '@/hooks/useDocumentTitle';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
-import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
+import { invoiceTipSchema } from '@shared/schemas/admin';
 import {
   AlertCircle,
   ArrowLeft,
@@ -1086,7 +1088,13 @@ export function AdminInvoiceDetailPage() {
  */
 function RecordTipModal({ open, invoice, onClose, onSubmit, isPending, error }) {
   const existing = (invoice.tipCents ?? 0) / 100;
-  const { register, handleSubmit, reset } = useForm({
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors },
+  } = useAdminForm({
+    resolver: zodResolver(invoiceTipSchema),
     values: { amountDollars: existing ? existing.toFixed(2) : '' },
   });
 
@@ -1160,7 +1168,7 @@ function RecordTipModal({ open, invoice, onClose, onSubmit, isPending, error }) 
 function RefundInvoiceModal({ open, invoice, onClose, onSubmit, isPending, error }) {
   const refundable = invoice.refundableCents ?? 0;
 
-  const { register, handleSubmit, watch, reset, control } = useForm({
+  const { register, handleSubmit, watch, reset, control } = useAdminForm({
     defaultValues: {
       amountDollars: (refundable / 100).toFixed(2),
       toStoreCredit: false,
@@ -1274,7 +1282,8 @@ function RecordPaymentModal({ open, invoice, onClose, onSubmit, isPending, error
     handleSubmit,
     control,
     formState: { errors },
-  } = useForm({
+  } = useAdminForm({
+    resolver: zodResolver(invoicePaymentSchema),
     defaultValues: {
       amountDollars: (invoice.balance / 100).toFixed(2),
       method: 'card',
@@ -1349,7 +1358,7 @@ function EditInvoiceModal({ open, invoice, onClose, onSubmit, isPending, error }
     register,
     handleSubmit,
     formState: { errors },
-  } = useForm({
+  } = useAdminForm({
     defaultValues: {
       dueDate: invoice.dueDate ? new Date(invoice.dueDate).toISOString().slice(0, 10) : '',
       poNumber: invoice.poNumber ?? '',

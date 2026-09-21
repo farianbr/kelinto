@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import useDocumentTitle from '@/hooks/useDocumentTitle';
 import { Link, useParams } from 'react-router';
-import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
 import {
   AlertCircle,
   Ban,
@@ -141,7 +142,7 @@ function todayIso() {
 function ReceiveForm({ order, onSubmit, onCancel, isPending, error, result }) {
   const outstanding = order.items.filter((item) => item.qtyOrdered - item.qtyReceived > 0);
 
-  const { register, handleSubmit } = useForm({
+  const { register, handleSubmit } = useAdminForm({
     defaultValues: {
       note: '',
       lines: Object.fromEntries(
@@ -247,7 +248,7 @@ function ReceiveForm({ order, onSubmit, onCancel, isPending, error, result }) {
  * be a second source of truth for what this order cost.
  */
 function PaymentForm({ order, categories, onSubmit, onCancel, isPending, error }) {
-  const { register, handleSubmit, control } = useForm({
+  const { register, handleSubmit, control } = useAdminForm({
     defaultValues: {
       method: 'Wire transfer',
       reference: order.poNumber,

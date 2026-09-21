@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { useForm, Controller } from 'react-hook-form';
+import { Controller } from 'react-hook-form';
+import useAdminForm from '@/hooks/useAdminForm';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { AlertCircle, Lock, Plus, Trash2, UsersRound } from 'lucide-react';
 import { staffUserSchema } from '@shared/schemas/admin';
@@ -44,7 +45,7 @@ function StaffForm({ roles, businesses, onSubmit, onCancel, isPending, error }) 
     control,
     watch,
     formState: { errors },
-  } = useForm({
+  } = useAdminForm({
     resolver: zodResolver(staffUserSchema),
     defaultValues: { name: '', email: '', password: '', phone: '', accountType: 'staff', staffRole: '', business: '' },
   });

@@ -1524,9 +1524,32 @@ async function seedDatabase({ quiet = false } = {}) {
   });
 }
 
-/** True when nothing has been seeded yet - drives the empty-database warning on boot. */
+/**
+ * True when nothing has been seeded yet - drives the empty-database warning on boot.
+ *
+ * **Counted inside a business, not in the control database.** Called from
+ * `index.js` there is no request and therefore no async-local context, so `db()`
+ * answers with the control connection - which holds tenants, plans and super
+ * admins and, by design, never a single product. The count was therefore always
+ * zero and the warning fired on every healthy boot, telling an operator to run a
+ * seed that WIPES data while 773 products sat in the business database beside
+ * it. A warning that is always wrong is worse than none: it trains whoever reads
+ * the logs to ignore the one time it is right.
+ *
+ * The default business is the one the warning is about, because it is the one an
+ * unrouted request is served from.
+ */
 async function isDatabaseEmpty() {
-  return (await db().Product.estimatedDocumentCount()) === 0;
+  const business = await controlModels()
+    .Business.findOne({ isDefault: true, deletedAt: null })
+    .select('_id code')
+    .lean();
+
+  // No default business is a louder problem than an empty one, and `index.js`
+  // refuses to start over it. Nothing useful to say here.
+  if (!business?.code) return false;
+
+  return (await inBusiness(business, () => db().Product.estimatedDocumentCount())) === 0;
 }
 
 // CLI entry: `npm run seed`

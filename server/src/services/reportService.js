@@ -8,6 +8,7 @@ import '../models/StockMovement.js';
 import '../models/Supplier.js';
 import '../models/CreditTransaction.js';
 import '../models/Settings.js';
+import { DEFAULT_LOW_STOCK_THRESHOLD, reorderPoint } from './lowStockService.js';
 import ApiError from '../utils/ApiError.js';
 
 /**
@@ -193,7 +194,10 @@ async function refundsIn(start, end) {
 
 /** Inventory is a position, not a flow - "as of today", whatever the range. */
 async function inventoryPosition(settings) {
-  const fallback = settings?.operations?.lowStockThreshold ?? 50;
+  // Read off the settings document this caller already loaded rather than
+  // through `lowStockService.lowStockThreshold()` - same field, one fewer
+  // round-trip. The classification itself is the shared one.
+  const fallback = settings?.operations?.lowStockThreshold ?? DEFAULT_LOW_STOCK_THRESHOLD;
   const products = await db().Product.find({})
     .select('name sku stock minStock price cost partTypeLabel brandName')
     .lean();
@@ -203,7 +207,7 @@ async function inventoryPosition(settings) {
   const counts = { items: products.length, in: 0, low: 0, out: 0 };
 
   for (const product of products) {
-    const threshold = product.minStock > 0 ? product.minStock : fallback;
+    const threshold = reorderPoint(product, fallback);
     stockValue += product.stock * (product.cost > 0 ? product.cost : product.price);
 
     if (product.stock <= 0) counts.out += 1;
@@ -515,7 +519,7 @@ async function inventoryTab(start, end, settings) {
       .lean(),
   ]);
 
-  const fallback = settings?.operations?.lowStockThreshold ?? 50;
+  const fallback = settings?.operations?.lowStockThreshold ?? DEFAULT_LOW_STOCK_THRESHOLD;
 
   return {
     kpis: {
@@ -527,7 +531,7 @@ async function inventoryTab(start, end, settings) {
     },
     products: position.products
       .map((product) => {
-        const threshold = product.minStock > 0 ? product.minStock : fallback;
+        const threshold = reorderPoint(product, fallback);
         return {
           id: product._id.toString(),
           name: product.name,

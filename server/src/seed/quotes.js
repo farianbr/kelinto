@@ -1,5 +1,9 @@
+import mongoose from 'mongoose';
+
 import { connectDb, disconnectDb } from '../config/db.js';
-import { db } from '../db/models.js';
+import { db, dbFor } from '../db/models.js';
+import { runInBusiness } from '../db/context.js';
+import '../models/Business.js';
 import '../models/Quote.js';
 import '../models/Order.js';
 import '../models/User.js';
@@ -9,6 +13,14 @@ import { buildQuotes } from './sales.data.js';
 
 /**
  * Demo quotes, added to a database that already has real data.
+ *
+ * **Seeds every business, each in its own database** (2026-09-21). It used to
+ * seed whichever database `MONGODB_URI` named and nothing else, so on a
+ * multi-business install only the default business ever got quotes - and the
+ * other one looked like a screen that did not work rather than a screen with
+ * nothing in it. A business missing the accounts or the catalogue a quote
+ * needs is **skipped with a line saying so**, not thrown on: one business
+ * without a parts shelf must not stop the rest of the run.
  *
  * **Additive, like `seed:content` - it never wipes.** `npm run seed` rebuilds
  * the whole database from scratch, which is the wrong tool for "give me some
@@ -49,22 +61,31 @@ async function attachConverted(quote, order) {
   };
 }
 
-async function run() {
-  await connectDb();
-
+/**
+ * One business. Returns what it did rather than exiting, so the caller can
+ * keep going and report at the end.
+ */
+async function seedQuotes() {
   const [buyers, products, settings] = await Promise.all([
     db().User.find({ role: 'buyer', status: 'approved' }).select('_id businessName').lean(),
     db().Product.find({ isActive: true }).select('_id sku name price cost').limit(200).lean(),
     db().Settings.load(),
   ]);
 
+  /*
+    Skipped, not thrown.
+
+    A quote is priced for an account and made of lines, so a business with
+    neither has nothing to seed - which is a fact about that business, not a
+    failure of the run. Throwing here stopped every business after it.
+  */
   if (!buyers.length) {
-    throw new Error(
-      'No approved buyer to quote for. A quote is priced for an account - approve one first.',
-    );
+    console.log('    skipped - no approved buyer to quote for');
+    return { skipped: 'no buyers' };
   }
   if (!products.length) {
-    throw new Error('No active products to quote. Seed the catalogue first.');
+    console.log('    skipped - no active products to put on a quote');
+    return { skipped: 'no products' };
   }
 
   // Continue the sequence rather than restarting it, so a second run does not
@@ -125,18 +146,64 @@ async function run() {
     return out;
   }, {});
 
-  console.log(`Added ${inserted.length} quotes (${inserted[0].quoteNumber} … ${inserted[inserted.length - 1].quoteNumber})`);
-  console.log(`  by status: ${Object.entries(byStatus).map(([k, v]) => `${k} ${v}`).join(' · ')}`);
-  console.log(`  total quotes in database: ${await db().Quote.countDocuments({})}`);
+  console.log(`    added ${inserted.length} quotes (${inserted[0].quoteNumber} … ${inserted[inserted.length - 1].quoteNumber})`);
+  console.log(`      by status: ${Object.entries(byStatus).map(([k, v]) => `${k} ${v}`).join(' · ')}`);
+  console.log(`      total in this business: ${await db().Quote.countDocuments({})}`);
   if (!order) {
-    console.log('  note: no order to point at, so nothing is in the `converted` state.');
+    console.log('      note: no order to point at, so nothing is `converted`.');
   }
 
-  await disconnectDb();
+  return { added: inserted.length };
 }
 
-run().catch(async (error) => {
-  console.error(`Seeding quotes failed: ${error.message}`);
-  await disconnectDb().catch(() => {});
-  process.exit(1);
-});
+// CLI entry: `npm run seed:quotes`
+if (process.argv[1] && process.argv[1].endsWith('quotes.js')) {
+  (async () => {
+    console.log('\n  Seeding demo quotes…\n');
+    await connectDb();
+
+    const businesses = await db()
+      .Business.find({ deletedAt: null })
+      .select('name code')
+      .lean();
+
+    /**
+     * No businesses at all means a single-database install, so seed whatever
+     * the URI names - the same fallback every other business-scoped seed makes.
+     */
+    const targets = businesses.length ? businesses : [null];
+    const results = [];
+
+    for (const business of targets) {
+      if (business) console.log(`  ${business.name} (${business.code})`);
+
+      if (business) {
+        results.push(
+          await runInBusiness(
+            {
+              businessId: String(business._id),
+              code: business.code,
+              connection: dbFor(business.code),
+            },
+            () => seedQuotes(),
+          ),
+        );
+      } else {
+        results.push(await seedQuotes());
+      }
+    }
+
+    const seeded = results.filter((row) => row.added).length;
+    console.log(`\n  Done. ${seeded} of ${results.length} business(es) got quotes.\n`);
+    await disconnectDb();
+    await mongoose.connection.close();
+    process.exit(0);
+  })().catch(async (error) => {
+    console.error(`\n  Seeding quotes failed: ${error.message}\n`);
+    await disconnectDb().catch(() => {});
+    process.exit(1);
+  });
+}
+
+export { seedQuotes };
+export default seedQuotes;

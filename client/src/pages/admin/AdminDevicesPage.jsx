@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
 import {
   AlertCircle,
   ChevronDown,
@@ -40,8 +42,30 @@ const CHILD_LABEL = {
   model: null,
 };
 
+/** What this form holds, as opposed to what the route receives. */
+const deviceFormSchema = z.object({
+  name: z.string().trim().min(1, 'Give the device a name.').max(120),
+  aliases: z.string().trim().max(600).optional(),
+  order: z.coerce.number().int().min(0).max(10_000),
+  isActive: z.boolean(),
+});
+
 function DeviceForm({ node, parentKind, onSubmit, onCancel, isPending, error }) {
-  const { register, handleSubmit } = useForm({
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useAdminForm({
+    /*
+      The FORM's shape, not the API's.
+
+      `deviceCatalogSchema` types `aliases` as an array, because that is what
+      the route receives - but this form holds it as the comma-separated string
+      a person types, and converts it on submit. Validating the API shape here
+      would fail every submit on a field the user filled in correctly, so the
+      one field that differs is restated and the rest matches.
+    */
+    resolver: zodResolver(deviceFormSchema),
     defaultValues: {
       name: node?.name ?? '',
       aliases: (node?.aliases ?? []).join(', '),
@@ -84,11 +108,18 @@ function DeviceForm({ node, parentKind, onSubmit, onCancel, isPending, error }) 
         Level: <span className="font-medium text-ink-600">{level}</span>
       </p>
 
-      <Input label="Name" placeholder="e.g. iPhone 15 Pro Max" {...register('name')} />
+      <Input
+        label="Name"
+        placeholder="e.g. iPhone 15 Pro Max"
+        required
+        error={errors.name?.message}
+        {...register('name')}
+      />
 
       <Input
         label="Also known as"
         placeholder="15 pm, SM-S911B - comma separated"
+        error={errors.aliases?.message}
         {...register('aliases')}
       />
       <p className="text-xs leading-snug text-ink-400">
@@ -168,7 +199,7 @@ function DeviceRow({ node, depth, onAdd, onEdit, onToggle, onDelete }) {
 
         {!node.isActive && (
           <Badge tone="warn" size="sm">
-            retired
+            inactive
           </Badge>
         )}
 
@@ -201,7 +232,7 @@ function DeviceRow({ node, depth, onAdd, onEdit, onToggle, onDelete }) {
           <button
             type="button"
             onClick={() => onToggle(node)}
-            aria-label={node.isActive ? `Retire ${node.name}` : `Reactivate ${node.name}`}
+            aria-label={node.isActive ? `Deactivate ${node.name}` : `Reactivate ${node.name}`}
             className={cn(
               pressable,
               'inline-flex size-8 items-center justify-center rounded-md border border-line bg-surface text-ink-500 hover:border-ink-300',

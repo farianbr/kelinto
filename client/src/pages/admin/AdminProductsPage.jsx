@@ -38,6 +38,7 @@ import downloadExport from '@/lib/exportDownload';
 import { pressable } from '@/lib/motion';
 import {
   useAdminInventory,
+  useAdminSettings,
   useAdminSuppliers,
   useAdminMutations,
   useReorderQueue,
@@ -91,6 +92,18 @@ export function AdminProductsPage() {
   const [adjusting, setAdjusting] = useState(null);
   const [selected, setSelected] = useState([]);
   const [searchParams, setSearchParams] = useSearchParams();
+
+  /**
+   * The fallback reorder point this business actually uses.
+   *
+   * The "min N" under a stock cell names the point the row is judged against,
+   * so it has to be the same number the server classified it by. It was a
+   * hardcoded 50 here while the server read `operations.lowStockThreshold`,
+   * which meant a business that set its own threshold saw rows labelled "min
+   * 50" and coloured by a different figure entirely.
+   */
+  const { data: settings } = useAdminSettings();
+  const lowStockFallback = settings?.operations?.lowStockThreshold ?? LOW_STOCK_THRESHOLD;
   const navigate = useNavigate();
 
   // The dashboard links to `?stock=low`, so the filter lives in the URL.
@@ -216,7 +229,7 @@ export function AdminProductsPage() {
           {/* A reorder point of zero means "not set", which reads as never low
               rather than always low - so the fallback threshold is named. */}
           <span className="block text-2xs text-ink-400">
-            min {product.minStock > 0 ? product.minStock : LOW_STOCK_THRESHOLD}
+            min {product.minStock > 0 ? product.minStock : lowStockFallback}
           </span>
         </>
       ),

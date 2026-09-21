@@ -9,6 +9,7 @@ import '../models/StockMovement.js';
 import '../models/Product.js';
 import ApiError from '../utils/ApiError.js';
 import { likeRegex } from '../utils/regex.js';
+import { classify, lowStockThreshold } from './lowStockService.js';
 import * as supplierPortalService from './supplierPortalService.js';
 
 /**
@@ -29,8 +30,6 @@ import * as supplierPortalService from './supplierPortalService.js';
  *      `partial` or `received` because of what has arrived, recomputed on every
  *      receipt - exactly as an invoice's status is recomputed from its payments.
  */
-
-const LOW_STOCK_FALLBACK = 50;
 
 // ---- numbering --------------------------------------------------------------
 
@@ -1287,10 +1286,12 @@ async function deleteExpenseCategory(id) {
  * `minStock` of zero means "no reorder point set", which reads as never low
  * rather than always low; a product with no point falls back to the same
  * threshold the dashboard uses, so the two screens agree on what "low" means.
+ * That rule and that number both live in `lowStockService` now - the threshold
+ * is the one its owner set in Settings, and `threshold` is passed in because
+ * this runs per row and must not read settings inside a loop.
  */
-function shapeInventoryRow(product) {
-  const threshold = product.minStock > 0 ? product.minStock : LOW_STOCK_FALLBACK;
-  const stockStatus = product.stock <= 0 ? 'out' : product.stock <= threshold ? 'low' : 'in';
+function shapeInventoryRow(product, threshold) {
+  const stockStatus = classify(product, threshold);
 
   return {
     id: product._id.toString(),
@@ -1322,6 +1323,10 @@ function shapeInventoryRow(product) {
 }
 
 async function listInventory({ q, stock, brand, grade } = {}) {
+  // Resolved once for both the rows and the pills below, so the two cannot
+  // classify the same product differently.
+  const threshold = await lowStockThreshold();
+
   const query = {};
   if (brand) query.brandSlug = String(brand);
   if (grade) query.grade = String(grade);
@@ -1337,7 +1342,7 @@ async function listInventory({ q, stock, brand, grade } = {}) {
     .populate('supplier', 'name')
     .lean();
 
-  let rows = products.map(shapeInventoryRow);
+  let rows = products.map((product) => shapeInventoryRow(product, threshold));
   if (stock === 'attention') {
     // The set the sidebar badge counts: anything not comfortably in stock, and
     // still listed. Clicking that badge now lands on exactly its own number.
@@ -1357,15 +1362,11 @@ async function listInventory({ q, stock, brand, grade } = {}) {
   // staff member learns to ignore.
   const all = await db().Product.find({}).select('stock minStock price cost isActive').lean();
   const sellable = all.filter((product) => product.isActive !== false);
-  const classify = (product) => {
-    const threshold = product.minStock > 0 ? product.minStock : LOW_STOCK_FALLBACK;
-    return product.stock <= 0 ? 'out' : product.stock <= threshold ? 'low' : 'in';
-  };
 
   // `all` counts the catalogue, because that is what the All pill selects.
   // The condition pills count only what is sellable, for the reason above.
   const counts = { all: all.length, in: 0, low: 0, out: 0 };
-  for (const product of sellable) counts[classify(product)] += 1;
+  for (const product of sellable) counts[classify(product, threshold)] += 1;
   counts.attention = counts.low + counts.out;
 
   let totalStock = 0;
@@ -1405,7 +1406,7 @@ async function getInventoryItem(id) {
 
   return {
     product: {
-      ...shapeInventoryRow(product),
+      ...shapeInventoryRow(product, await lowStockThreshold()),
       description: product.description ?? null,
       compareAtPrice: product.compareAtPrice ?? null,
       competitors: product.competitors ?? [],
@@ -1460,7 +1461,7 @@ async function updateInventoryOps(id, body) {
     .lean();
   if (!product) throw ApiError.notFound('Product not found.', 'PRODUCT_NOT_FOUND');
 
-  return { product: shapeInventoryRow(product) };
+  return { product: shapeInventoryRow(product, await lowStockThreshold()) };
 }
 
 /** A manual correction. Goes through the ledger like every other movement. */
@@ -1477,7 +1478,7 @@ async function adjustStock(id, { qtyChange, type, note }, createdBy) {
   });
 
   const product = await db().Product.findById(id).populate('supplier', 'name').lean();
-  return { product: shapeInventoryRow(product), qtyAfter };
+  return { product: shapeInventoryRow(product, await lowStockThreshold()), qtyAfter };
 }
 
 async function listStockMovements({ product, type, from, to } = {}) {

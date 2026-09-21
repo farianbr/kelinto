@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router';
 import { AlertCircle, CheckCircle2 } from 'lucide-react';
 
 import api from '@/lib/api';
-import { BUSINESS_INFO } from '@shared/business';
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 import Spinner from '@/components/ui/Spinner';
 import { pressable } from '@/lib/motion';
 import cn from '@/lib/cn';
@@ -22,6 +22,9 @@ import cn from '@/lib/cn';
  * the moment badly.
  */
 export function UnsubscribePage() {
+  // CASL requires the sender be identified, so this page naming the wrong
+  // business is a compliance problem rather than a branding one.
+  const info = useBusinessInfo();
   const [params] = useSearchParams();
   const [state, setState] = useState({ status: 'working' });
 
@@ -70,7 +73,7 @@ export function UnsubscribePage() {
 
           <p className="mt-3 text-md leading-relaxed text-ink-600">
             {state.email ? <strong className="font-medium">{state.email}</strong> : 'This address'}{' '}
-            will not receive marketing email from {BUSINESS_INFO.name} again.
+            will not receive marketing email from {info.name} again.
           </p>
 
           {/* The distinction matters and people ask about it: opting out of
@@ -106,10 +109,10 @@ export function UnsubscribePage() {
           <p className="mt-4 text-sm leading-relaxed text-ink-500">
             Email{' '}
             <a
-              href={`mailto:${BUSINESS_INFO.email}`}
+              href={`mailto:${info.email}`}
               className="text-brand underline underline-offset-2"
             >
-              {BUSINESS_INFO.email}
+              {info.email}
             </a>{' '}
             and we will remove you by hand.
           </p>

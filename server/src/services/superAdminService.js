@@ -10,6 +10,7 @@ import Business from '../models/Business.js';
 import User from '../models/User.js';
 import ApiError from '../utils/ApiError.js';
 import env from '../config/env.js';
+import { forgetBusinessConfig } from '../middleware/businessConfigCache.js';
 import { hashResetToken } from './authService.js';
 import { sendPasswordResetEmail } from './welcomeMail.js';
 import { FEATURES, resolveFeatures } from '../../../shared/schemas/features.js';
@@ -284,6 +285,15 @@ async function updateTenant(id, body) {
   if (body.plan !== undefined) tenant.plan = body.plan || undefined;
 
   await tenant.save();
+  /**
+   * Cleared in full, not per business.
+   *
+   * A tenant's status is cached against each of its **businesses**, and a tenant
+   * owns any number of them - so there is no single key to drop here. Suspending
+   * an account is exactly the moment the cache must not be trusted, and clearing
+   * everything costs one re-read per active business.
+   */
+  forgetBusinessConfig();
   return { tenant: tenant.toPublic() };
 }
 
@@ -765,6 +775,10 @@ async function setBusinessFeature(businessId, { key, enabled }) {
   business.markModified('featureOverrides');
 
   await business.save();
+  // The middleware chain caches this business's type and overrides; without
+  // this the toggle would appear to do nothing for up to a minute, which reads
+  // as a broken switch rather than as a stale cache.
+  forgetBusinessConfig(businessId);
   return getBusinessFeatures(businessId);
 }
 

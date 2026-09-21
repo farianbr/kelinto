@@ -3,7 +3,8 @@ import { Link } from 'react-router';
 import { Menu, ShoppingCart, User } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import cn from '@/lib/cn';
-import { BOTTOM_NAV_REVEAL_AT, BUSINESS_INFO } from '@/lib/constants';
+import { BOTTOM_NAV_REVEAL_AT } from '@/lib/constants';
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 import LiveSearch from '@/components/search/LiveSearch';
 import useUiStore from '@/store/uiStore';
 import useScrollProgress from '@/hooks/useScrollProgress';
@@ -22,6 +23,7 @@ export function HeaderMobile() {
   const cartOpen = useUiStore((s) => s.cartFlyoutOpen);
   const openAccount = useUiStore((s) => s.openAccount);
   const accountTrigger = useAccountMenuTrigger();
+  const info = useBusinessInfo();
   const accountMenuOpen = useUiStore((s) => s.accountMenuOpen);
   const searchFocusToken = useUiStore((s) => s.searchFocusToken);
   const mobileSearchOpen = useUiStore((s) => s.mobileSearchOpen);
@@ -109,15 +111,27 @@ export function HeaderMobile() {
           <Menu className="size-[22px]" strokeWidth={2} />
         </button>
 
-        <Link to="/" className="mx-auto min-w-0" aria-label={`${BUSINESS_INFO.name} home`}>
-          <img
-            src="/brand/logo.png"
-            srcSet="/brand/logo.png 1x, /brand/logo@2x.png 2x"
-            alt={`${BUSINESS_INFO.name} - ${BUSINESS_INFO.tagline}`}
-            width="1000"
-            height="254"
-            className="h-8 w-auto"
-          />
+        {/* Same fallback ladder as the desktop header: the business's own mark,
+            then the bundled artwork for the house business only, then its name
+            as a wordmark. `truncate` because a long name has one narrow row
+            between two buttons here. */}
+        <Link to="/" className="mx-auto min-w-0" aria-label={`${info.name} home`}>
+          {info.logoUrl ? (
+            <img src={info.logoUrl} alt={info.name} className="h-8 w-auto" />
+          ) : info.isHouse !== false ? (
+            <img
+              src="/brand/logo.png"
+              srcSet="/brand/logo.png 1x, /brand/logo@2x.png 2x"
+              alt={`${info.name} - ${info.tagline}`}
+              width="1000"
+              height="254"
+              className="h-8 w-auto"
+            />
+          ) : (
+            <span className="block truncate font-display text-lg font-bold text-ink-900">
+              {info.name}
+            </span>
+          )}
         </Link>
 
         {/* Signed in, this opens the account menu - the same dropdown the

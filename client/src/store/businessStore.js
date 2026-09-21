@@ -146,6 +146,31 @@ export function setBusiness(id, { colorToken = null, name = null } = {}) {
   for (const listener of listeners) listener(current);
 }
 
+/**
+ * A client-route URL carrying the selected business.
+ *
+ * **For a link that opens a new tab**, which is the one case the store cannot
+ * cover on its own: the selection lives in `sessionStorage`, and a new tab
+ * starts with none, so the page that opens there resolves to the default
+ * business. On localhost that is silent and wrong - a CellShoppe staff member
+ * opening the kiosk was shown Cellvix's, reported as "kiosk says it is off"
+ * about a kiosk that was on.
+ *
+ * The API layer already solves this for API paths (`apiUrl`, and the
+ * `?business=` every request carries). This is the same idea for an
+ * application route, and the receiving page adopts the parameter before it
+ * fetches anything.
+ *
+ * Returns the path unchanged when nothing is selected, so a link is never
+ * broken by the absence of a business.
+ */
+export function businessUrl(path) {
+  const id = getBusiness();
+  if (!id) return path;
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}business=${encodeURIComponent(id)}`;
+}
+
 export function subscribeBusiness(listener) {
   listeners.add(listener);
   return () => listeners.delete(listener);

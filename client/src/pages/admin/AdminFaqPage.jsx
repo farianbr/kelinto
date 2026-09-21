@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
 import { AlertCircle, HelpCircle, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import cn from '@/lib/cn';
 import { pressable } from '@/lib/motion';
 import { date } from '@/lib/format';
-import { FAQ_CATEGORIES, FAQ_SCOPES } from '@shared/schemas/content';
+import { FAQ_CATEGORIES, FAQ_SCOPES, faqSchema } from '@shared/schemas/content';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
 import Modal from '@/components/ui/Modal';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
@@ -48,7 +49,10 @@ const CATEGORY_LABELS = Object.fromEntries(FAQ_CATEGORIES.map((c) => [c.value, c
  * be filtered by part type, which it cannot.
  */
 function FaqForm({ faq, deviceTypes, partTypes, onSubmit, onCancel, isPending, error }) {
-  const { register, handleSubmit, watch, formState, control } = useForm({
+  const { register, handleSubmit, watch, formState, control } = useAdminForm({
+    // The form holds exactly the payload, so the shared schema attaches as-is
+    // and the length rules the server applies are now applied here too.
+    resolver: zodResolver(faqSchema),
     defaultValues: {
       question: faq?.question ?? '',
       answer: faq?.answer ?? '',
@@ -78,7 +82,8 @@ function FaqForm({ faq, deviceTypes, partTypes, onSubmit, onCancel, isPending, e
         placeholder="How long does account approval take?"
         error={formState.errors.question?.message}
         data-autofocus
-        {...register('question', { required: 'Enter the question.' })}
+        required
+        {...register('question')}
       />
 
       <Textarea
@@ -88,7 +93,8 @@ function FaqForm({ faq, deviceTypes, partTypes, onSubmit, onCancel, isPending, e
         counter={4000}
         hint="Bullets (- ), bold (**text**) and blank-line paragraphs are supported. No HTML."
         error={formState.errors.answer?.message}
-        {...register('answer', { required: 'Enter the answer.' })}
+        required
+        {...register('answer')}
       />
 
       <div className="grid gap-4 sm:grid-cols-2">

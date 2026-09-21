@@ -10,12 +10,17 @@ import { TICKET_OPEN_STATUSES } from '../models/Ticket.js';
 import '../models/Quote.js';
 import '../models/ContactMessage.js';
 import '../models/Taxonomy.js';
+// Registers the schema `db().Settings` resolves. It worked without this only
+// because something else happened to import it first, which is a load-order
+// dependency rather than a guarantee.
+import '../models/Settings.js';
 import ApiError from '../utils/ApiError.js';
 import env from '../config/env.js';
 import creditService from './creditService.js';
 import storeCredit from './storeCreditService.js';
 import referralService from './referralService.js';
 import { generatePassword, sendWelcomeEmail } from './welcomeMail.js';
+import { sendAccountApprovedEmail, sendAccountRejectedEmail } from './accountDecisionMail.js';
 import { likeRegex } from '../utils/regex.js';
 import { serializeOrder } from './orderService.js';
 import orderBuilder from './orderBuilder.js';
@@ -28,6 +33,8 @@ import { renderInvoiceHtml, resolveInvoiceBrand } from './invoiceDocument.js';
 import { renderStatementHtml } from './statementDocument.js';
 import { sendMail } from './mailer.js';
 import { BUSINESS_INFO } from '../../../shared/business.js';
+import { sendingBusiness } from './sendingBusiness.js';
+import { lowStockThreshold } from './lowStockService.js';
 import { invalidateTree } from './taxonomyService.js';
 import {
   ORDER_STATUS_FLOW,
@@ -35,8 +42,6 @@ import {
   ORDER_UNFULFILLED_STATUSES,
 } from '../../../shared/schemas/admin.js';
 import { formatDate, formatDateShort } from '../../../shared/dates.js';
-
-const LOW_STOCK_THRESHOLD = 50;
 
 /**
  * Resolve the dashboard's date range.
@@ -158,6 +163,11 @@ async function stats({ from, to } = {}) {
 
   const inRange = { $gte: start, $lte: end };
 
+  // The fallback reorder point, resolved before the batch below because two of
+  // its queries compare against it. One read, so the aggregation and the
+  // low-stock list cannot classify the same product differently.
+  const lowStockFallback = await lowStockThreshold();
+
   const [
     pendingUsers,
     approvedUsers,
@@ -276,7 +286,7 @@ async function stats({ from, to } = {}) {
                 $cond: [
                   { $gt: [{ $ifNull: ['$minStock', 0] }, 0] },
                   '$minStock',
-                  LOW_STOCK_THRESHOLD,
+                  lowStockFallback,
                 ],
               },
             ],
@@ -373,7 +383,7 @@ async function stats({ from, to } = {}) {
       .lean(),
     db().User.find({ status: 'pending' }).sort({ createdAt: 1 }).limit(5).lean(),
 
-    db().Product.find({ isActive: true, stock: { $lt: LOW_STOCK_THRESHOLD } })
+    db().Product.find({ isActive: true, stock: { $lt: lowStockFallback } })
       .sort({ stock: 1 })
       .limit(6)
       .select('name sku stock price')
@@ -1145,6 +1155,42 @@ function listInternalNotes(user) {
  * browse but sees no prices and cannot order. Credit terms are set here because
  * approving and deciding terms are one decision, not two.
  */
+/**
+ * Emails an approved or rejected buyer, if this business has it switched on.
+ *
+ * ## Why the failure is swallowed
+ *
+ * The decision is already written by the time this runs. A mail that cannot go
+ * out is a mail problem, and turning it into a thrown error would show the
+ * admin a failed approval for an account that is, in fact, approved - which is
+ * worse than a missing email in every direction: they would approve it again.
+ * The failure is logged, which is where a mail problem belongs.
+ *
+ * ## Why it reads the setting rather than always sending
+ *
+ * `communications.accountApproved` / `accountRejected` default **off**, like
+ * everything here that reaches a customer. A business turns them on once
+ * somebody has read what the message says.
+ */
+async function notifyAccountDecision(user, decision, reason = null) {
+  try {
+    const settings = await db().Settings.load();
+    const key = decision === 'approved' ? 'accountApproved' : 'accountRejected';
+    if (!settings?.communications?.[key]) return;
+
+    const result =
+      decision === 'approved'
+        ? await sendAccountApprovedEmail({ user })
+        : await sendAccountRejectedEmail({ user, reason });
+
+    if (!result?.delivered) {
+      console.error(`  Account ${decision} mail for ${user.email} not sent - ${result?.error}`);
+    }
+  } catch (error) {
+    console.error(`  Account ${decision} mail for ${user?.email} failed:`, error.message);
+  }
+}
+
 async function approveUser(id, adminId, { creditLimit, terms, accountRep }) {
   const user = await db().User.findById(id);
   if (!user) throw ApiError.notFound('Account not found.', 'USER_NOT_FOUND');
@@ -1164,7 +1210,18 @@ async function approveUser(id, adminId, { creditLimit, terms, accountRep }) {
   await referralService.ensureReferralCode(user);
 
   await user.save();
-  // TODO(email): notify the buyer once a mail provider is chosen (PROGRESS.md Q7).
+
+  /**
+   * Tell the buyer, if this business has that switched on.
+   *
+   * Gated on the setting rather than sent unconditionally: everything that
+   * emails a customer defaults OFF and is turned on deliberately by somebody
+   * who has read what it says. Awaited but never allowed to throw - a mail
+   * failure must not turn a completed approval into an error the admin sees,
+   * because the approval itself has already been written.
+   */
+  await notifyAccountDecision(user, 'approved');
+
   return shapeUser(user.toObject());
 }
 
@@ -1177,6 +1234,8 @@ async function rejectUser(id, { reason }) {
   user.approvedAt = undefined;
 
   await user.save();
+  await notifyAccountDecision(user, 'rejected', reason);
+
   return shapeUser(user.toObject());
 }
 
@@ -1268,6 +1327,10 @@ function shapeProduct(product) {
  * purpose should have to say so.
  */
 async function listProducts({ q, stock, page = 1, limit = 40, all = false } = {}) {
+  // The same fallback the dashboard badge counts by, so clicking that badge
+  // still lands on exactly the rows it was counting.
+  const lowStockFallback = await lowStockThreshold();
+
   const query = {};
 
   if (q) {
@@ -1276,13 +1339,13 @@ async function listProducts({ q, stock, page = 1, limit = 40, all = false } = {}
   }
 
   if (stock === 'out') query.stock = 0;
-  else if (stock === 'low') query.stock = { $gt: 0, $lt: LOW_STOCK_THRESHOLD };
+  else if (stock === 'low') query.stock = { $gt: 0, $lt: lowStockFallback };
   // Both at once - the set the sidebar badge counts. It exists so that clicking
   // that badge lands on a list of exactly the rows it was counting; without it
   // the badge said 189 and the only reachable views were 136 and 53.
   else if (stock === 'attention') {
     query.isActive = true;
-    query.stock = { $lt: LOW_STOCK_THRESHOLD };
+    query.stock = { $lt: lowStockFallback };
   }
   else if (stock === 'inactive') query.isActive = false;
 
@@ -2454,6 +2517,10 @@ async function accountStatement(id, { nonce } = {}) {
       orderNumber: invoice.order?.orderNumber ?? null,
     })),
     nonce,
+    // The business the statement is drawn on. A statement carries a tax number
+    // and an address, so the wrong one here is a billing defect rather than a
+    // branding slip.
+    business: await sendingBusiness(),
   });
 }
 /**

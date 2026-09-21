@@ -2,6 +2,7 @@ import { forwardRef, useId, useState } from 'react';
 import { Eye, EyeOff, AlertCircle } from 'lucide-react';
 import cn from '@/lib/cn';
 import { pressable } from '@/lib/motion';
+import { useDensity, fieldSize, labelSize, hintSize } from './density';
 
 /**
  * Large-touch-target text field. The checkout brief asks for friction-free fields,
@@ -26,6 +27,7 @@ export const Input = forwardRef(function Input(
   },
   ref,
 ) {
+  const density = useDensity();
   const generatedId = useId();
   const id = idProp || generatedId;
   const [revealed, setRevealed] = useState(false);
@@ -39,7 +41,7 @@ export const Input = forwardRef(function Input(
       {label && (
         <label
           htmlFor={id}
-          className="mb-1.5 block text-sm font-medium text-ink-700"
+          className={cn(labelSize(density), 'block font-medium text-ink-700')}
         >
           {label}
           {required && (
@@ -75,7 +77,10 @@ export const Input = forwardRef(function Input(
             // when a focused input's text is under 16px and never zooms back
             // out, which leaves the sticky header wider than the viewport for
             // the rest of the visit. Same rule in Textarea, Select and LiveSearch.
-            'h-11 w-full rounded-md border bg-surface px-3.5 text-lg text-ink-900 sm:text-md',
+            // Height and text come from the density in scope - 44px on the
+            // storefront, 36px in the admin panel. See `ui/density.js`.
+            fieldSize(density),
+            'w-full rounded-md border bg-surface px-3.5 text-ink-900',
             'placeholder:text-ink-300',
             'transition-[border-color,box-shadow] duration-press',
             'hover:border-line-strong',
@@ -114,13 +119,13 @@ export const Input = forwardRef(function Input(
       {error ? (
         <p
           id={`${id}-error`}
-          className="mt-1.5 flex items-center gap-1.5 text-sm text-danger"
+          className={cn(hintSize(density), 'flex items-center gap-1.5 text-danger')}
         >
           <AlertCircle className="size-3.5 shrink-0" strokeWidth={2.25} aria-hidden="true" />
           {error}
         </p>
       ) : hint ? (
-        <p id={`${id}-hint`} className="mt-1.5 text-sm text-ink-400">
+        <p id={`${id}-hint`} className={cn(hintSize(density), 'text-ink-400')}>
           {hint}
         </p>
       ) : null}

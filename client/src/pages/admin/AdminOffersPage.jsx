@@ -1,5 +1,9 @@
 import { useMemo, useState } from 'react';
-import { useFieldArray, useForm } from 'react-hook-form';
+import { useNavigate } from 'react-router';
+import { useFieldArray } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
 import {
   AlertCircle,
   Pencil,
@@ -18,7 +22,6 @@ import { GRADE_ORDER, GRADES } from '@/lib/constants';
 import { DISCOUNT_TYPES, OFFER_KINDS } from '@shared/schemas/content';
 import { optionsFor } from '@/lib/taxonomy';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
-import Modal from '@/components/ui/Modal';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Input from '@/components/ui/Input';
 import Textarea from '@/components/ui/Textarea';
@@ -32,6 +35,7 @@ import Pagination from '@/components/ui/Pagination';
 import useTablePage from '@/hooks/useTablePage';
 import Skeleton from '@/components/ui/Skeleton';
 import PageHeader from '@/components/admin/PageHeader';
+import QuickCodeCard from '@/components/admin/QuickCodeCard';
 import { ADMIN_ROUTES } from '@/lib/adminRoutes';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { usePartTypes, useTaxonomy } from '@/hooks/useCatalog';
@@ -148,8 +152,57 @@ function AudiencePicker({ selected, onChange, error }) {
   );
 }
 
-function OfferForm({ offer, tree, partTypes, onSubmit, onCancel, isPending, error }) {
-  const { register, handleSubmit, watch, setValue, control, formState } = useForm({
+/**
+ * What the OFFER FORM holds.
+ *
+ * Deliberately not `offerSchema`. That describes the payload, and this form
+ * differs from it in several deep ways: money is typed in dollars and converted
+ * to cents on submit, `kind` and `isExclusive` are folded into one
+ * `offerType` choice, the four target fields are flat here and nested there,
+ * and highlights are a textarea rather than an array. Validating the payload
+ * shape against these fields would refuse correct input on nearly every save.
+ *
+ * So this covers what a person actually types, and the cross-field rule the
+ * screen already claimed but never enforced: an exclusive deal must carry an
+ * end date, because the countdown is the whole page.
+ */
+const offerFormSchema = z
+  .object({
+    title: z.string().trim().min(1, 'Give the offer a title.').max(160),
+    subtitle: z.string().trim().max(200).optional().or(z.literal('')),
+    description: z.string().trim().max(2000).optional().or(z.literal('')),
+    terms: z.string().trim().max(2000).optional().or(z.literal('')),
+    offerType: z.string().trim(),
+    badge: z.string().trim().max(40).optional().or(z.literal('')),
+    code: z.string().trim().max(40).optional().or(z.literal('')),
+    discountType: z.string().trim(),
+    discountPercent: z.coerce.number().min(0, 'Cannot be negative.').max(100, 'Cannot exceed 100%.'),
+    discountAmountDollars: z
+      .union([z.literal(''), z.coerce.number().min(0, 'Cannot be negative.')])
+      .optional(),
+    minQty: z.coerce.number().int().min(0),
+    minSpendDollars: z.union([z.literal(''), z.coerce.number().min(0)]).optional(),
+    bundlePriceDollars: z.union([z.literal(''), z.coerce.number().min(0)]).optional(),
+    usageLimit: z.coerce.number().int().min(0),
+    startsAt: z.string().trim().optional().or(z.literal('')),
+    endsAt: z.string().trim().optional().or(z.literal('')),
+  })
+  // Everything else on this form is a picker, a list or a checkbox, and is
+  // passed through untouched rather than restated here.
+  .passthrough()
+  .superRefine((value, ctx) => {
+    if (value.offerType === 'exclusive' && !String(value.endsAt ?? '').trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['endsAt'],
+        message: 'An exclusive deal needs an end date - the countdown is the point of the page.',
+      });
+    }
+  });
+
+export function OfferForm({ offer, tree, partTypes, onSubmit, onCancel, isPending, error }) {
+  const { register, handleSubmit, watch, setValue, control, formState } = useAdminForm({
+    resolver: zodResolver(offerFormSchema),
     defaultValues: {
       title: offer?.title ?? '',
       subtitle: offer?.subtitle ?? '',
@@ -295,7 +348,8 @@ function OfferForm({ offer, tree, partTypes, onSubmit, onCancel, isPending, erro
         placeholder="15% off every battery"
         error={formState.errors.title?.message}
         data-autofocus
-        {...register('title', { required: 'Give the offer a title.' })}
+        required
+        {...register('title')}
       />
 
       <Input
@@ -319,7 +373,14 @@ function OfferForm({ offer, tree, partTypes, onSubmit, onCancel, isPending, erro
               options={DISCOUNT_OPTIONS}
             />
             {discountType === 'percent' ? (
-              <Input label="Percent off" inputMode="numeric" suffix="%" {...register('discountPercent')} />
+              <Input
+                label="Percent off"
+                inputMode="numeric"
+                suffix="%"
+                placeholder="10"
+                error={formState.errors.discountPercent?.message}
+                {...register('discountPercent')}
+              />
             ) : discountType === 'amount' ? (
               <Input
                 label="Amount off"
@@ -335,7 +396,13 @@ function OfferForm({ offer, tree, partTypes, onSubmit, onCancel, isPending, erro
           </div>
 
           <div className="grid gap-3 sm:grid-cols-3">
-            <Input label="Promo code" placeholder="CELLS15" className="font-mono" {...register('code')} />
+            <Input
+              label="Promo code"
+              placeholder="CELLS15"
+              className="font-mono"
+              error={formState.errors.code?.message}
+              {...register('code')}
+            />
             <Input
               label="Minimum units"
               inputMode="numeric"
@@ -658,19 +725,22 @@ function OfferForm({ offer, tree, partTypes, onSubmit, onCancel, isPending, erro
  * Header metadata read from the same table the breadcrumb uses, so a page
  * title can never drift from its crumb.
  */
-const ADMIN_PAGE = { ...ADMIN_ROUTES['/admin/marketing/offers'], icon: adminIcon('Tag') };
+const ROUTE = ADMIN_ROUTES['/admin/marketing/offers'];
+// The icon comes from the route entry rather than being named twice: this
+// screen moved categories on 2026-09-21 and its glyph moved with it.
+const ADMIN_PAGE = { ...ROUTE, icon: adminIcon(ROUTE.icon) };
 
 export function AdminOffersPage() {
+  const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('all');
-  const [editing, setEditing] = useState(null); // offer object, or 'new'
   const [deleting, setDeleting] = useState(null);
 
   const { data, isLoading } = useAdminOffers({
     status: status === 'all' ? undefined : status,
     q: query || undefined,
   });
-  const { createOffer, updateOffer, deleteOffer } = useAdminMutations();
+  const { deleteOffer } = useAdminMutations();
   const { data: tree } = useTaxonomy();
   const { data: partTypeFacets } = usePartTypes();
 
@@ -839,7 +909,7 @@ export function AdminOffersPage() {
               // The row opens the editor, so a click that lands on this button
               // must not fire the row's handler behind it as well.
               event.stopPropagation();
-              setEditing(offer);
+              navigate(`/admin/marketing/offers/${offer.id}`);
             }}
             aria-label={`Edit “${offer.title}”`}
             className={cn(
@@ -867,8 +937,6 @@ export function AdminOffersPage() {
       ),
     },
   ];
-  const isPending = createOffer.isPending || updateOffer.isPending;
-  const error = (createOffer.error ?? updateOffer.error)?.message;
 
   const partTypes = useMemo(
     () => (partTypeFacets ?? []).map((facet) => ({ value: facet.value, label: facet.label })),
@@ -883,6 +951,14 @@ export function AdminOffersPage() {
         description={ADMIN_PAGE.description}
       />
 
+      {/* The list and the quick-create card side by side.
+
+          The card is the small half of this screen on purpose: minting a
+          plain percentage code is four fields and a counter does it while a
+          customer waits, whereas the full form exists for bundles, targets
+          and restrictions. Below the list on a phone, because the list is
+          what somebody arrives to read. */}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
       <Panel
         title="All offers"
         description={
@@ -893,7 +969,7 @@ export function AdminOffersPage() {
             : ''
         }
         action={
-          <Button size="sm" icon={Plus} onClick={() => setEditing('new')}>
+          <Button size="sm" icon={Plus} onClick={() => navigate('/admin/marketing/offers/new')}>
             New offer
           </Button>
         }
@@ -929,7 +1005,7 @@ export function AdminOffersPage() {
             title="No offers"
             body="Live offers appear on /offers. Scheduled ones stay hidden until their start date."
             action={
-              <Button size="sm" icon={Plus} onClick={() => setEditing('new')}>
+              <Button size="sm" icon={Plus} onClick={() => navigate('/admin/marketing/offers/new')}>
                 Create the first offer
               </Button>
             }
@@ -944,7 +1020,7 @@ export function AdminOffersPage() {
               columns={columns}
               rows={pageOffers}
               rowKey={(offer) => offer.id}
-              onRowClick={(offer) => setEditing(offer)}
+              onRowClick={(offer) => navigate(`/admin/marketing/offers/${offer.id}`)}
             />
 
             <Pagination
@@ -958,29 +1034,8 @@ export function AdminOffersPage() {
         )}
       </Panel>
 
-      <Modal
-        open={Boolean(editing)}
-        onClose={() => setEditing(null)}
-        title={editing === 'new' ? 'New offer' : 'Edit offer'}
-        size="lg"
-        align="top"
-      >
-        {editing && (
-          <OfferForm
-            offer={editing === 'new' ? null : editing}
-            tree={tree}
-            partTypes={partTypes}
-            isPending={isPending}
-            error={error}
-            onCancel={() => setEditing(null)}
-            onSubmit={(values) => {
-              const options = { onSuccess: () => setEditing(null) };
-              if (editing === 'new') createOffer.mutate(values, options);
-              else updateOffer.mutate({ id: editing.id, ...values }, options);
-            }}
-          />
-        )}
-      </Modal>
+        <QuickCodeCard />
+      </div>
 
       <ConfirmDialog
         open={Boolean(deleting)}

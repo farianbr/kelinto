@@ -6,6 +6,7 @@ import '../models/Product.js';
 import ApiError from '../utils/ApiError.js';
 import { likeRegex } from '../utils/regex.js';
 import { invalidateTree } from './taxonomyService.js';
+import { parseCsv, rowsWithoutHeader } from '../utils/csv.js';
 
 /**
  * The taxonomy editor (ERP rework §6.15 - CellShoppe's *Device & Models*,
@@ -170,6 +171,257 @@ async function get(id) {
   return { node: shape(node, await liveCounts()) };
 }
 
+/** `iPhone 15 Pro Max` → `iphone-15-pro-max`, the shape every seeded slug has. */
+function slugify(value) {
+  return String(value)
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * Finds a node by slug, or creates it.
+ *
+ * The write half of "add a model": a staff member types
+ * `Phone › Apple › iPhone 15 › iPhone 15 Pro Max` and any of those four levels
+ * may not exist yet. Each is looked up by slug first, so adding a second
+ * Samsung model does not mint a second Samsung.
+ *
+ * **Created nodes are ordered last**, not inserted alphabetically. The wizard
+ * reads `order`, and renumbering siblings to slot one in would move rows on a
+ * storefront that a staff member is not looking at.
+ */
+async function ensureNode({ kind, name, slug, parent, path }) {
+  const existing = await db().Taxonomy.findOne({ slug });
+  if (existing) return existing;
+
+  /**
+   * `parent` is an ObjectId, not a slug.
+   *
+   * The seed builds its documents with a `parentSlug` and resolves every one to
+   * a real id before inserting - the schema has no such field, so writing a
+   * slug there stores nothing and `getTree` drops the node, since it links
+   * children by `node.parent`. A node that saves cleanly and then does not
+   * appear in the picker is the failure this note exists to prevent.
+   */
+  const last = await db()
+    .Taxonomy.findOne({ kind, parent: parent ?? null })
+    .sort({ order: -1 })
+    .select('order')
+    .lean();
+
+  return db().Taxonomy.create({
+    kind,
+    name: name.trim(),
+    slug,
+    parent: parent ?? null,
+    path,
+    order: (last?.order ?? -1) + 1,
+  });
+}
+
+/**
+ * Adds one model, creating whatever part of its branch is missing.
+ *
+ * ## Why this takes four names rather than a parent id
+ *
+ * The screen asks for Category, Brand, Device/Series and Model as plain text,
+ * because that is how somebody adding "the new Pixel" thinks - they do not
+ * know whether a `Google` brand node exists, and making them find out first
+ * would mean three screens to add one phone. So the branch is resolved here:
+ * each level is found by slug or created, and only the model is required to be
+ * new.
+ *
+ * **Series is optional**, matching the form. A model with no series hangs off
+ * the brand, which is what the seeded data does for the catalogue's flatter
+ * corners.
+ *
+ * **A duplicate model is refused, not silently reused.** Saving the same model
+ * twice would otherwise look like it worked while editing nothing, and the
+ * second set of aliases would land on the first node.
+ */
+async function create(input) {
+  const deviceTypeName = String(input.deviceType ?? '').trim();
+  const brandName = String(input.brand ?? '').trim();
+  const seriesName = String(input.series ?? '').trim();
+  const modelName = String(input.name ?? '').trim();
+
+  if (!deviceTypeName) throw ApiError.badRequest('Pick a category.', 'CATEGORY_REQUIRED');
+  if (!brandName) throw ApiError.badRequest('Name the brand.', 'BRAND_REQUIRED');
+  if (!modelName) throw ApiError.badRequest('Name the model.', 'MODEL_REQUIRED');
+
+  const deviceTypeSlug = slugify(deviceTypeName);
+  const brandSlug = slugify(brandName);
+  const seriesSlug = seriesName ? slugify(seriesName) : null;
+  // Prefixed with the brand, exactly as `seed/generate.js` builds it: "Pro" is
+  // a model name several brands use, and an unprefixed slug is unique-indexed
+  // so the second one would be refused by the database rather than by us.
+  const modelSlug = slugify(`${brandSlug}-${modelName}`);
+
+  const clash = await db().Taxonomy.findOne({ slug: modelSlug }).select('name').lean();
+  if (clash) {
+    throw ApiError.badRequest(
+      `${clash.name} is already in the list. Edit that entry instead of adding it twice.`,
+      'MODEL_EXISTS',
+    );
+  }
+
+  const aliases = normaliseAliases(input.aliases);
+  if (aliases.length) {
+    const aliasClash = await db()
+      .Taxonomy.findOne({ aliases: { $in: aliases } })
+      .select('name aliases')
+      .lean();
+
+    if (aliasClash) {
+      const overlap = aliases.filter((alias) => aliasClash.aliases.includes(alias));
+      throw ApiError.badRequest(
+        `“${overlap[0]}” is already an alias for ${aliasClash.name}. An alias can only point at one model.`,
+        'ALIAS_IN_USE',
+      );
+    }
+  }
+
+  const deviceTypeNode = await ensureNode({
+    kind: 'deviceType',
+    name: deviceTypeName,
+    slug: deviceTypeSlug,
+    parent: null,
+    path: { deviceType: deviceTypeSlug },
+  });
+
+  const brandNode = await ensureNode({
+    kind: 'brand',
+    name: brandName,
+    slug: brandSlug,
+    parent: deviceTypeNode._id,
+    path: { deviceType: deviceTypeSlug, brand: brandSlug },
+  });
+
+  let seriesNode = null;
+  if (seriesSlug) {
+    seriesNode = await ensureNode({
+      kind: 'series',
+      name: seriesName,
+      slug: seriesSlug,
+      parent: brandNode._id,
+      path: { deviceType: deviceTypeSlug, brand: brandSlug, series: seriesSlug },
+    });
+  }
+
+  const node = await ensureNode({
+    kind: 'model',
+    name: modelName,
+    slug: modelSlug,
+    parent: seriesNode?._id ?? brandNode._id,
+    path: {
+      deviceType: deviceTypeSlug,
+      brand: brandSlug,
+      ...(seriesSlug ? { series: seriesSlug } : {}),
+      model: modelSlug,
+    },
+  });
+
+  if (aliases.length) {
+    node.aliases = aliases;
+    await node.save();
+  }
+
+  invalidateTree();
+
+  return { node: shape(node.toObject(), await liveCounts()) };
+}
+
+/**
+ * Bulk-adds models from CSV.
+ *
+ * ## The format
+ *
+ * `Category, Brand, Device, Model, Aliases` - one row per model, header
+ * optional. Category, Brand and Model are required; Device (the series) and
+ * Aliases are not. Aliases are separated by a **vertical bar**, not a comma,
+ * because a comma is the column separator and `15 PM, 15 Pro Max` in an
+ * unquoted cell would read as two columns.
+ *
+ * ## Re-importing the same row updates it
+ *
+ * Matched by the canonical slug, which is what makes this usable: a shop
+ * exports its list, edits aliases in a spreadsheet and imports it back. A
+ * create-only importer would refuse every row of that file.
+ *
+ * ## One bad row does not fail the file
+ *
+ * Every row is reported - added, updated, or skipped with a reason and its line
+ * number. A hundred-row file with one alias clash should add ninety-nine models
+ * and say which one it could not, rather than rolling back work the staff
+ * member would have to redo.
+ */
+async function importCsv(text) {
+  const rows = rowsWithoutHeader(parseCsv(text), 'Category');
+
+  if (!rows.length) {
+    throw ApiError.badRequest('There are no rows in that file.', 'CSV_EMPTY');
+  }
+  if (rows.length > 2000) {
+    throw ApiError.badRequest(
+      `That file has ${rows.length} rows. Import 2000 or fewer at a time.`,
+      'CSV_TOO_LARGE',
+    );
+  }
+
+  const results = { added: 0, updated: 0, skipped: 0, rows: [] };
+
+  for (const [index, cells] of rows.entries()) {
+    // +1 for zero-indexing; the header line, when present, is already gone, so
+    // this is the line number a staff member counts in their own file only when
+    // they have no header. Reported as "row N" rather than "line N" for that
+    // reason.
+    const rowNumber = index + 1;
+    const [deviceType, brand, series, name, aliasCell] = cells;
+
+    // The bar is the documented separator, but a file made by hand often uses a
+    // comma inside a quoted cell. Both are accepted - `normaliseAliases` splits
+    // on commas already, so this only has to turn bars into them.
+    const aliases = String(aliasCell ?? '').replace(/\|/g, ',');
+
+    try {
+      const existing = await db()
+        .Taxonomy.findOne({ slug: slugify(`${slugify(brand ?? '')}-${name ?? ''}`) })
+        .select('_id name')
+        .lean();
+
+      if (existing) {
+        // Update rather than refuse: re-importing an edited export is the
+        // normal case, not an error. Only the fields this format carries are
+        // touched, so an `isActive: false` set on the screen survives.
+        await update(existing._id.toString(), { name: String(name).trim(), aliases });
+        results.updated += 1;
+        results.rows.push({ row: rowNumber, name: String(name).trim(), status: 'updated' });
+        continue;
+      }
+
+      const created = await create({ deviceType, brand, series, name, aliases });
+      results.added += 1;
+      results.rows.push({ row: rowNumber, name: created.node.name, status: 'added' });
+    } catch (err) {
+      results.skipped += 1;
+      results.rows.push({
+        row: rowNumber,
+        name: String(name ?? '').trim() || `Row ${rowNumber}`,
+        status: 'skipped',
+        // The service's own messages name the record they collided with, so
+        // they are carried through rather than replaced with "invalid row".
+        reason: err.message,
+      });
+    }
+  }
+
+  invalidateTree();
+
+  return results;
+}
+
 /**
  * Edits a node.
  *
@@ -254,6 +506,6 @@ async function remove(id) {
   return { removed: true, name: node.name };
 }
 
-export default { list, get, update, remove, normaliseAliases };
+export default { list, get, create, importCsv, update, remove, normaliseAliases };
 
-export { normaliseAliases, list, get, update, remove };
+export { normaliseAliases, list, get, create, importCsv, update, remove };

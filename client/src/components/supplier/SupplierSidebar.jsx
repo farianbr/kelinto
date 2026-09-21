@@ -10,7 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import cn from '@/lib/cn';
-import { BUSINESS_INFO } from '@shared/business';
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 import { pressable } from '@/lib/motion';
 
 /**
@@ -37,6 +37,11 @@ const NAV = [
 ];
 
 function BrandBlock({ compact, supplier }) {
+  // The portal is branded by the business whose portal it IS, resolved from the
+  // host like every other public read. It printed the hardcoded name before, so
+  // a CellShoppe supplier signed in to a panel badged Cellvix.
+  const info = useBusinessInfo();
+
   return (
     <div
       className={cn(
@@ -47,12 +52,12 @@ function BrandBlock({ compact, supplier }) {
       {/* The compact ramp on a small glyph - the full ramp's near-black opening
           reads as a stripe at this size (Instructions §2.2). */}
       <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-brand-gradient-compact font-display text-lg font-bold text-white">
-        {BUSINESS_INFO.name.charAt(0)}
+        {info.name.charAt(0)}
       </span>
       {!compact && (
         <span className="min-w-0">
           <span className="block truncate font-display text-lg font-bold leading-none text-white">
-            {BUSINESS_INFO.name}
+            {info.name}
           </span>
           {/* Says whose portal this is, because a supplier works with several
               customers and the tab alone does not tell them which. */}

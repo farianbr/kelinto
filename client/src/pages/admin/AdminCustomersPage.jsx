@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
-import { useForm, Controller } from 'react-hook-form';
+import { Controller } from 'react-hook-form';
+import useAdminForm from '@/hooks/useAdminForm';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
   AlertCircle,
@@ -110,7 +111,7 @@ function ClientForm({ onSubmit, onCancel, isPending, error }) {
     control,
     setValue,
     formState: { errors },
-  } = useForm({
+  } = useAdminForm({
     resolver: zodResolver(clientCreateFormSchema),
     defaultValues: {
       firstName: '',

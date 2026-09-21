@@ -69,6 +69,7 @@ const AdminOrdersPage = lazy(() => import('@/pages/admin/AdminOrdersPage'));
 const AdminProductsPage = lazy(() => import('@/pages/admin/AdminProductsPage'));
 const AdminCustomersPage = lazy(() => import('@/pages/admin/AdminCustomersPage'));
 const AdminOffersPage = lazy(() => import('@/pages/admin/AdminOffersPage'));
+const AdminOfferFormPage = lazy(() => import('@/pages/admin/AdminOfferFormPage'));
 const AdminBlogPage = lazy(() => import('@/pages/admin/AdminBlogPage'));
 const AdminProductArticlesPage = lazy(() => import('@/pages/admin/AdminProductArticlesPage'));
 const AdminReviewsPage = lazy(() => import('@/pages/admin/AdminReviewsPage'));
@@ -101,6 +102,7 @@ const AdminQuotesPage = lazy(() => import('@/pages/admin/AdminQuotesPage'));
 const AdminWebQuotesPage = lazy(() => import('@/pages/admin/AdminWebQuotesPage'));
 const AdminQuoteDetailPage = lazy(() => import('@/pages/admin/AdminQuoteDetailPage'));
 const AdminServicesPage = lazy(() => import('@/pages/admin/AdminServicesPage'));
+const AdminServiceImportPage = lazy(() => import('@/pages/admin/AdminServiceImportPage'));
 const AdminDevicesPage = lazy(() => import('@/pages/admin/AdminDevicesPage'));
 const AdminServiceQuoteFormPage = lazy(() => import('@/pages/admin/AdminServiceQuoteFormPage'));
 const AdminTicketsPage = lazy(() => import('@/pages/admin/AdminTicketsPage'));
@@ -124,6 +126,7 @@ const AdminSaleSettingsPage = lazy(() => import('@/pages/admin/AdminSaleSettings
 const AdminShippingSettingsPage = lazy(() => import('@/pages/admin/AdminShippingSettingsPage'));
 const AdminPaymentMethodsPage = lazy(() => import('@/pages/admin/AdminPaymentMethodsPage'));
 const AdminInventorySettingsPage = lazy(() => import('@/pages/admin/AdminInventorySettingsPage'));
+const AdminKioskSettingsPage = lazy(() => import('@/pages/admin/AdminKioskSettingsPage'));
 const AdminAgreementsPage = lazy(() => import('@/pages/admin/AdminAgreementsPage'));
 const AdminActivityLogPage = lazy(() => import('@/pages/admin/AdminActivityLogPage'));
 const AdminSupportPage = lazy(() => import('@/pages/admin/AdminSupportPage'));
@@ -131,7 +134,8 @@ const AdminSecurityLogPage = lazy(() => import('@/pages/admin/AdminSecurityLogPa
 const AdminApiKeysPage = lazy(() => import('@/pages/admin/AdminApiKeysPage'));
 const AdminThirdPartyPage = lazy(() => import('@/pages/admin/AdminThirdPartyPage'));
 const AdminTaxonomyPage = lazy(() => import('@/pages/admin/AdminTaxonomyPage'));
-const AdminInvoiceStatusPage = lazy(() => import('@/pages/admin/AdminInvoiceStatusPage'));
+const AdminTaxonomyAddPage = lazy(() => import('@/pages/admin/AdminTaxonomyAddPage'));
+const AdminTaxonomyImportPage = lazy(() => import('@/pages/admin/AdminTaxonomyImportPage'));
 const AdminInvoiceLabelsPage = lazy(() => import('@/pages/admin/AdminInvoiceLabelsPage'));
 const AdminEmailSettingsPage = lazy(() => import('@/pages/admin/AdminEmailSettingsPage'));
 const AdminTemplatesPage = lazy(() => import('@/pages/admin/AdminTemplatesPage'));
@@ -227,7 +231,10 @@ export function App() {
         <Route path="quotes/:id/edit" element={<AdminServiceQuoteFormPage />} />
         <Route path="quotes/:id" element={<AdminQuoteDetailPage />} />
         {/* The labour price list the quote and ticket pickers read. */}
+        {/* Before the bare list route is irrelevant here (no `:id`), but kept
+            adjacent so the pair reads as one screen and its importer. */}
         <Route path="services" element={<AdminServicesPage />} />
+        <Route path="services/import" element={<AdminServiceImportPage />} />
         <Route path="rma" element={<AdminRmaPage />} />
         <Route path="rma/:id" element={<AdminRmaDetailPage />} />
 
@@ -245,6 +252,10 @@ export function App() {
         <Route path="reports/business" element={<AdminBusinessReportPage />} />
         <Route path="reports" element={<AdminReportsPage />} />
         <Route path="marketing/offers" element={<AdminOffersPage />} />
+        {/* `new` before `:id`, or the parameter swallows the literal and the
+            create screen opens as an edit for an offer called "new". */}
+        <Route path="marketing/offers/new" element={<AdminOfferFormPage />} />
+        <Route path="marketing/offers/:id" element={<AdminOfferFormPage />} />
         <Route path="marketing/blog" element={<AdminBlogPage />} />
         <Route path="marketing/faq" element={<AdminFaqPage />} />
         <Route path="marketing/articles" element={<AdminProductArticlesPage />} />
@@ -290,8 +301,10 @@ export function App() {
         {/* Reference data a staff member sets up once, so it sits beside the parts
             taxonomy in Settings rather than in the daily Sales list. */}
         <Route path="settings/devices" element={<AdminDevicesPage />} />
+        <Route path="settings/kiosk" element={<AdminKioskSettingsPage />} />
         <Route path="settings/taxonomy" element={<AdminTaxonomyPage />} />
-        <Route path="settings/invoice-status" element={<AdminInvoiceStatusPage />} />
+        <Route path="settings/taxonomy/add" element={<AdminTaxonomyAddPage />} />
+        <Route path="settings/taxonomy/import" element={<AdminTaxonomyImportPage />} />
         <Route path="settings/invoice-labels" element={<AdminInvoiceLabelsPage />} />
         <Route path="settings/email" element={<AdminEmailSettingsPage />} />
         <Route path="settings/templates" element={<AdminTemplatesPage />} />
@@ -318,6 +331,11 @@ export function App() {
         <Route
           path="expenses/categories"
           element={<Navigate to="/admin/settings/expense-categories" replace />}
+        />
+        {/* Invoice messages became a tab on Invoice statuses (2026-09-21). */}
+        <Route
+          path="settings/invoice-status"
+          element={<Navigate to="/admin/settings/invoice-labels" replace />}
         />
 
         <Route path="*" element={<Navigate to="/admin" replace />} />

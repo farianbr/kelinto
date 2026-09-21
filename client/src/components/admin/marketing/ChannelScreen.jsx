@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useForm } from 'react-hook-form';
+import useAdminForm from '@/hooks/useAdminForm';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
   AlertCircle,
@@ -185,7 +185,7 @@ export function ChannelScreen({
     reset,
     setValue,
     formState: { errors },
-  } = useForm({
+  } = useAdminForm({
     resolver: zodResolver(schema),
     defaultValues: { userId: '', body: '', direction: 'outbound', recordingUrl: '' },
   });
@@ -310,7 +310,7 @@ export function ChannelScreen({
               {showRecording && (
                 <Input
                   label="Recording URL"
-                  hint="Optional. A link to the recording - Cellvix stores no audio itself."
+                  hint="Optional. A link to the recording - no audio is stored here."
                   placeholder="https://…"
                   error={errors.recordingUrl?.message}
                   {...register('recordingUrl')}

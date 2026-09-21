@@ -27,10 +27,31 @@ const PERMISSION_AREAS = [
 /** Ordered weakest to strongest - `LEVELS.indexOf` is the comparison. */
 const PERMISSION_LEVELS = ['none', 'view', 'full'];
 
+/** The settings categories that can be pinned away from their parent. */
+const SETTINGS_SUBAREAS = [
+  'business',
+  'financial',
+  'users',
+  'scheduling',
+  'communications',
+  'system',
+  'integrations',
+];
+
 const areaField = {
   type: String,
   enum: PERMISSION_LEVELS,
   default: 'none',
+};
+
+/**
+ * A settings category. Defaults to `inherit`, which is not a level - it is the
+ * absence of one, resolved against `settings` when the check runs.
+ */
+const subAreaField = {
+  type: String,
+  enum: ['inherit', ...PERMISSION_LEVELS],
+  default: 'inherit',
 };
 
 const roleSchema = new mongoose.Schema(
@@ -57,6 +78,20 @@ const roleSchema = new mongoose.Schema(
       business: areaField,
       settings: areaField,
     },
+
+    /**
+     * One row per settings category, each defaulting to `inherit`.
+     *
+     * **Its own field, not a key inside `areas`.** A dotted key there -
+     * `areas['settings.financial']` - is read by Mongoose as the nested path
+     * `areas.settings.financial`, which collides with the `settings` string
+     * field one line up and throws *"Cannot create property 'financial' on
+     * string"* on the first write. A sibling map sidesteps that, and `levelFor`
+     * is the single place that has to know the two live apart.
+     */
+    settingsAreas: {
+      ...SETTINGS_SUBAREAS.reduce((out, area) => ({ ...out, [area]: subAreaField }), {}),
+    },
   },
   { timestamps: true },
 );
@@ -70,8 +105,35 @@ roleSchema.index({ isBuiltIn: -1, name: 1 });
  * should be closed until an admin opens it, not open because the map has no
  * opinion about it.
  */
+/**
+ * The level this role actually holds for an area, inheritance resolved.
+ *
+ * A settings sub-area set to `inherit` - the default, and what every role
+ * carries until somebody pins one - answers with whatever `settings` holds. So
+ * a role with `settings: view` and nothing else set reads `view` for all seven
+ * categories, which is exactly how the system behaved before they existed.
+ *
+ * An unknown area is `none`, not an error: a route guarding an area nobody has
+ * defined should deny rather than throw, because throwing turns a typo in a
+ * route into a 500 on a screen that should simply have been refused.
+ */
+roleSchema.methods.levelFor = function levelFor(area) {
+  /**
+   * `settings.financial` addresses the sub-area map, which is stored separately
+   * from `areas` - see the note on `settingsAreas`. The dotted string stays the
+   * address everywhere else, so routes and the screen never learn that.
+   */
+  if (typeof area === 'string' && area.startsWith('settings.')) {
+    const key = area.slice('settings.'.length);
+    const held = this.settingsAreas?.[key] ?? 'inherit';
+    return held === 'inherit' ? (this.areas?.settings ?? 'none') : held;
+  }
+
+  return this.areas?.[area] ?? 'none';
+};
+
 roleSchema.methods.allows = function allows(area, level = 'view') {
-  const held = this.areas?.[area] ?? 'none';
+  const held = this.levelFor(area);
   return PERMISSION_LEVELS.indexOf(held) >= PERMISSION_LEVELS.indexOf(level);
 };
 
@@ -82,14 +144,33 @@ roleSchema.methods.toPublic = function toPublic() {
     slug: this.slug,
     isBuiltIn: this.isBuiltIn,
     isSystem: this.isSystem,
-    areas: PERMISSION_AREAS.reduce(
-      (out, area) => ({ ...out, [area]: this.areas?.[area] ?? 'none' }),
-      {},
-    ),
+    areas: {
+      ...PERMISSION_AREAS.reduce(
+        (out, area) => ({ ...out, [area]: this.areas?.[area] ?? 'none' }),
+        {},
+      ),
+      /**
+       * Sub-areas are sent **as stored**, `inherit` and all.
+       *
+       * The screen shows "Same as Settings" for an unpinned row, so it needs to
+       * know the row is unpinned. Sending the resolved level instead would make
+       * every row look deliberately set, and a staff member changing `settings`
+       * would then wonder why none of the seven rows below it moved.
+       */
+      ...SETTINGS_SUBAREAS.reduce(
+        (out, area) => ({
+          ...out,
+          // Flattened back to the dotted address on the way out, so the client
+          // sees one `areas` map and never the storage split.
+          [`settings.${area}`]: this.settingsAreas?.[area] ?? 'inherit',
+        }),
+        {},
+      ),
+    },
   };
 };
 
 const Role = mongoose.model('Role', roleSchema);
 
-export { PERMISSION_AREAS, PERMISSION_LEVELS, Role };
+export { PERMISSION_AREAS, PERMISSION_LEVELS, SETTINGS_SUBAREAS, Role };
 export default Role;

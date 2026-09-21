@@ -90,7 +90,7 @@ function OpsForm({ product, suppliers, onSubmit, onCancel, isPending, error }) {
       />
 
       <p className="rounded-md bg-surface-2 px-3 py-2.5 text-xs leading-relaxed text-ink-500">
-        Cost is what Cellvix pays, and is separate from the price a client pays. Receiving a purchase
+        Cost is what you pay, and is separate from the price a client pays. Receiving a purchase
         order updates it automatically from what the delivery actually cost.
       </p>
 

@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
 import { AlertCircle, FileText, Mail, Pencil, Plus, Power, Tag, Trash2 } from 'lucide-react';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
 import Modal from '@/components/ui/Modal';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import DeleteWithPreview from '@/components/admin/DeleteWithPreview';
 import Input from '@/components/ui/Input';
 import SelectField from '@/components/ui/SelectField';
 import Checkbox from '@/components/ui/Checkbox';
@@ -14,10 +16,12 @@ import PageHeader from '@/components/admin/PageHeader';
 import DataTable, { CountLine } from '@/components/admin/DataTable';
 import { ADMIN_ROUTES } from '@/lib/adminRoutes';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
-import { LABEL_COLOR_OPTIONS } from '@shared/schemas/admin.js';
+import { LABEL_COLOR_OPTIONS, invoiceLabelSchema } from '@shared/schemas/admin.js';
 import { useAdminInvoiceLabels, useAdminMutations } from '@/hooks/useAdmin';
 import { pressable } from '@/lib/motion';
 import cn from '@/lib/cn';
+import TabRow from '@/components/ui/TabRow';
+import { InvoiceMessagesBody } from '@/pages/admin/AdminInvoiceStatusPage';
 
 /**
  * The manual invoice status list.
@@ -75,7 +79,23 @@ const PILL_TONE = {
 };
 
 function LabelForm({ label, onSubmit, onCancel, isPending, error }) {
-  const { register, handleSubmit, control, watch } = useForm({
+  const {
+    register,
+    handleSubmit,
+    control,
+    watch,
+    formState: { errors },
+  } = useAdminForm({
+    /*
+      The form validated nothing before this.
+
+      It posted whatever was typed and let the server answer, so an empty name
+      came back as a banner at the top of the dialog with nothing marked and
+      nothing focused - the "it throws an error somewhere and does not tell me
+      which field" case. `invoiceLabelSchema` is the same schema the route
+      validates against, so the two cannot disagree about what is required.
+    */
+    resolver: zodResolver(invoiceLabelSchema),
     defaultValues: {
       name: label?.name ?? '',
       colorToken: label?.colorToken ?? 'ink',
@@ -100,7 +120,13 @@ function LabelForm({ label, onSubmit, onCancel, isPending, error }) {
         </p>
       )}
 
-      <Input label="Name" placeholder="Thanks for Support" {...register('name')} />
+      <Input
+        label="Name"
+        placeholder="Thanks for Support"
+        required
+        error={errors.name?.message}
+        {...register('name')}
+      />
 
       <div className="grid gap-3 sm:grid-cols-2">
         <SelectField
@@ -109,7 +135,15 @@ function LabelForm({ label, onSubmit, onCancel, isPending, error }) {
           label="Colour"
           options={LABEL_COLOR_OPTIONS}
         />
-        <Input label="Sort order" type="number" min="0" {...register('order')} />
+        <Input
+          label="Sort order"
+          type="number"
+          min="0"
+          placeholder="0"
+          hint="Lower numbers come first in the picker."
+          error={errors.order?.message}
+          {...register('order')}
+        />
       </div>
 
       {/* The pill as it will appear on the invoice list. Sized and toned exactly
@@ -155,8 +189,8 @@ function LabelForm({ label, onSubmit, onCancel, isPending, error }) {
   );
 }
 
-export function AdminInvoiceLabelsPage() {
-  const [creating, setCreating] = useState(false);
+function InvoiceLabelsBody({ creating = false, onCreatingChange }) {
+  const setCreating = (next) => onCreatingChange?.(next);
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
 
@@ -246,29 +280,6 @@ export function AdminInvoiceLabelsPage() {
 
   return (
     <>
-      <PageHeader
-        icon={ADMIN_PAGE.icon}
-        title={ADMIN_PAGE.title}
-        description={ADMIN_PAGE.description}
-        action={
-          <>
-            <Link
-              to="/admin/settings/invoice-status"
-              className={cn(
-                pressable,
-                'inline-flex h-11 select-none items-center justify-center gap-2 rounded-md border border-line-strong bg-surface px-5 font-display text-md font-semibold text-ink-700 hover:border-ink-300 hover:bg-surface-2',
-              )}
-            >
-              <FileText className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
-              Invoice messages
-            </Link>
-            <Button onClick={() => setCreating(true)} icon={Plus}>
-              Add status
-            </Button>
-          </>
-        }
-      />
-
       {/* Said once, at the top, because it is the distinction the whole screen
           rests on - and the reason somebody arriving here looking for "mark it
           paid" is in the wrong place. */}
@@ -357,15 +368,13 @@ export function AdminInvoiceLabelsPage() {
       {/* The server refuses a delete for a status any invoice carries and its
           error names the count, so this dialog states the rule rather than
           predicting the outcome from a usage number it was not sent. */}
-      <ConfirmDialog
-        open={Boolean(deleting)}
+      {/* How many invoices are actually set to this status, before the click -
+          the prose version described the rule without ever giving the number
+          the rule turns on. */}
+      <DeleteWithPreview
+        type="invoice-label"
+        record={deleting}
         onClose={() => setDeleting(null)}
-        title="Delete this status?"
-        body={
-          deleting
-            ? `“${deleting.name}” will be removed from the list. If any invoice is currently set to it, the delete is refused and you should retire it instead - that takes it out of the picker and leaves those invoices readable.`
-            : ''
-        }
         confirmLabel="Delete status"
         loading={deleteInvoiceLabel.isPending}
         error={deleteInvoiceLabel.error?.message}
@@ -374,6 +383,77 @@ export function AdminInvoiceLabelsPage() {
         }
       />
     </>
+  );
+}
+
+/**
+ * Invoice statuses - the manual list, and the timed messages, as two tabs.
+ *
+ * ## Why one screen
+ *
+ * These shipped as two sibling settings screens called "Invoice Statuses" and
+ * "Invoice Messages", which is a menu somebody has to read twice: both are
+ * about what an invoice says and where it has got to, and the old Statuses
+ * screen already carried a button across to the other one. Two tabs say that
+ * relationship in the place it matters, and cost one click instead of a trip
+ * back out to the settings menu.
+ *
+ * The tab state is local rather than a URL parameter: the two halves are views
+ * of the same subject rather than separate destinations, and nothing links
+ * into the messages half from outside except the legacy URL, which redirects.
+ */
+export function AdminInvoiceLabelsPage() {
+  const [tab, setTab] = useState('statuses');
+
+  /*
+    One Add button, not two.
+
+    Each half used to own its own: the statuses list had "Add status" above it,
+    and the messages list ended with an unlabelled blank card acting as the
+    create form. Two differently-shaped ways to add to one screen, and the
+    message one was at the BOTTOM of a long list where nobody found it. The
+    header carries a single button that adds to whichever tab is open, so the
+    action is in the same place whatever you are looking at.
+
+    The state lives here rather than in each body because the button does too -
+    a body cannot own a control drawn above its own tab row.
+  */
+  const [creating, setCreating] = useState(false);
+  const isStatuses = tab === 'statuses';
+
+  return (
+    <div className="form-page">
+      <PageHeader
+        icon={ADMIN_PAGE.icon}
+        title={ADMIN_PAGE.title}
+        description={ADMIN_PAGE.description}
+        action={
+          <Button onClick={() => setCreating(true)} icon={Plus}>
+            {isStatuses ? 'Add status' : 'Add message'}
+          </Button>
+        }
+      />
+
+      <TabRow
+        className="mb-4"
+        tabs={[
+          { key: 'statuses', label: 'Statuses', icon: Tag },
+          { key: 'messages', label: 'Messages', icon: Mail },
+        ]}
+        value={tab}
+        onChange={(next) => {
+          // A half-open create dialog belongs to the tab it was opened from.
+          setCreating(false);
+          setTab(next);
+        }}
+      />
+
+      {isStatuses ? (
+        <InvoiceLabelsBody creating={creating} onCreatingChange={setCreating} />
+      ) : (
+        <InvoiceMessagesBody adding={creating} onAddingChange={setCreating} />
+      )}
+    </div>
   );
 }
 

@@ -13,6 +13,7 @@ import { sendMail, mailerConfigured } from './mailer.js';
 import credentialService from './credentialService.js';
 import env from '../config/env.js';
 import { BUSINESS_INFO } from '../../../shared/business.js';
+import { sendingBusiness } from './sendingBusiness.js';
 
 /**
  * Marketing - the four communication channels (ERP rework §6.13, phase 9).
@@ -175,6 +176,10 @@ function serializeTemplate(row) {
     name: row.name,
     channel: row.channel,
     document: row.document ?? 'none',
+    // Without this the grid cannot find the message it just saved: it looks a
+    // template up by (channel, document, status), and a row answering with no
+    // status matches the General cell instead of the one it belongs to.
+    status: row.status ?? '',
     subject: row.subject ?? '',
     body: row.body,
     isActive: row.isActive !== false,
@@ -269,7 +274,15 @@ async function sendMessage(
     if (!template) throw ApiError.notFound('Template not found.', 'TEMPLATE_NOT_FOUND');
     // A template fills an empty box; typed text always wins, so picking a
     // template and then editing it does not lose the edit.
-    if (!text?.trim()) text = db().MessageTemplate.render(template.body, account);
+    if (!text?.trim()) {
+      // The sending business, so `{{shopName}}` resolves to whoever is
+      // actually writing. Rendered without it the token was 'Cellvix' on
+      // every business.
+      const business = await sendingBusiness();
+      text = db().MessageTemplate.render(template.body, account, {
+        shopName: business.name,
+      });
+    }
   }
 
   if (!text?.trim() && channel !== 'call') {
@@ -317,10 +330,20 @@ async function sendMessage(
           );
     }
 
+    /**
+     * The business writing, not the house brand.
+     *
+     * CASL requires the sender to identify themselves on every commercial
+     * message, and `decorate` puts that identification in the footer. Naming
+     * the wrong company there is a compliance failure rather than a branding
+     * slip - the recipient consented to hear from the business they deal with.
+     */
+    const business = await sendingBusiness();
+
     const result = await sendMail({
       to: account.email,
-      subject: subject || `A message from ${BUSINESS_INFO.name}`,
-      html: decorate(text, account),
+      subject: subject || `A message from ${business.name}`,
+      html: decorate(text, account, business),
       text,
     });
     row.status = result.delivered ? 'sent' : 'failed';
@@ -471,7 +494,7 @@ function unsubscribeUrl(account) {
  * The body is escaped on the way in - admin-authored copy is never trusted as
  * markup, on the server any more than on the client (Instructions §9).
  */
-function decorate(body, account) {
+function decorate(body, account, business = BUSINESS_INFO) {
   const escape = (value) =>
     String(value ?? '').replace(
       /[&<>]/g,
@@ -483,7 +506,7 @@ function decorate(body, account) {
     .map((block) => `<p style="margin:0 0 14px">${escape(block).replace(/\n/g, '<br>')}</p>`)
     .join('');
 
-  const { line1, city, region, postal } = BUSINESS_INFO.address ?? {};
+  const { line1, city, region, postal } = business.address ?? {};
   const address = [line1, city, [region, postal].filter(Boolean).join(' ')]
     .filter(Boolean)
     .join(', ');
@@ -494,7 +517,7 @@ function decorate(body, account) {
     '<hr style="border:none;border-top:1px solid #E5E5E5;margin:24px 0">',
     // CASL: sender identification and a working unsubscribe on every
     // commercial message. Not optional, and not the author's job to remember.
-    `<p style="font-size:12px;color:#6B6B6B;margin:0 0 8px">${escape(BUSINESS_INFO.name)}${address ? ` - ${escape(address)}` : ''}</p>`,
+    `<p style="font-size:12px;color:#6B6B6B;margin:0 0 8px">${escape(business.name)}${address ? ` - ${escape(address)}` : ''}</p>`,
     '<p style="font-size:12px;color:#6B6B6B;margin:0">You are receiving this because you hold a wholesale account with us. ',
     `<a href="${unsubscribeUrl(account)}" style="color:#CF3429">Unsubscribe</a>.</p>`,
     '</div>',
@@ -662,20 +685,29 @@ async function sendCampaign(id, staff) {
   row.status = 'sending';
   await row.save();
 
+  // Resolved once for the whole send, not per recipient: it is the same business
+  // for every message in a campaign, and a lookup inside the loop would be one
+  // query per account for an answer that cannot change mid-send.
+  const business = await sendingBusiness();
+
   let sent = 0;
   let queued = 0;
   let failed = 0;
 
   for (const account of eligible) {
-    const body = db().MessageTemplate.render(row.body, account);
+    const body = db().MessageTemplate.render(row.body, account, {
+      shopName: business.name,
+    });
     let status = 'failed';
     let reason;
 
     try {
       const result = await sendMail({
         to: account.email,
-        subject: db().MessageTemplate.render(row.subject, account),
-        html: decorate(body, account),
+        subject: db().MessageTemplate.render(row.subject, account, {
+          shopName: business.name,
+        }),
+        html: decorate(body, account, business),
         text: body,
       });
       status = result.delivered ? 'sent' : 'failed';
@@ -848,6 +880,83 @@ async function summary() {
   };
 }
 
+/**
+ * The send caps, and how much of each has been used.
+ *
+ * The usage half is the point: a cap with no counter beside it is a number
+ * nobody can act on, and the question a staff member actually has is "how
+ * close are we". Counted from `MessageLog` rather than from a running total,
+ * because the log is what a send writes and a separate counter would drift
+ * from it the first time anything failed midway.
+ *
+ * Outbound only. An inbound reply is not something this business sent, so
+ * counting it toward a send cap would let a busy inbox switch off sending.
+ */
+async function listLimits() {
+  const settings = await db().Settings.load();
+  const stored = settings?.communications?.limits ?? {};
+
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+
+  const startOfMonth = new Date();
+  startOfMonth.setDate(1);
+  startOfMonth.setHours(0, 0, 0, 0);
+
+  const [today, month] = await Promise.all([
+    db().MessageLog.aggregate([
+      { $match: { direction: 'outbound', createdAt: { $gte: startOfDay } } },
+      { $group: { _id: '$channel', count: { $sum: 1 } } },
+    ]),
+    db().MessageLog.aggregate([
+      { $match: { direction: 'outbound', createdAt: { $gte: startOfMonth } } },
+      { $group: { _id: '$channel', count: { $sum: 1 } } },
+    ]),
+  ]);
+
+  const countBy = (rows) => rows.reduce((out, row) => ({ ...out, [row._id]: row.count }), {});
+  const usedToday = countBy(today);
+  const usedMonth = countBy(month);
+
+  return {
+    limits: MESSAGE_CHANNELS.map((channel) => {
+      const row = stored?.[channel] ?? {};
+      return {
+        channel,
+        daily: row.daily ?? 0,
+        monthly: row.monthly ?? 0,
+        alertPercent: row.alertPercent ?? 80,
+        alertEmail: row.alertEmail ?? '',
+        usedToday: usedToday[channel] ?? 0,
+        usedThisMonth: usedMonth[channel] ?? 0,
+      };
+    }),
+  };
+}
+
+/** Save one channel s caps. See `messageLimitSchema` on why one at a time. */
+async function saveLimit(body = {}) {
+  const channel = String(body.channel);
+  if (!MESSAGE_CHANNELS.includes(channel)) {
+    throw ApiError.badRequest('Unknown channel.', 'UNKNOWN_CHANNEL');
+  }
+
+  await db().Settings.updateOne(
+    { key: 'singleton' },
+    {
+      $set: {
+        [`communications.limits.${channel}.daily`]: Number(body.daily) || 0,
+        [`communications.limits.${channel}.monthly`]: Number(body.monthly) || 0,
+        [`communications.limits.${channel}.alertPercent`]: Number(body.alertPercent) || 0,
+        [`communications.limits.${channel}.alertEmail`]: String(body.alertEmail ?? '').trim(),
+      },
+    },
+    { upsert: true },
+  );
+
+  return listLimits();
+}
+
 export default {
   channelStatus,
   channelStatuses,
@@ -868,6 +977,8 @@ export default {
   resubscribe,
   resolveAudience,
   summary,
+  listLimits,
+  saveLimit,
 };
 
-export { channelStatus, channelStatuses, listMessages, sendMessage, listTemplates, createTemplate, updateTemplate, deleteTemplate, isSuppressed, unsubscribeToken, resolveAudience, listCampaigns, getCampaign, createCampaign, updateCampaign, deleteCampaign, sendCampaign, listUnsubscribes, unsubscribe, resubscribe, summary };
+export { channelStatus, channelStatuses, listMessages, sendMessage, listTemplates, createTemplate, updateTemplate, deleteTemplate, isSuppressed, unsubscribeToken, resolveAudience, listCampaigns, getCampaign, createCampaign, updateCampaign, deleteCampaign, sendCampaign, listUnsubscribes, unsubscribe, resubscribe, summary, listLimits, saveLimit };

@@ -85,7 +85,7 @@ export function StoreCreditPanel({ id, balance }) {
       </div>
 
       <p className="mb-3 text-xs leading-relaxed text-ink-400">
-        Money this account holds with Cellvix. It comes off their next order automatically. A
+        Money this account holds with this business. It comes off their next order automatically. A
         negative amount is a correction.
       </p>
 

@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
-import { useFieldArray, useForm } from 'react-hook-form';
+import { useFieldArray } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
 import {
   AlertCircle,
   CheckCircle2,
@@ -84,8 +87,41 @@ function todayIso(offsetDays = 0) {
  * provincial rate, which this form cannot know.
  */
 /** `seedClient` pre-picks the customer when the form is opened from a profile. */
+/**
+ * What the QUOTE FORM holds.
+ *
+ * Money is typed in dollars and converted on submit, so `quoteSchema`'s cents
+ * fields are this form's `*Dollars` ones. A line with no product selected is
+ * the common half-filled row rather than an error, so only the lines that
+ * carry one are checked - the submit transform drops the rest.
+ */
+const quoteFormSchema = z.object({
+  user: z.string().trim().min(1, 'Choose a customer.'),
+  validUntil: z.string().trim().min(1, 'Pick a date.'),
+  shippingDollars: z.coerce.number({ invalid_type_error: 'Enter a number, or 0.' }).min(0, 'Cannot be negative.'),
+  notes: z.string().trim().max(2000).optional().or(z.literal('')),
+  items: z
+    .array(
+      z.object({
+        product: z.string().trim().optional().or(z.literal('')),
+        qty: z.coerce.number().int().min(1, 'At least one.'),
+        unitPriceDollars: z.union([z.literal(''), z.coerce.number().min(0)]).optional(),
+      }),
+    )
+    .refine((rows) => rows.some((row) => String(row.product ?? '').trim()), {
+      message: 'Add at least one line with a product on it.',
+    }),
+});
+
 function QuoteForm({ clients, products, quote, seedClient, onSubmit, onCancel, isPending, error }) {
-  const { register, handleSubmit, control, watch } = useForm({
+  const {
+    register,
+    handleSubmit,
+    control,
+    watch,
+    formState: { errors },
+  } = useAdminForm({
+    resolver: zodResolver(quoteFormSchema),
     defaultValues: {
       user: quote?.user?.id ?? seedClient ?? clients[0]?.id ?? '',
       validUntil: quote?.validUntil
@@ -130,16 +166,34 @@ function QuoteForm({ clients, products, quote, seedClient, onSubmit, onCancel, i
           control={control}
           name="user"
           label="Client"
+          required
+          error={errors.user?.message}
           options={clients.map((client) => ({
             value: client.id,
             label: client.displayName ?? client.contactName ?? client.email,
           }))}
         />
-        <Input label="Valid until" type="date" min={todayIso()} {...register('validUntil')} />
+        <Input
+          label="Valid until"
+          type="date"
+          min={todayIso()}
+          required
+          error={errors.validUntil?.message}
+          {...register('validUntil')}
+        />
       </div>
 
       <div>
         <p className="eyebrow mb-2 text-ink-400">Lines</p>
+
+        {/* A whole-array rule ("at least one line with a product") belongs to
+            no single field, so it is shown against the section rather than
+            silently failing the submit with nothing marked. */}
+        {errors.items?.root?.message && (
+          <p role="alert" className="mb-2 text-sm text-danger">
+            {errors.items.root.message}
+          </p>
+        )}
 
         <div className="space-y-2">
           {fields.map((field, index) => {
@@ -199,7 +253,14 @@ function QuoteForm({ clients, products, quote, seedClient, onSubmit, onCancel, i
         </Button>
       </div>
 
-      <Input label="Shipping" inputMode="decimal" suffix="CAD" {...register('shippingDollars')} />
+      <Input
+        label="Shipping"
+        inputMode="decimal"
+        suffix="CAD"
+        placeholder="0.00"
+        error={errors.shippingDollars?.message}
+        {...register('shippingDollars')}
+      />
       <Textarea label="Notes" rows={2} {...register('notes')} />
 
       <div className="rounded-md bg-surface-2 px-3 py-2.5">

@@ -78,7 +78,7 @@ function totalsRow(label, value, { strong = false } = {}) {
  * @param {object}  supplier  the supplier document, for the letterhead
  * @param {string} [nonce]    when present, adds the print button and its script
  */
-function renderProformaHtml({ po, bid, supplier, nonce = null }) {
+function renderProformaHtml({ po, bid, supplier, nonce = null, business = BUSINESS_INFO }) {
   const proforma = bid?.proforma;
   if (!proforma) return null;
 
@@ -169,10 +169,10 @@ ${
         <tr>
           <td style="padding-top:14px;vertical-align:top;width:50%;">
             <span style="display:block;font:600 ${T.small}/1.4 inherit;color:${MUTED};letter-spacing:.08em;text-transform:uppercase;">Billed to</span>
-            <span style="display:block;margin-top:5px;font:600 ${T.item}/1.5 inherit;color:${INK};">${escapeHtml(BUSINESS_INFO.name)}</span>
-            <span style="display:block;font:400 ${T.body}/1.5 inherit;color:${MUTED};">${escapeHtml(BUSINESS_INFO.address.line1 ?? '')}</span>
+            <span style="display:block;margin-top:5px;font:600 ${T.item}/1.5 inherit;color:${INK};">${escapeHtml(business.name)}</span>
+            <span style="display:block;font:400 ${T.body}/1.5 inherit;color:${MUTED};">${escapeHtml(business.address.line1 ?? '')}</span>
             <span style="display:block;font:400 ${T.body}/1.5 inherit;color:${MUTED};">${escapeHtml(
-              [BUSINESS_INFO.address.city, BUSINESS_INFO.address.region, BUSINESS_INFO.address.postal]
+              [business.address.city, business.address.region, business.address.postal]
                 .filter(Boolean)
                 .join(', '),
             )}</span>

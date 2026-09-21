@@ -32,6 +32,8 @@ import * as settingsController from '../controllers/settingsController.js';
 import * as auditController from '../controllers/auditController.js';
 import * as credentialController from '../controllers/credentialController.js';
 import * as taxonomyAdminController from '../controllers/taxonomyAdminController.js';
+import * as deletePreviewController from '../controllers/deletePreviewController.js';
+import * as lowStockAlertController from '../controllers/lowStockAlertController.js';
 import * as invoiceStatusController from '../controllers/invoiceStatusController.js';
 import * as invoiceLabelController from '../controllers/invoiceLabelController.js';
 import * as appointmentController from '../controllers/appointmentController.js';
@@ -164,6 +166,7 @@ import {
   ticketConvertSchema,
   serviceCatalogSchema,
   serviceCatalogUpdateSchema,
+  serviceImportSchema,
   serviceQuoteSchema,
   serviceQuoteUpdateSchema,
   serviceQuoteStatusSchema,
@@ -173,6 +176,7 @@ import {
   kioskCheckInSchema,
   kioskUnlockSchema,
   kioskPinSchema,
+  kioskSettingsSchema,
   businessSchema,
   roleSchema,
   staffUserSchema,
@@ -180,6 +184,7 @@ import {
   messageSchema,
   callLogSchema,
   messageTemplateSchema,
+  messageLimitSchema,
   campaignSchema,
   unsubscribeSchema,
   referralRateSchema,
@@ -192,6 +197,8 @@ import {
   agreementSignSchema,
   providerCredentialSchema,
   taxonomyNodeSchema,
+  taxonomyCreateSchema,
+  taxonomyImportSchema,
   invoiceStatusRuleSchema,
   invoiceLabelSchema,
   invoiceLabelSetSchema,
@@ -291,6 +298,20 @@ router.post('/unsubscribe', authLimiter, validate(unsubscribeSchema), marketingC
  * too large to walk, but there is no reason to let anybody try.
  */
 router.get('/portal/:business/:token', authLimiter, customerPortalController.profile);
+
+/**
+ * Who the storefront belongs to - name, contact details, hours, socials.
+ *
+ * **Public, and it has to be**: the footer, the header and the contact page all
+ * print this before anybody has signed in. The shape is an allowlist built in
+ * `settingsService.publicProfile`, so the admin settings document's tax rates,
+ * warranty tables and kiosk PIN state cannot ride along; the tax number is left
+ * out too, since it belongs on an invoice rather than on an open route.
+ *
+ * `resolveBusiness` and `openBusinessDb` run app-wide, above this, so the
+ * answer is already scoped to whichever business the host resolved to.
+ */
+router.get('/business-info', settingsController.publicProfile);
 
 // --- catalogue -------------------------------------------------------------
 router.get('/taxonomy', taxonomyController.tree);
@@ -812,6 +833,8 @@ router.post('/admin/tickets/:id/convert', ...admin, requireFeature('sales.ticket
 // editing the price list is 'full'.
 router.get('/admin/services', ...admin, requireFeature('sales.services'), requirePermission('sales', 'view'), serviceCatalogController.listServices);
 router.post('/admin/services', ...admin, requireFeature('sales.services'), requirePermission('sales', 'full'), validate(serviceCatalogSchema), serviceCatalogController.createService);
+// Before `/:id`, or "import" is matched as a service id and the request 404s.
+router.post('/admin/services/import', ...admin, requireFeature('sales.services'), requirePermission('sales', 'full'), validate(serviceImportSchema), serviceCatalogController.importServices);
 router.get('/admin/services/:id', ...admin, requireFeature('sales.services'), requirePermission('sales', 'view'), serviceCatalogController.getService);
 router.patch('/admin/services/:id', ...admin, requireFeature('sales.services'), requirePermission('sales', 'full'), validate(serviceCatalogUpdateSchema), serviceCatalogController.updateService);
 // Refused for a service any quote or ticket points at - the service says so and
@@ -842,7 +865,16 @@ router.post('/kiosk/lock', kioskController.lock);
 router.get('/kiosk/devices', requireKiosk, kioskController.getDevices);
 router.post('/kiosk/check-in', requireKiosk, validate(kioskCheckInSchema), kioskController.checkIn);
 // Setting the PIN is an admin action and never reachable from the tablet.
-router.put('/admin/kiosk/pin', ...admin, requirePermission('settings', 'full'), validate(kioskPinSchema), kioskController.setPin);
+// PATCH, not PUT. It was the only PUT in the whole API - written before any
+// screen called it, so nothing ever exercised it, and `lib/api.js` has no
+// `put` at all: the first click on Set PIN answered "api.put is not a
+// function". One verb fewer beats a wrapper method with a single caller.
+router.patch('/admin/kiosk/pin', ...admin, requireFeature('sales.kiosk'), requirePermission('settings.financial', 'full'), validate(kioskPinSchema), kioskController.setPin);
+// The rest of the tablet: whether it is live, what it says, whether it reads
+// aloud and what the customer agrees to. Behind the feature flag as well as
+// the permission - a business with no kiosk should not be shown the screen at
+// all (404, never 403).
+router.patch('/admin/settings/kiosk', ...admin, requireFeature('sales.kiosk'), requirePermission('settings.financial', 'full'), validate(kioskSettingsSchema), settingsController.updateKiosk);
 // Repair estimates - the service side of Sales § Quote. Gated on the SAME
 // 'sales.quotes' flag as the wholesale quote list: they are one section in the
 // nav, and a business sees whichever kind its own records are. Under
@@ -933,6 +965,11 @@ const marketingView = [...admin, requirePermission('marketing', 'view')];
 const marketingFull = [...admin, requirePermission('marketing', 'full')];
 
 router.get('/admin/marketing/summary', ...marketingView, marketingController.summary);
+
+// Send caps, and how much of each is used today. Saved one channel at a
+// time - see `messageLimitSchema`.
+router.get('/admin/marketing/limits', ...marketingView, marketingController.listLimits);
+router.patch('/admin/marketing/limits', ...marketingFull, validate(messageLimitSchema), marketingController.saveLimit);
 router.get('/admin/marketing/messages', ...marketingView, marketingController.listMessages);
 
 // One route per channel rather than a `:channel` parameter, so the channel is
@@ -994,22 +1031,22 @@ router.patch('/admin/referrals/rate', ...adminOnly, validate(referralRateSchema)
 // admin-only through `/admin/referrals/rate` (§6.13), and a `settings: full`
 // role must not gain a second door onto the number that multiplies every payout.
 router.get('/admin/settings', ...admin, requirePermission('settings', 'view'), settingsController.get);
-router.patch('/admin/settings/business', ...admin, requirePermission('settings', 'full'), validate(businessInfoSchema), settingsController.updateBusiness);
-router.patch('/admin/settings/sale', ...admin, requirePermission('settings', 'full'), validate(saleSettingsSchema), settingsController.updateSale);
-router.patch('/admin/settings/shipping', ...admin, requirePermission('settings', 'full'), validate(shippingSettingsSchema), settingsController.updateShipping);
-router.patch('/admin/settings/payment-methods', ...admin, requirePermission('settings', 'full'), validate(paymentMethodsSettingsSchema), settingsController.updatePaymentMethods);
-router.patch('/admin/settings/inventory', ...admin, requirePermission('settings', 'full'), validate(inventorySettingsSchema), settingsController.updateInventory);
+router.patch('/admin/settings/business', ...admin, requirePermission('settings.business', 'full'), validate(businessInfoSchema), settingsController.updateBusiness);
+router.patch('/admin/settings/sale', ...admin, requirePermission('settings.financial', 'full'), validate(saleSettingsSchema), settingsController.updateSale);
+router.patch('/admin/settings/shipping', ...admin, requirePermission('settings.financial', 'full'), validate(shippingSettingsSchema), settingsController.updateShipping);
+router.patch('/admin/settings/payment-methods', ...admin, requirePermission('settings.financial', 'full'), validate(paymentMethodsSettingsSchema), settingsController.updatePaymentMethods);
+router.patch('/admin/settings/inventory', ...admin, requirePermission('settings.financial', 'full'), validate(inventorySettingsSchema), settingsController.updateInventory);
 
 // Supplier agreements - the documents authored here and signed in the portal.
 // Filed under `settings` like the rest of what a staff member configures; reading
 // one is `settings: view`, writing is `settings: full`.
-router.get('/admin/agreements', ...admin, requirePermission('settings', 'view'), agreementController.listTemplates);
-router.post('/admin/agreements', ...admin, requirePermission('settings', 'full'), validate(agreementTemplateSchema), agreementController.createTemplate);
-router.get('/admin/agreements/:id', ...admin, requirePermission('settings', 'view'), agreementController.getTemplate);
-router.patch('/admin/agreements/:id', ...admin, requirePermission('settings', 'full'), validate(agreementTemplateSchema), agreementController.updateTemplate);
+router.get('/admin/agreements', ...admin, requirePermission('settings.financial', 'view'), agreementController.listTemplates);
+router.post('/admin/agreements', ...admin, requirePermission('settings.financial', 'full'), validate(agreementTemplateSchema), agreementController.createTemplate);
+router.get('/admin/agreements/:id', ...admin, requirePermission('settings.financial', 'view'), agreementController.getTemplate);
+router.patch('/admin/agreements/:id', ...admin, requirePermission('settings.financial', 'full'), validate(agreementTemplateSchema), agreementController.updateTemplate);
 // A signed template is never edited in place - this makes the next version and
 // moves every supplier onto it, which is what makes their signature stale.
-router.post('/admin/agreements/:id/publish', ...admin, requirePermission('settings', 'full'), validate(agreementTemplateSchema.partial()), agreementController.publishRevision);
+router.post('/admin/agreements/:id/publish', ...admin, requirePermission('settings.financial', 'full'), validate(agreementTemplateSchema.partial()), agreementController.publishRevision);
 
 // ---- phase 11b: the audit trail ---------------------------------------------
 // Read-only by design - rows are written as a side effect of the operations
@@ -1025,7 +1062,7 @@ router.post('/admin/agreements/:id/publish', ...admin, requirePermission('settin
 router.get('/admin/web-quotes', ...admin, requireFeature('sales.webquotes'), requirePermission('sales', 'view'), webQuoteController.list);
 router.patch('/admin/web-quotes/:id/status', ...admin, requireFeature('sales.webquotes'), requirePermission('sales', 'full'), validate(webQuoteStatusSchema), webQuoteController.setStatus);
 
-router.get('/admin/audit/activity', ...admin, requirePermission('settings', 'view'), auditController.activity);
+router.get('/admin/audit/activity', ...admin, requirePermission('settings.system', 'view'), auditController.activity);
 router.get('/admin/audit/security', ...adminOnly, auditController.security);
 
 // ---- phase 11c: provider credentials ----------------------------------------
@@ -1049,37 +1086,60 @@ router.delete('/admin/credentials/:provider', ...adminOnly, credentialController
 // Both sit under `settings`, matching where §6.15 files them. The taxonomy
 // decides what the storefront can be filtered by and the rules decide what gets
 // emailed to customers automatically, so neither is a `view`-level write.
-router.get('/admin/taxonomy', ...admin, requirePermission('settings', 'view'), taxonomyAdminController.list);
-router.get('/admin/taxonomy/:id', ...admin, requirePermission('settings', 'view'), taxonomyAdminController.get);
-router.patch('/admin/taxonomy/:id', ...admin, requirePermission('settings', 'full'), validate(taxonomyNodeSchema), taxonomyAdminController.update);
-router.delete('/admin/taxonomy/:id', ...admin, requirePermission('settings', 'full'), taxonomyAdminController.remove);
+router.get('/admin/taxonomy', ...admin, requireFeature('storefront.public'), requirePermission('settings.financial', 'view'), taxonomyAdminController.list);
+// POST before the ':id' routes is not required here (different verb), but the
+// create route is listed first so the group reads list → create → read → edit.
+router.post('/admin/taxonomy', ...admin, requireFeature('storefront.public'), requirePermission('settings.financial', 'full'), validate(taxonomyCreateSchema), taxonomyAdminController.create);
+/**
+ * What a delete would take with it, asked before the confirm dialog opens.
+ *
+ * One route for every deletable type - see `deletePreviewService`'s registry.
+ * Readable with `settings: view`: it answers counts the screens already show,
+ * and a role that can open the list can see how many things point at a row.
+ */
+router.get('/admin/delete-preview/:type/:id', ...admin, requirePermission('settings', 'view'), deletePreviewController.preview);
 
-router.get('/admin/invoice-rules', ...admin, requirePermission('settings', 'view'), invoiceStatusController.list);
-router.post('/admin/invoice-rules', ...admin, requirePermission('settings', 'full'), validate(invoiceStatusRuleSchema), invoiceStatusController.create);
-router.patch('/admin/invoice-rules/:id', ...admin, requirePermission('settings', 'full'), validate(invoiceStatusRuleSchema), invoiceStatusController.update);
-router.delete('/admin/invoice-rules/:id', ...admin, requirePermission('settings', 'full'), invoiceStatusController.remove);
+router.post('/admin/taxonomy/import', ...admin, requireFeature('storefront.public'), requirePermission('settings.financial', 'full'), validate(taxonomyImportSchema), taxonomyAdminController.importCsv);
+// Above ':id' - a literal segment registered after a parameter is unreachable.
+router.get('/admin/taxonomy/:id', ...admin, requireFeature('storefront.public'), requirePermission('settings.financial', 'view'), taxonomyAdminController.get);
+router.patch('/admin/taxonomy/:id', ...admin, requireFeature('storefront.public'), requirePermission('settings.financial', 'full'), validate(taxonomyNodeSchema), taxonomyAdminController.update);
+router.delete('/admin/taxonomy/:id', ...admin, requireFeature('storefront.public'), requirePermission('settings.financial', 'full'), taxonomyAdminController.remove);
+
+router.get('/admin/invoice-rules', ...admin, requirePermission('settings.financial', 'view'), invoiceStatusController.list);
+router.post('/admin/invoice-rules', ...admin, requirePermission('settings.financial', 'full'), validate(invoiceStatusRuleSchema), invoiceStatusController.create);
+router.patch('/admin/invoice-rules/:id', ...admin, requirePermission('settings.financial', 'full'), validate(invoiceStatusRuleSchema), invoiceStatusController.update);
+router.delete('/admin/invoice-rules/:id', ...admin, requirePermission('settings.financial', 'full'), invoiceStatusController.remove);
 // Running sends real email, so it needs `full` even in dry-run form - the dry
 // run reveals which accounts would be contacted, which is not a `view` fact.
-router.post('/admin/invoice-rules/run', ...admin, requirePermission('settings', 'full'), invoiceStatusController.run);
+router.post('/admin/invoice-rules/run', ...admin, requirePermission('settings.financial', 'full'), invoiceStatusController.run);
 
 // The manual invoice status list. A settings write, not a sales one: it changes
 // the vocabulary every invoice is described in, and one of its fields arms an
 // automatic email to customers. Reading it is `view` because every picker needs
 // it.
 router.get('/admin/invoice-labels', ...admin, requirePermission('sales', 'view'), invoiceLabelController.list);
-router.post('/admin/invoice-labels', ...admin, requirePermission('settings', 'full'), validate(invoiceLabelSchema), invoiceLabelController.create);
-router.patch('/admin/invoice-labels/:id', ...admin, requirePermission('settings', 'full'), validate(invoiceLabelSchema), invoiceLabelController.update);
+router.post('/admin/invoice-labels', ...admin, requirePermission('settings.financial', 'full'), validate(invoiceLabelSchema), invoiceLabelController.create);
+router.patch('/admin/invoice-labels/:id', ...admin, requirePermission('settings.financial', 'full'), validate(invoiceLabelSchema), invoiceLabelController.update);
 // Refused while any invoice carries it - retiring is the answer, and it keeps
 // the history readable. See invoiceLabelService.deleteLabel.
-router.delete('/admin/invoice-labels/:id', ...admin, requirePermission('settings', 'full'), invoiceLabelController.remove);
+router.delete('/admin/invoice-labels/:id', ...admin, requirePermission('settings.financial', 'full'), invoiceLabelController.remove);
 
 // ---- phase 11e: email settings & the scheduling board -----------------------
-router.patch('/admin/settings/communications', ...admin, requirePermission('settings', 'full'), validate(communicationsSettingsSchema), settingsController.updateCommunications);
+/**
+ * Send the low-stock alert now.
+ *
+ * Filed under communications, not inventory: it is one of the Email Settings
+ * toggles and it mails somebody. Gated on that category so a role that may not
+ * touch email settings cannot make the system send.
+ */
+router.post('/admin/settings/low-stock-alert', ...admin, requirePermission('settings.communications', 'full'), lowStockAlertController.run);
+
+router.patch('/admin/settings/communications', ...admin, requirePermission('settings.communications', 'full'), validate(communicationsSettingsSchema), settingsController.updateCommunications);
 
 // Read-only, and there is **no write route** - §6b U1–U2: the board ships as
 // interface without wiring, and an endpoint that accepted a booking would be
 // the "fake success" rule 4 forbids.
-router.get('/admin/appointments', ...admin, requireFeature('scheduling.appointments'), requirePermission('settings', 'view'), appointmentController.list);
+router.get('/admin/appointments', ...admin, requireFeature('scheduling.appointments'), requirePermission('settings.scheduling', 'view'), appointmentController.list);
 
 // ---- phase 12: global search ------------------------------------------------
 // Staff-level only, with no per-area guard here on purpose: the service decides

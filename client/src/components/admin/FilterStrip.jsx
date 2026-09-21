@@ -50,6 +50,11 @@ function Popover({ label, icon: Icon, children, align = 'left', badge }) {
         <div
           className={cn(
             'absolute top-full z-20 mt-1 min-w-[220px] rounded-md bg-surface p-3 shadow-card',
+            // Never wider than the window. The panel is absolutely positioned,
+            // so without a cap it pushes the document wider than the viewport
+            // and the whole page gains a horizontal scrollbar - which is what
+            // a filter panel opening near the right edge actually did.
+            'max-w-[calc(100vw-24px)]',
             align === 'right' ? 'right-0' : 'left-0',
           )}
           onClick={(event) => {
@@ -207,8 +212,16 @@ export function FilterStrip({
       <div className="ml-auto flex items-center gap-2">
         {actions}
 
+        {/* Right-aligned, like Export beside it: this sits in the `ml-auto`
+            group hard against the right edge, so a panel opening rightward
+            from there opens off-screen. */}
         {filters && (
-          <Popover label="Filters" icon={SlidersHorizontal} badge={activeFilterCount}>
+          <Popover
+            label="Filters"
+            icon={SlidersHorizontal}
+            badge={activeFilterCount}
+            align="right"
+          >
             <div className="space-y-3">
               {filters}
               {activeFilterCount > 0 && onClearFilters && (

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
-import { useFieldArray, useForm } from 'react-hook-form';
+import { useFieldArray } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
 import {
   AlertCircle,
   ArrowLeft,
@@ -190,7 +192,7 @@ export function AdminPurchaseOrderCreatePage() {
   );
   const [componentTypes, setComponentTypes] = useState([]);
 
-  const { register, handleSubmit, control, watch, setValue } = useForm({
+  const { register, handleSubmit, control, watch, setValue } = useAdminForm({
     defaultValues: {
       orderDate: isoDay(),
       // A week out. A date a staff member can correct beats an empty field they

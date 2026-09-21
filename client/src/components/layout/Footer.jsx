@@ -3,19 +3,16 @@ import { Link } from 'react-router';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   ArrowUpRight,
-  Facebook,
   HelpCircle,
-  Instagram,
-  Linkedin,
   Mail,
   MapPin,
   MessageCircle,
   MessageSquare,
   Phone,
-  Youtube,
 } from 'lucide-react';
 import cn from '@/lib/cn';
-import { BUSINESS_INFO } from '@/lib/constants';
+import { socialIcon } from '@/lib/socialIcons';
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 import { pressable, transition } from '@/lib/motion';
 
 /**
@@ -34,68 +31,91 @@ import { pressable, transition } from '@/lib/motion';
  * every value clipped at a footer column's width. A reader who wants to dial
  * still sees the number before committing to it; a reader scanning the column
  * sees six labels. The panel opens on click - see `SupportRow`.
+ *
+ * **Built per render from the business on screen, not once at import.**
+ *
+ * It used to be a module constant reading the hardcoded `BUSINESS_INFO`, which
+ * meant every business's footer printed the wholesaler's address, phone and
+ * support inbox. A row whose value the business has not set is dropped rather
+ * than rendered pointing at an empty `tel:` or a `wa.me/` with no number -
+ * a dead link is worse than an absent one, because the customer who clicks it
+ * lands nowhere and the business never finds out.
  */
-const SUPPORT = [
-  {
-    key: 'location',
-    icon: MapPin,
-    label: 'Location',
-    href: BUSINESS_INFO.mapUrl,
-    external: true,
-    // `title` names the field the way the paper form would, `body` is the value
-    // itself, `cta` the thing to do with it.
-    popover: {
-      title: 'Store Address',
-      body: `${BUSINESS_INFO.address.line1}, ${BUSINESS_INFO.address.city}, ${BUSINESS_INFO.address.region} ${BUSINESS_INFO.address.postal}, ${BUSINESS_INFO.address.country}`,
-      cta: 'Get directions',
+function supportRows(info) {
+  const address = [
+    info.address?.line1,
+    info.address?.city,
+    [info.address?.region, info.address?.postal].filter(Boolean).join(' '),
+    info.address?.country,
+  ]
+    .filter(Boolean)
+    .join(', ');
+
+  // The first row of the hours table, when there is one. A business that has
+  // not entered its hours gets a popover without the note rather than one
+  // quoting somebody else's opening times.
+  const firstHours = info.hours?.[0];
+
+  return [
+    info.mapUrl && {
+      key: 'location',
+      icon: MapPin,
+      label: 'Location',
+      href: info.mapUrl,
+      external: true,
+      // `title` names the field the way the paper form would, `body` is the
+      // value itself, `cta` the thing to do with it.
+      popover: address
+        ? { title: 'Store Address', body: address, cta: 'Get directions' }
+        : undefined,
     },
-  },
-  {
-    key: 'feedback',
-    icon: MessageSquare,
-    label: 'Feedback',
-    href: '/contact',
-  },
-  {
-    key: 'phone',
-    icon: Phone,
-    label: 'Phone',
-    href: `tel:${BUSINESS_INFO.phone.replace(/[^\d+]/g, '')}`,
-    external: true,
-    popover: {
-      title: 'Sales desk',
-      body: BUSINESS_INFO.phone,
-      note: `${BUSINESS_INFO.hours[0].days} · ${BUSINESS_INFO.hours[0].time}`,
-      cta: 'Call the desk',
+    {
+      key: 'feedback',
+      icon: MessageSquare,
+      label: 'Feedback',
+      href: '/contact',
     },
-  },
-  {
-    key: 'email',
-    icon: Mail,
-    label: 'Email',
-    href: `mailto:${BUSINESS_INFO.supportEmail}`,
-    external: true,
-    popover: {
-      title: 'Support inbox',
-      body: BUSINESS_INFO.supportEmail,
-      note: 'Answered within one business day',
-      cta: 'Write to us',
+    info.phone && {
+      key: 'phone',
+      icon: Phone,
+      label: 'Phone',
+      href: `tel:${info.phone.replace(/[^\d+]/g, '')}`,
+      external: true,
+      popover: {
+        title: 'Sales desk',
+        body: info.phone,
+        note: firstHours ? `${firstHours.days} · ${firstHours.time}` : undefined,
+        cta: 'Call the desk',
+      },
     },
-  },
-  {
-    key: 'whatsapp',
-    icon: MessageCircle,
-    label: 'WhatsApp',
-    href: `https://wa.me/${BUSINESS_INFO.whatsapp.replace(/[^\d]/g, '')}`,
-    external: true,
-  },
-  {
-    key: 'faqs',
-    icon: HelpCircle,
-    label: 'FAQs',
-    href: '/faq',
-  },
-];
+    info.supportEmail && {
+      key: 'email',
+      icon: Mail,
+      label: 'Email',
+      href: `mailto:${info.supportEmail}`,
+      external: true,
+      popover: {
+        title: 'Support inbox',
+        body: info.supportEmail,
+        note: 'Answered within one business day',
+        cta: 'Write to us',
+      },
+    },
+    info.whatsapp && {
+      key: 'whatsapp',
+      icon: MessageCircle,
+      label: 'WhatsApp',
+      href: `https://wa.me/${info.whatsapp.replace(/[^\d]/g, '')}`,
+      external: true,
+    },
+    {
+      key: 'faqs',
+      icon: HelpCircle,
+      label: 'FAQs',
+      href: '/faq',
+    },
+  ].filter(Boolean);
+}
 
 const COLUMNS = [
   {
@@ -152,13 +172,6 @@ const BADGES = [
     href: 'https://whc.ca/green-powered/?aff=3153&gbid=8en',
     alt: 'Green powered website',
   },
-];
-
-const SOCIAL = [
-  { icon: Facebook, key: 'facebook', label: 'Facebook' },
-  { icon: Instagram, key: 'instagram', label: 'Instagram' },
-  { icon: Linkedin, key: 'linkedin', label: 'LinkedIn' },
-  { icon: Youtube, key: 'youtube', label: 'YouTube' },
 ];
 
 /**
@@ -305,6 +318,9 @@ function SupportRow({ item }) {
  * where nothing has to compete with it.
  */
 export function Footer() {
+  const info = useBusinessInfo();
+  const support = supportRows(info);
+
   return (
     <footer className="mt-14 px-3 pb-3 sm:px-4 sm:pb-4 lg:px-6 lg:pb-6">
       {/* Two boxes, not one: a rounded panel that holds the content and clips
@@ -336,9 +352,15 @@ export function Footer() {
           <div className="grid gap-x-8 gap-y-10 lg:grid-cols-12">
             {/* ---- statement, credentials, social ------------------------ */}
             <div className="lg:col-span-4">
+              {/* The business's own line, not a sentence about the wholesaler.
+                  This read "Cellvix keeps Canadian repair businesses in graded
+                  parts, at wholesale prices, on terms" for every business that
+                  rendered it - and swapping just the name would have been
+                  worse, because a repair shop does not keep anybody in graded
+                  parts. The tagline is the one sentence every business writes
+                  about itself, so it is the one that belongs here. */}
               <h2 className="max-w-sm font-display text-xl font-bold leading-snug text-ink-900 sm:text-2xl">
-                Cellvix keeps Canadian repair businesses in graded parts, at wholesale
-                prices, on terms.
+                {info.tagline || `${info.name}, at your service.`}
               </h2>
 
               {/* No address here: it is the Location row's popover now, and
@@ -372,27 +394,35 @@ export function Footer() {
 
               {/* Handle beside the glyph: a row of bare circles told a reader
                   which networks exist, not which account they land on. */}
-              <div className="mt-7">
-                <h3 className="eyebrow mb-3 text-ink-400">Follow us</h3>
-                {/* A 2x2 rather than a wrapping row. Four chips do not fit
-                    across this rail, so a flex row broke 3 + 1 - which reads as
-                    a list that ran out of room. An even grid reads as a block
-                    that was meant to be one. */}
-                <ul className="grid max-w-sm grid-cols-2 gap-1.5">
-                  {SOCIAL.map(({ icon: Icon, key, label }) => (
-                    <li key={key}>
-                      <a
-                        href={BUSINESS_INFO.social[key]}
-                        aria-label={label}
-                        className={cn(pressable, 'flex items-center gap-1.5 rounded-full border border-line bg-surface py-1.5 pl-2 pr-2.5 text-xs font-medium text-ink-500 hover:border-brand hover:text-brand')}
-                      >
-                        <Icon className="size-3.5 shrink-0" strokeWidth={2.25} aria-hidden="true" />
-                        {BUSINESS_INFO.handles[key]}
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+              {/* The whole block goes when the business is on no networks.
+                  A "Follow us" heading over nothing is a promise the footer
+                  cannot keep. */}
+              {info.social.length > 0 && (
+                <div className="mt-7">
+                  <h3 className="eyebrow mb-3 text-ink-400">Follow us</h3>
+                  {/* A 2x2 rather than a wrapping row. Four chips do not fit
+                      across this rail, so a flex row broke 3 + 1 - which reads
+                      as a list that ran out of room. An even grid reads as a
+                      block that was meant to be one. */}
+                  <ul className="grid max-w-sm grid-cols-2 gap-1.5">
+                    {info.social.map((row) => {
+                      const { icon: Icon, label } = socialIcon(row.network);
+                      return (
+                        <li key={row.network}>
+                          <a
+                            href={row.url}
+                            aria-label={label}
+                            className={cn(pressable, 'flex items-center gap-1.5 rounded-full border border-line bg-surface py-1.5 pl-2 pr-2.5 text-xs font-medium text-ink-500 hover:border-brand hover:text-brand')}
+                          >
+                            <Icon className="size-3.5 shrink-0" strokeWidth={2.25} aria-hidden="true" />
+                            {row.handle || label}
+                          </a>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
             </div>
 
             {/* ---- navigation --------------------------------------------
@@ -408,7 +438,7 @@ export function Footer() {
               <nav aria-label="Support">
                 <h3 className="eyebrow mb-3.5 text-ink-400">Support</h3>
                 <ul className="space-y-2.5">
-                  {SUPPORT.map((item) => (
+                  {support.map((item) => (
                     <SupportRow key={item.key} item={item} />
                   ))}
                 </ul>
@@ -484,7 +514,7 @@ export function Footer() {
       <div className="mx-auto flex max-w-[1400px] flex-col gap-2 px-2 pt-4 text-sm text-ink-400 sm:flex-row sm:items-center sm:justify-between sm:px-4 lg:px-6">
         <p className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <span>
-            {BUSINESS_INFO.name} ©{new Date().getFullYear()}
+            {info.name} ©{new Date().getFullYear()}
           </span>
           <Link to="/contact" className={cn(pressable, ' hover:text-brand')}>
             Privacy
@@ -495,7 +525,7 @@ export function Footer() {
         </p>
 
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span>{BUSINESS_INFO.address.city}</span>
+          <span>{info.address.city}</span>
           <span className="text-ink-300">All prices CAD</span>
         </p>
       </div>

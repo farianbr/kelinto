@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useForm } from 'react-hook-form';
+import useAdminForm from '@/hooks/useAdminForm';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ArrowLeftRight } from 'lucide-react';
 
@@ -39,6 +39,13 @@ const marginToMarkup = (margin) => (margin >= 100 ? null : (margin / (100 - marg
 const markupToMargin = (markup) => (markup / (100 + markup)) * 100;
 const round1 = (value) => Math.round(value * 10) / 10;
 
+/** The form's shape, gathered from the two branches of the document it spans. */
+const formValues = (settings) => ({
+  defaultMarkupPercent: settings.inventory?.defaultMarkupPercent ?? 40,
+  defaultMarginPercent: settings.inventory?.defaultMarginPercent ?? 28.5,
+  lowStockThreshold: settings.operations?.lowStockThreshold ?? 50,
+});
+
 export function AdminInventorySettingsPage() {
   const { data, isLoading } = useAdminSettings();
   const { saveInventorySettings } = useAdminMutations();
@@ -52,14 +59,27 @@ export function AdminInventorySettingsPage() {
     setValue,
     setError,
     formState: { errors, isDirty, isSubmitting },
-  } = useForm({
+  } = useAdminForm({
     resolver: zodResolver(inventorySettingsSchema),
-    defaultValues: { defaultMarkupPercent: 40, defaultMarginPercent: 28.5 },
+    defaultValues: {
+      defaultMarkupPercent: 40,
+      defaultMarginPercent: 28.5,
+      lowStockThreshold: 50,
+    },
   });
 
+  /**
+   * The form's values come from two places on the settings document.
+   *
+   * The two pricing defaults live under `inventory`; the reorder-point fallback
+   * lives under `operations`, where it has always lived and where the inventory
+   * report reads it. The screen groups them because they are both things an
+   * owner sets about stock - the storage shape is not the screen's problem, but
+   * it does mean the form cannot just `reset(data.inventory)`.
+   */
   useEffect(() => {
     if (!data?.inventory || isDirty) return;
-    reset(data.inventory);
+    reset(formValues(data));
   }, [data, isDirty, reset]);
 
   const markup = Number(watch('defaultMarkupPercent'));
@@ -84,7 +104,7 @@ export function AdminInventorySettingsPage() {
     setSaved(false);
     try {
       const next = await saveInventorySettings.mutateAsync(values);
-      reset(next.inventory);
+      reset(formValues(next));
       setSaved(true);
     } catch (err) {
       setError('root', { message: err.message });
@@ -94,7 +114,7 @@ export function AdminInventorySettingsPage() {
   if (isLoading) return <p className="text-sm text-ink-500">Loading settings…</p>;
 
   return (
-    <>
+    <div className="form-page">
       <PageHeader
         icon={ADMIN_PAGE.icon}
         title={ADMIN_PAGE.title}
@@ -177,7 +197,42 @@ export function AdminInventorySettingsPage() {
           </div>
         </Panel>
 
+        {/*
+          Its own panel, and the separation is the point: everything above
+          pre-fills a blank form and changes nothing that exists, while this is
+          read live by five screens and re-sorts the catalogue the moment it is
+          saved. Putting them in one panel under one description would make the
+          "pre-fill only" promise above cover a field it is not true of.
+        */}
+        <Panel
+          title="Low stock"
+          description="When a product counts as running low, and needs reordering."
+        >
+          <Input
+            type="number"
+            min="1"
+            step="1"
+            label="Reorder point"
+            suffix="units"
+            hint="Used for products with no reorder point of their own."
+            error={errors.lowStockThreshold?.message}
+            {...register('lowStockThreshold')}
+          />
+
+          <p className="mt-4 rounded-lg bg-surface-2 px-4 py-3.5 text-sm leading-relaxed text-ink-600">
+            A product is low when its stock reaches its own reorder point, or this number when it
+            has none. Unlike the defaults above, this one applies immediately: it is what the
+            dashboard badge counts, what the Inventory pills sort by, and what fills the reorder
+            queue.{' '}
+            <span className="text-ink-500">
+              The storefront never sees it - a buyer is told in stock or out of stock, never a
+              count.
+            </span>
+          </p>
+        </Panel>
+
         <SettingsFormActions
+          unsavedLabel="the inventory defaults"
           dirty={isDirty}
           saving={isSubmitting || saveInventorySettings.isPending}
           saved={saved}
@@ -188,7 +243,7 @@ export function AdminInventorySettingsPage() {
           }}
         />
       </form>
-    </>
+    </div>
   );
 }
 

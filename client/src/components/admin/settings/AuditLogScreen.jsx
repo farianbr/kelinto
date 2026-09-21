@@ -3,6 +3,7 @@ import { ShieldAlert } from 'lucide-react';
 
 import cn from '@/lib/cn';
 import Badge from '@/components/ui/Badge';
+import Modal from '@/components/ui/Modal';
 import Pagination from '@/components/ui/Pagination';
 import { PanelEmpty } from '@/components/ui/Panel';
 import PageHeader from '@/components/admin/PageHeader';
@@ -10,7 +11,7 @@ import DataTable, { CountLine } from '@/components/admin/DataTable';
 import FilterStrip from '@/components/admin/FilterStrip';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useAuditLog } from '@/hooks/useAdmin';
-import { dateTime } from '@/lib/format';
+import { date, clockTime } from '@/lib/format';
 import SelectMenu from '@/components/ui/SelectMenu';
 
 /**
@@ -110,13 +111,42 @@ export function AuditLogScreen({ kind, page: meta, notice }) {
 
   const entries = data?.entries ?? [];
 
+  /**
+   * The entry behind the open modal, resolved from the list rather than held in
+   * state.
+   *
+   * Storing the row itself would keep a stale copy on screen after a refetch -
+   * which matters here precisely because this list appends: the entry a reader
+   * has open should be the one the server holds, not the one that was on screen
+   * when they clicked. `null` when the id no longer resolves closes the modal on
+   * its own.
+   */
+  const openEntry = openRow ? (entries.find((entry) => entry.id === openRow) ?? null) : null;
+  const hasDiff = Boolean(
+    (openEntry?.before && Object.keys(openEntry.before).length) ||
+      (openEntry?.after && Object.keys(openEntry.after).length),
+  );
+
   const columns = [
     {
       key: 'createdAt',
       header: 'Time',
       width: '160px',
       sortable: false,
-      render: (row) => <span className="tnum text-ink-600">{dateTime(row.createdAt)}</span>,
+      /**
+       * Two lines: the day, then the clock under it.
+       *
+       * One line of `dateTime` ran the column wide enough to push Description
+       * off a laptop, and the date repeats down the page while the time is the
+       * part being scanned. Stacking gives the time its own weight and halves
+       * the column.
+       */
+      render: (row) => (
+        <span className="block min-w-0">
+          <span className="tnum block text-ink-700">{date(row.createdAt)}</span>
+          <span className="tnum block text-xs text-ink-400">{clockTime(row.createdAt)}</span>
+        </span>
+      ),
     },
     {
       key: 'actorEmail',
@@ -155,7 +185,19 @@ export function AuditLogScreen({ kind, page: meta, notice }) {
       key: 'action',
       header: 'Action',
       sortable: false,
-      render: (row) => <Badge tone={actionTone(row.action)}>{actionLabel(row.action)}</Badge>,
+      /**
+       * The raw action key, in mono - `user_created`, not "User created".
+       *
+       * It is what the filter above lists and what a search matches, so
+       * prettifying it here meant the column and the control that filters it
+       * disagreed about what a row is called. A log is a record, and a record
+       * reads better in the vocabulary it is stored in.
+       */
+      render: (row) => (
+        <Badge tone={actionTone(row.action)} size="sm" className="font-mono">
+          {row.action}
+        </Badge>
+      ),
     },
     {
       key: 'entity',
@@ -242,9 +284,9 @@ export function AuditLogScreen({ kind, page: meta, notice }) {
         rows={entries}
         loading={isLoading}
         sortable={false}
-        // Rows open to show the diff rather than navigating: the change *is*
-        // the record here, and there is no detail page behind it.
-        onRowClick={(row) => setOpenRow(openRow === row.id ? null : row.id)}
+        // Rows open the entry rather than navigating: the change *is* the
+        // record here, and there is no detail page behind it.
+        onRowClick={(row) => setOpenRow(row.id)}
         empty={
           <PanelEmpty
             icon={ShieldAlert}
@@ -270,43 +312,79 @@ export function AuditLogScreen({ kind, page: meta, notice }) {
         }
       />
 
-      {/* The diff for the open row. Below the table rather than inside it: a
-          nested grid inside a cell collapses badly on a phone, and this reads
-          the same at every width. */}
-      {openRow && (
-        <div className="mt-4 rounded-lg border border-line bg-surface p-4 sm:p-5">
-          {(() => {
-            const row = entries.find((entry) => entry.id === openRow);
-            if (!row) return null;
+      {/*
+        The entry in a modal, not a slab under the table.
 
-            const hasDiff =
-              (row.before && Object.keys(row.before).length) ||
-              (row.after && Object.keys(row.after).length);
+        It rendered below the rows, which put the detail of the thing you
+        clicked off-screen on any table longer than a viewport - you clicked a
+        row near the top and nothing appeared to happen. A modal is where a
+        one-record detail belongs, and it is compact because an audit entry is
+        four facts and a diff, not a page.
+      */}
+      <Modal
+        open={Boolean(openRow)}
+        onClose={() => setOpenRow(null)}
+        title={openEntry ? actionLabel(openEntry.action) : ''}
+        size="md"
+      >
+        {openEntry && (
+          <div className="space-y-4">
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
+              <dt className="text-ink-500">When</dt>
+              <dd className="tnum text-ink-900">
+                {date(openEntry.createdAt)} · {clockTime(openEntry.createdAt)}
+              </dd>
 
-            return (
-              <>
-                <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2 border-b border-line pb-3">
-                  <h2 className="font-display text-md font-bold">
-                    {actionLabel(row.action)}
-                    {row.entity?.label ? ` - ${row.entity.label}` : ''}
-                  </h2>
-                  <p className="tnum text-sm text-ink-500">{dateTime(row.createdAt)}</p>
-                </div>
-
-                <p className="mb-3 text-sm text-ink-600">{row.description}</p>
-
-                {hasDiff ? (
-                  <Diff before={row.before} after={row.after} />
-                ) : (
-                  <p className="text-sm text-ink-500">
-                    No field-level detail was recorded for this entry.
-                  </p>
+              <dt className="text-ink-500">Who</dt>
+              <dd className="min-w-0 text-ink-900">
+                {openEntry.actorName || openEntry.actorEmail || (
+                  <span className="text-ink-400 italic">not signed in</span>
                 )}
-              </>
-            );
-          })()}
-        </div>
-      )}
+              </dd>
+
+              <dt className="text-ink-500">Action</dt>
+              <dd className="min-w-0">
+                <Badge tone={actionTone(openEntry.action)} size="sm" className="font-mono">
+                  {openEntry.action}
+                </Badge>
+              </dd>
+
+              {openEntry.entity?.kind && (
+                <>
+                  <dt className="text-ink-500">Entity</dt>
+                  <dd className="min-w-0 truncate text-ink-900">
+                    <span className="capitalize">{openEntry.entity.kind}</span>
+                    {openEntry.entity.label ? ` · ${openEntry.entity.label}` : ''}
+                  </dd>
+                </>
+              )}
+
+              {openEntry.ip && (
+                <>
+                  <dt className="text-ink-500">IP</dt>
+                  <dd className="font-mono text-xs text-ink-500">{openEntry.ip}</dd>
+                </>
+              )}
+            </dl>
+
+            {openEntry.description && (
+              <p className="border-t border-line pt-3 text-sm leading-relaxed text-ink-600">
+                {openEntry.description}
+              </p>
+            )}
+
+            {hasDiff ? (
+              <div className="border-t border-line pt-3">
+                <Diff before={openEntry.before} after={openEntry.after} />
+              </div>
+            ) : (
+              <p className="border-t border-line pt-3 text-sm text-ink-400">
+                No field-level detail was recorded for this entry.
+              </p>
+            )}
+          </div>
+        )}
+      </Modal>
     </>
   );
 }

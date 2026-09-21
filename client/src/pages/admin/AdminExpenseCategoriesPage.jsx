@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
+import { expenseCategorySchema } from '@shared/schemas/admin';
 import { AlertCircle, Pencil, Plus, Power, Receipt, Tags, Trash2 } from 'lucide-react';
 import { count as formatCount } from '@/lib/format';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
 import Modal from '@/components/ui/Modal';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import DeleteWithPreview from '@/components/admin/DeleteWithPreview';
 import Input from '@/components/ui/Input';
 import SelectField from '@/components/ui/SelectField';
 import Checkbox from '@/components/ui/Checkbox';
@@ -58,7 +61,16 @@ const SWATCH = {
 };
 
 function CategoryForm({ category, onSubmit, onCancel, isPending, error }) {
-  const { register, handleSubmit, control } = useForm({
+  const {
+    register,
+    handleSubmit,
+    control,
+    formState: { errors },
+  } = useAdminForm({
+    // The same schema the route validates against, so a name the server would
+    // refuse is caught here - on the field - rather than coming back as a
+    // banner that names nothing.
+    resolver: zodResolver(expenseCategorySchema),
     defaultValues: {
       name: category?.name ?? '',
       colorToken: category?.colorToken ?? 'ink',
@@ -77,11 +89,25 @@ function CategoryForm({ category, onSubmit, onCancel, isPending, error }) {
         </p>
       )}
 
-      <Input label="Name" {...register('name')} />
+      <Input
+        label="Name"
+        placeholder="Shop supplies"
+        required
+        error={errors.name?.message}
+        {...register('name')}
+      />
 
       <div className="grid gap-3 sm:grid-cols-2">
         <SelectField control={control} name="colorToken" label="Colour" options={COLOR_TOKENS} />
-        <Input label="Sort order" type="number" min="0" {...register('order')} />
+        <Input
+          label="Sort order"
+          type="number"
+          min="0"
+          placeholder="0"
+          hint="Lower numbers come first on the expense form."
+          error={errors.order?.message}
+          {...register('order')}
+        />
       </div>
 
       <Checkbox
@@ -204,18 +230,33 @@ export function AdminExpenseCategoriesPage() {
         }),
     },
     {
+      /*
+        Delete, and only delete.
+
+        This read "Deactivate (in use)" for a category with expenses against
+        it, because the server deactivates rather than deletes one - honest,
+        but it put a SECOND Deactivate in a menu whose row above already said
+        Deactivate, so the menu offered what looked like the same action twice
+        and neither said which one differed. The rule has not changed; where it
+        is stated has. Delete is offered when it can happen and disabled with
+        the count when it cannot, which says why rather than renaming itself
+        into the row above.
+      */
       key: 'delete',
-      // A category in use is deactivated instead, and the label says so rather
-      // than promising a delete the server will refuse.
-      label: (category) => (category.usage > 0 ? 'Deactivate (in use)' : 'Delete category'),
+      label: 'Delete category',
       icon: Trash2,
       tone: 'danger',
+      disabled: (category) => category.usage > 0,
+      hint: (category) =>
+        category.usage > 0
+          ? `Used by ${category.usage} ${category.usage === 1 ? 'expense' : 'expenses'}`
+          : null,
       onSelect: setDeleting,
     },
   ];
 
   return (
-    <>
+    <div className="form-page">
       <PageHeader
         icon={ADMIN_PAGE.icon}
         title={ADMIN_PAGE.title}
@@ -324,16 +365,18 @@ export function AdminExpenseCategoriesPage() {
         )}
       </Modal>
 
-      <ConfirmDialog
-        open={Boolean(deleting)}
+      {/* The count comes from the server rather than the row in hand: the list
+          is cached, and "used by 0 expenses" from a stale row is exactly the
+          number somebody would act on. The title still swings on the local
+          `usage` so it reads correctly before the preview lands. */}
+      <DeleteWithPreview
+        type="expense-category"
+        record={deleting}
         onClose={() => setDeleting(null)}
-        title={deleting?.usage > 0 ? 'Deactivate this category?' : 'Delete this category?'}
-        body={
+        title={
           deleting
-            ? deleting.usage > 0
-              ? `${deleting.name} is used by ${formatCount(deleting.usage)} expense(s), so it will be deactivated rather than deleted. Deleting it would re-bucket every one of them.`
-              : `${deleting.name} is not used by any expense and will be removed.`
-            : ''
+            ? `${deleting.usage > 0 ? 'Deactivate' : 'Delete'} ${deleting.name}?`
+            : undefined
         }
         confirmLabel={deleting?.usage > 0 ? 'Deactivate' : 'Delete category'}
         loading={deleteExpenseCategory.isPending}
@@ -349,7 +392,7 @@ export function AdminExpenseCategoriesPage() {
           })
         }
       />
-    </>
+    </div>
   );
 }
 

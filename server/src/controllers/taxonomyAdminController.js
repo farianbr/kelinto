@@ -19,6 +19,62 @@ const get = asyncHandler(async (req, res) => {
   res.json(await taxonomyAdminService.get(req.params.id));
 });
 
+/**
+ * Adds a model, creating whatever part of its branch is missing.
+ *
+ * Audited like every other taxonomy write: this screen decides what the
+ * storefront's filters and every product picker offer, so a node appearing
+ * with nobody's name on it is a change nobody can account for. The log records
+ * the whole branch, because "added iPhone 17" does not say that a `Google`
+ * brand node was created alongside it.
+ */
+const create = asyncHandler(async (req, res) => {
+  const result = await taxonomyAdminService.create(req.body);
+
+  await auditService.recordChange({
+    req,
+    action: 'taxonomy.create',
+    entity: { kind: 'taxonomy', id: result.node.id, label: result.node.name },
+    before: null,
+    after: {
+      name: result.node.name,
+      slug: result.node.slug,
+      path: result.node.path,
+      aliases: result.node.aliases,
+    },
+    description: `Added the device model ${result.node.name}.`,
+  });
+
+  res.status(201).json(result);
+});
+
+/**
+ * Bulk import from CSV.
+ *
+ * The file is read in the browser and posted as text, rather than uploaded as
+ * a multipart file: this codebase has no upload middleware, and a CSV of device
+ * models is a few tens of kilobytes. `express.json` caps the body at 1mb, which
+ * is the real limit the screen quotes.
+ *
+ * Audited as one event, not one per row. A hundred rows is one action a staff
+ * member took, and a hundred log entries would bury every other change made
+ * that day.
+ */
+const importCsv = asyncHandler(async (req, res) => {
+  const result = await taxonomyAdminService.importCsv(req.body.text);
+
+  await auditService.recordChange({
+    req,
+    action: 'taxonomy.import',
+    entity: { kind: 'taxonomy', id: 'import', label: 'Device models' },
+    before: null,
+    after: { added: result.added, updated: result.updated, skipped: result.skipped },
+    description: `Imported device models: ${result.added} added, ${result.updated} updated, ${result.skipped} skipped.`,
+  });
+
+  res.json(result);
+});
+
 const update = asyncHandler(async (req, res) => {
   const before = await taxonomyAdminService.get(req.params.id).catch(() => null);
   const result = await taxonomyAdminService.update(req.params.id, req.body);
@@ -62,4 +118,4 @@ const remove = asyncHandler(async (req, res) => {
   res.json(result);
 });
 
-export { list, get, update, remove };
+export { list, get, create, importCsv, update, remove };

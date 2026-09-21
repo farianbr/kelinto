@@ -1,7 +1,7 @@
 import { Link } from 'react-router';
 import { ArrowUpRight, Headphones } from 'lucide-react';
 import cn from '@/lib/cn';
-import { BUSINESS_INFO } from '@/lib/constants';
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 import Accordion from '@/components/ui/Accordion';
 import { pressable } from '@/lib/motion';
 
@@ -24,6 +24,9 @@ import { pressable } from '@/lib/motion';
  * with the SKU already attached to the message.
  */
 export function ProductFaq({ faqs = [], product = null, className }) {
+  // Above the early return: a hook cannot be called conditionally.
+  const info = useBusinessInfo();
+
   if (!faqs.length) return null;
 
   const askHref = product
@@ -76,12 +79,16 @@ export function ProductFaq({ faqs = [], product = null, className }) {
               Ask about this part
             </Link>
 
-            <a
-              href={`tel:${BUSINESS_INFO.phone.replace(/[^\d+]/g, '')}`}
-              className={cn(pressable, 'mt-2 flex h-11 w-full items-center justify-center rounded-full border border-line-strong bg-surface font-display text-sm font-semibold text-ink-700 hover:border-ink-300')}
-            >
-              {BUSINESS_INFO.phone}
-            </a>
+            {/* No number on file, no button - an empty pill reading nothing is
+                worse than the one action above it standing alone. */}
+            {info.phone && (
+              <a
+                href={`tel:${info.phone.replace(/[^\d+]/g, '')}`}
+                className={cn(pressable, 'mt-2 flex h-11 w-full items-center justify-center rounded-full border border-line-strong bg-surface font-display text-sm font-semibold text-ink-700 hover:border-ink-300')}
+              >
+                {info.phone}
+              </a>
+            )}
           </div>
         </aside>
       </div>

@@ -32,6 +32,9 @@ export function SelectField({ control, name, rules, onValueChange, error, ...res
           name={field.name}
           value={field.value ?? ''}
           onBlur={field.onBlur}
+          // So a failed submit can focus this field. Without it RHF has no
+          // node for a dropdown and simply leaves the page where it is.
+          fieldRef={field.ref}
           onChange={(next) => {
             field.onChange(next);
             onValueChange?.(next);

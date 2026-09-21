@@ -419,6 +419,23 @@
     max-width: var(--container-record);
   }
 
+  /* One form, at its measure, centred in the shell.
+
+     Same argument as `.record-page` one class up, for the other shape a screen
+     takes. `max-w-form` alone leaves a form hard against the sidebar with a
+     third of the window empty to its right, which reads as a page that failed
+     to load rather than as a measured column - and every screen that wanted it
+     centred had to remember `mx-auto` beside it.
+
+     Put it on the OUTERMOST element, above the page header, so the heading is
+     measured with the fields it titles. A heading ranged left of a centred form
+     is two blocks that do not belong to each other. */
+  .form-page {
+    margin-inline: auto;
+    width: 100%;
+    max-width: var(--container-form);
+  }
+
   /* A pen, for the one surface somebody writes on.
 
      The signature canvas is the only place in this app where a pointer draws

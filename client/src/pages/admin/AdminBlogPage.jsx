@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
 import { Link } from 'react-router';
 import {
   AlertCircle,
@@ -16,7 +18,7 @@ import {
 import cn from '@/lib/cn';
 import { pressable } from '@/lib/motion';
 import { date } from '@/lib/format';
-import { BLOG_CATEGORIES } from '@shared/schemas/content';
+import { BLOG_CATEGORIES, blogPostSchema } from '@shared/schemas/content';
 import RichText from '@/lib/richText';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
 import Modal from '@/components/ui/Modal';
@@ -79,7 +81,22 @@ function toDateInput(value) {
 function PostForm({ post, onSubmit, onCancel, isPending, error }) {
   const [tab, setTab] = useState('write');
 
-  const { register, handleSubmit, watch, formState, control } = useForm({
+  const { register, handleSubmit, watch, formState, control } = useAdminForm({
+    /*
+      The shared schema, with the one field the form shapes differently.
+
+      Tags are typed as a comma-separated string and split on submit, so the
+      array `blogPostSchema` describes is swapped for the string this form
+      holds. The inline `required` rules these fields used to carry only
+      checked for emptiness; the schema also enforces the lengths the server
+      enforces, so a title the API would refuse is now caught here instead of
+      coming back as a banner.
+    */
+    resolver: zodResolver(
+      blogPostSchema.omit({ tags: true }).extend({
+        tagList: z.string().trim().max(300).optional().or(z.literal('')),
+      }),
+    ),
     defaultValues: {
       title: post?.title ?? '',
       excerpt: post?.excerpt ?? '',
@@ -131,7 +148,8 @@ function PostForm({ post, onSubmit, onCancel, isPending, error }) {
         placeholder="How to grade a pull screen before you fit it"
         error={formState.errors.title?.message}
         data-autofocus
-        {...register('title', { required: 'Give the post a title.' })}
+        required
+        {...register('title')}
       />
 
       <Textarea
@@ -141,7 +159,8 @@ function PostForm({ post, onSubmit, onCancel, isPending, error }) {
         counter={320}
         hint="One or two sentences. Shown on the index and under the headline."
         error={formState.errors.excerpt?.message}
-        {...register('excerpt', { required: 'Write a one-line summary.' })}
+        required
+        {...register('excerpt')}
       />
 
       {/* ---- body: write / preview ---------------------------------------- */}
@@ -183,7 +202,7 @@ function PostForm({ post, onSubmit, onCancel, isPending, error }) {
             value={body}
             hint={BODY_HELP}
             error={formState.errors.body?.message}
-            {...register('body', { required: 'The post needs a body.' })}
+            {...register('body')}
           />
         </div>
 

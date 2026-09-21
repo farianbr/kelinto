@@ -111,6 +111,71 @@ const settingsSchema = new mongoose.Schema(
        * customer who clicks it lands nowhere and the shop never finds out.
        */
       reviewUrl: { type: String, default: '' },
+
+      /**
+       * The business's mark, shown in the storefront header and drawer.
+       *
+       * A URL rather than an upload: every other image in this system is a
+       * path the catalogue already serves, and adding a file pipeline for one
+       * field would be the largest part of this screen by far. Empty is the
+       * normal state and renders the business name as a wordmark, which is
+       * what every business gets today.
+       */
+      logoUrl: { type: String, default: '' },
+
+      /**
+       * The addresses a customer writes to, as opposed to `email`, which is
+       * the one the business writes FROM.
+       *
+       * Both default empty and both fall back to `email` when they are read -
+       * a business with one address should not have to type it three times,
+       * and a footer linking to `support@` at a business that has no such
+       * mailbox sends the customer nowhere.
+       */
+      supportEmail: { type: String, default: '' },
+      billingEmail: { type: String, default: '' },
+
+      /**
+       * How to reach the business, beyond the phone number.
+       *
+       * `whatsapp` is a number in `wa.me` form and `mapUrl` whatever pin the
+       * business wants its address to open. Both empty by default: a link to a
+       * placeholder map is worse than no link, because the customer who clicks
+       * it lands somewhere wrong and the business never finds out.
+       */
+      whatsapp: { type: String, default: '' },
+      mapUrl: { type: String, default: '' },
+
+      /**
+       * Opening hours, as rows rather than a blob.
+       *
+       * `days` and `time` are free text on purpose - "Mon – Fri" and "By
+       * appointment" are both real answers, and a structured
+       * open/close-per-weekday model cannot hold the second one. Nothing
+       * computes against these; they are printed.
+       *
+       * Empty means the business has not said, and every surface that shows
+       * hours omits the block entirely rather than printing a guess.
+       */
+      hours: {
+        type: [{ _id: false, days: String, time: String }],
+        default: () => [],
+      },
+
+      /**
+       * Social profiles, each a full URL, plus the handle to print beside it.
+       *
+       * Stored as rows keyed by `network` rather than as a fixed object with a
+       * field per platform, so a business on one network carries one row and
+       * the footer draws one icon - a fixed shape would have every business
+       * carrying five keys, four of them empty, and the footer deciding which
+       * to hide.
+       */
+      social: {
+        type: [{ _id: false, network: String, url: String, handle: String }],
+        default: () => [],
+      },
+
       address: {
         line1: { type: String, default: '2200 Meadowvale Blvd' },
         line2: { type: String, default: 'Unit 12' },
@@ -348,6 +413,54 @@ const settingsSchema = new mongoose.Schema(
       // Cents, like every other amount. 0 means "never notify on size".
       notifyAboveAmount: { type: Number, default: 0, min: 0 },
       lowStockEmail: { type: String, default: '' },
+      /**
+       * When the low-stock alert last went out.
+       *
+       * The same shelves are low tomorrow, so the job needs a memory or a cron
+       * firing hourly would mail hourly. Written only on a delivered send, so a
+       * failure does not suppress the next attempt.
+       */
+      lowStockAlertAt: { type: Date, default: null },
+
+      /**
+       * Send caps, per channel.
+       *
+       * A safety limit rather than a quota: these exist so a loop, a bad
+       * import or a mis-set automation cannot mail ten thousand customers
+       * before anybody notices. The alert address hears at `alertPercent` of
+       * the daily cap, which is the only warning that arrives while there is
+       * still room to act.
+       *
+       * Defaults are deliberately generous enough never to block a normal
+       * day and small enough to cap a runaway: a repair shop sends tens of
+       * messages a day, not hundreds.
+       */
+      limits: {
+        call: {
+          daily: { type: Number, default: 100, min: 0, max: 100000 },
+          monthly: { type: Number, default: 2000, min: 0, max: 1000000 },
+          alertPercent: { type: Number, default: 80, min: 0, max: 100 },
+          alertEmail: { type: String, default: '' },
+        },
+        email: {
+          daily: { type: Number, default: 500, min: 0, max: 100000 },
+          monthly: { type: Number, default: 10000, min: 0, max: 1000000 },
+          alertPercent: { type: Number, default: 80, min: 0, max: 100 },
+          alertEmail: { type: String, default: '' },
+        },
+        sms: {
+          daily: { type: Number, default: 100, min: 0, max: 100000 },
+          monthly: { type: Number, default: 2000, min: 0, max: 1000000 },
+          alertPercent: { type: Number, default: 80, min: 0, max: 100 },
+          alertEmail: { type: String, default: '' },
+        },
+        whatsapp: {
+          daily: { type: Number, default: 100, min: 0, max: 100000 },
+          monthly: { type: Number, default: 2000, min: 0, max: 1000000 },
+          alertPercent: { type: Number, default: 80, min: 0, max: 100 },
+          alertEmail: { type: String, default: '' },
+        },
+      },
     },
   },
   { timestamps: true },

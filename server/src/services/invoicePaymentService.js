@@ -2,6 +2,7 @@ import { db } from '../db/models.js';
 import '../models/Invoice.js';
 import '../models/User.js';
 import ApiError from '../utils/ApiError.js';
+import { sendPaymentReceiptEmail } from './transactionalMail.js';
 import orderBuilder from './orderBuilder.js';
 import creditService from './creditService.js';
 import '../models/CreditTransaction.js';
@@ -177,6 +178,35 @@ async function recordPayment(invoice, options) {
   // replayed request cannot pay twice. `accrueForPayment` swallows its own
   // failures.
   await referralService.accrueForPayment(invoice, invoice.payments.length - 1);
+
+  /**
+   * The customer's receipt, if this business has that switched on.
+   *
+   * Sent from the shared write path rather than from each caller, so a payment
+   * recorded by an admin, by the buyer through the portal, or by the mock
+   * gateway all produce the same receipt - three call sites each remembering
+   * to send one is two that eventually will not.
+   *
+   * Swallowed like the referral accrual above it and for the same reason: the
+   * money has moved and the row is written. A mail failure must not turn a
+   * completed payment into an error somebody retries.
+   */
+  try {
+    const settings = await db().Settings.load();
+    if (settings?.communications?.paymentConfirmation) {
+      const user = await db().User.findById(invoice.user).lean();
+      const sent = await sendPaymentReceiptEmail({
+        user,
+        invoice: invoice.toObject ? invoice.toObject() : invoice,
+        amount: options.amount,
+      });
+      if (!sent?.delivered) {
+        console.error(`  Receipt for invoice ${invoice.number} not sent - ${sent?.error}`);
+      }
+    }
+  } catch (error) {
+    console.error(`  Receipt for invoice ${invoice.number} failed:`, error.message);
+  }
 
   return result;
 }

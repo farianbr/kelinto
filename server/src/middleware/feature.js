@@ -1,6 +1,6 @@
 import ApiError from '../utils/ApiError.js';
 import { cellvixFeatures, featureEnabled, resolveFeatures } from '../../../shared/schemas/features.js';
-import Business from '../models/Business.js';
+import { businessConfig } from './businessConfigCache.js';
 
 /**
  * The feature gate (SAAS_PLATFORM §3.2, §5.3).
@@ -57,9 +57,16 @@ async function resolveFeaturesFor(req) {
   if (!scope) return resolveFeatures({ businessType: 'both' });
 
   try {
-    const business = await Business.findById(scope)
-      .select('businessType featureOverrides')
-      .lean();
+    /**
+     * The same cached entry `tenantStatus` just read.
+     *
+     * This was its own `Business.findById`, so the two middlewares fetched one
+     * document twice per request - and neither needed a fresh copy: a business's
+     * type and its feature overrides are edited from the super-admin console and
+     * change rarely. See `businessConfigCache` for the TTL and why it is bounded
+     * the way it is.
+     */
+    const business = await businessConfig(scope);
     if (!business) return cellvixFeatures();
 
     return resolveFeatures({

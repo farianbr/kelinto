@@ -4,6 +4,7 @@ import { Check, ChevronDown } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import cn from '@/lib/cn';
 import useOnClickOutside from '@/hooks/useOnClickOutside';
+import { useDensity, labelSize, hintSize } from './density';
 import useAnchoredPosition from '@/hooks/useAnchoredPosition';
 import { popover } from '@/lib/motion';
 
@@ -34,6 +35,15 @@ import { popover } from '@/lib/motion';
 const SIZES = {
   sm: 'h-9 pl-3 pr-2.5 text-sm rounded-md',
   md: 'h-11 pl-3.5 pr-3 text-md rounded-md',
+  /**
+   * `md` at admin density - same padding, one step shorter.
+   *
+   * Not a size a caller passes: `md` resolves to this inside the panel, so a
+   * select lines up with the `Input` beside it in a two-column row. A 44px
+   * select next to a 36px field is exactly the ragged edge this pass exists to
+   * remove, and it would appear the moment one of the two compacted alone.
+   */
+  mdCompact: 'h-9 pl-3.5 pr-3 text-sm rounded-md',
 };
 
 /** Height of one option row - px-2.5 py-2 around a 13px line. */
@@ -103,13 +113,45 @@ export function SelectMenu({
   className,
   containerClassName,
   buttonClassName,
+  /**
+   * Marks the field mandatory: the red asterisk beside the label, and
+   * `aria-required` on the control. Matches `Input`, so a form built from
+   * both marks its required fields the same way rather than only the ones
+   * that happen to be text.
+   */
+  required,
+  /**
+   * The focus target react-hook-form reaches for on a failed submit.
+   *
+   * A dropdown is a `<button>` and a listbox rather than a form element, so
+   * `register` cannot reach it and RHF had nothing to focus - a form whose
+   * only invalid field was a select reported the error and left the page
+   * where it was, which is the "it throws an error and does not take me to
+   * the field" complaint. `SelectField` hands `field.ref` down to here.
+   */
+  fieldRef,
 }) {
+  const density = useDensity();
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [search, setSearch] = useState('');
 
   const containerRef = useRef(null);
   const buttonRef = useRef(null);
+
+  /*
+    One node, two refs.
+
+    `buttonRef` is this component's own - it positions the panel and restores
+    focus when the menu closes - and `fieldRef` is react-hook-form's handle on
+    the same button. Assigning both from one callback keeps the internal
+    behaviour untouched while letting RHF focus the field on a failed submit.
+  */
+  const setButtonRef = (node) => {
+    buttonRef.current = node;
+    if (typeof fieldRef === 'function') fieldRef(node);
+    else if (fieldRef) fieldRef.current = node;
+  };
   const listRef = useRef(null);
   const searchRef = useRef(null);
 
@@ -430,7 +472,7 @@ export function SelectMenu({
         <label
           id={`${id}-label`}
           htmlFor={id}
-          className="mb-1.5 block text-sm font-medium text-ink-700"
+          className={cn(labelSize(density), 'block font-medium text-ink-700')}
           onClick={(event) => {
             // A <label> cannot forward a click to a <button>, so do it here.
             event.preventDefault();
@@ -438,12 +480,17 @@ export function SelectMenu({
           }}
         >
           {label}
+          {required && (
+            <span className="ml-0.5 text-danger" aria-hidden="true">
+              *
+            </span>
+          )}
         </label>
       )}
 
       <div ref={containerRef} className="relative">
         <button
-          ref={buttonRef}
+          ref={setButtonRef}
           id={id}
           name={name}
           type="button"
@@ -452,6 +499,8 @@ export function SelectMenu({
           onKeyDown={onButtonKeyDown}
           aria-haspopup="listbox"
           aria-expanded={open}
+          aria-required={required || undefined}
+          aria-invalid={error ? true : undefined}
           aria-controls={open ? listId : undefined}
           // <label for> only names a labelable element, and a button is not
           // one - without this the field's accessible name would be whichever
@@ -467,7 +516,9 @@ export function SelectMenu({
             'hover:border-line-strong',
             'focus:border-ink-400 focus:outline-none focus:ring-2 focus:ring-ink-900/15',
             'disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-ink-400',
-            SIZES[size],
+            // `md` becomes `mdCompact` inside the admin panel; `sm` is already
+            // that height, so it is left alone.
+            SIZES[size === 'md' && density === 'compact' ? 'mdCompact' : size],
             error ? 'border-danger' : 'border-line',
             open && !error && 'border-brand ring-2 ring-brand/25',
             buttonClassName,

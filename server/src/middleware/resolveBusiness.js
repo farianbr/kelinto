@@ -67,6 +67,40 @@ async function countBusinesses() {
   return businessCount;
 }
 
+/** The default business's id, cached. Null until one is established. */
+let defaultId = null;
+
+/**
+ * Which business serves a request that named none - **cached, because it is on
+ * the path of every such request.**
+ *
+ * `byHost` above caches the host lookup, so a request arriving on a known
+ * domain costs nothing after the first. A request whose host names no business
+ * fell straight past that cache into this query, so **every request on
+ * localhost, and every request on a deployment before DNS is pointed, paid a
+ * full round trip to the control plane** to re-learn an answer that changes when
+ * somebody clicks "make default" in the console.
+ *
+ * Cached for the life of the process and dropped by `resetBusinessResolution`,
+ * which `setDefaultBusiness` already calls - so the one action that invalidates
+ * this is the one action that clears it.
+ *
+ * A null answer is deliberately **not** cached: it means no business is the
+ * default, which is a state the boot sequence refuses to start in and which an
+ * operator is actively fixing. Re-reading until it is fixed costs one query per
+ * request on an installation that is already refusing to serve.
+ */
+async function defaultBusinessId() {
+  if (defaultId) return defaultId;
+
+  const fallback = await Business.findOne({ isDefault: true, deletedAt: null })
+    .select('_id')
+    .lean();
+
+  defaultId = fallback ? String(fallback._id) : null;
+  return defaultId;
+}
+
 /**
  * Look a host up, cached.
  *
@@ -184,11 +218,7 @@ async function resolveBusiness(req, _res, next) {
      * In production the host resolves this long before it is reached; this is
      * what keeps development and a single-domain deployment working.
      */
-    const fallback = await Business.findOne({ isDefault: true, deletedAt: null })
-      .select('_id')
-      .lean();
-
-    req.businessScope = req.businessScope ?? (fallback ? String(fallback._id) : null);
+    req.businessScope = req.businessScope ?? (await defaultBusinessId());
     return next();
   } catch (error) {
     // Resolution failing must not take the site down: the request continues
@@ -202,6 +232,7 @@ async function resolveBusiness(req, _res, next) {
 function resetBusinessResolution() {
   byHost.clear();
   businessCount = null;
+  defaultId = null;
 }
 
 export { resolveBusiness, resetBusinessResolution, subdomainOf };

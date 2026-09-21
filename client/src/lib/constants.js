@@ -35,9 +35,16 @@ export const GRADE_ORDER = ['NEW', 'OEM', 'PULL-A', 'PULL-B', 'AFTERMARKET'];
 export const BOTTOM_NAV_REVEAL_AT = 160;
 
 /**
- * Low-stock threshold. ADMIN ONLY - it colours the inventory column in the
- * admin product list. The storefront states in stock or out of stock and never
- * sees a count at all; the API does not send one (productService.serialize).
+ * The fallback reorder point, for a business that has not set one.
+ *
+ * **Not the threshold itself - that lives in Settings** (`operations.lowStockThreshold`,
+ * edited on Inventory Settings) and the server classifies every product by it.
+ * This is only what a screen prints before that value has loaded, and it
+ * matches the schema default so the two agree in the meantime.
+ *
+ * ADMIN ONLY - it labels the inventory column in the admin product list. The
+ * storefront states in stock or out of stock and never sees a count at all; the
+ * API does not send one (productService.serialize).
  */
 export const LOW_STOCK_THRESHOLD = 50;
 

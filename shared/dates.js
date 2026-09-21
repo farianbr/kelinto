@@ -67,6 +67,21 @@ export function formatDateTime(value, fallback = '-') {
 }
 
 /**
+ * Just the clock - `08:27:32`.
+ *
+ * For a log table that stacks the day over the time: the date repeats down the
+ * page while the time is the part being scanned, so they carry different weight
+ * and cannot share one line. `formatDateTime` remains the one-line form for
+ * everywhere that wants a single stamp.
+ */
+export function formatClockTime(value, fallback = '-') {
+  if (!value) return fallback;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return fallback;
+  return TIME.format(parsed);
+}
+
+/**
  * `31-Aug-26` from a `2026-08-31` string, read as a local date.
  *
  * `new Date('2026-08-31')` is UTC midnight, which prints as the 30th anywhere

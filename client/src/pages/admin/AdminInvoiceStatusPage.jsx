@@ -1,17 +1,15 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { AlertCircle, CheckCircle2, Clock, Play, Plus, Trash2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Clock, Mail, Play, Save, Trash2 } from 'lucide-react';
 
 import cn from '@/lib/cn';
-import Panel from '@/components/ui/Panel';
+import Panel, { PanelEmpty } from '@/components/ui/Panel';
 import Input from '@/components/ui/Input';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
-import Modal from '@/components/ui/Modal';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
-import PageHeader from '@/components/admin/PageHeader';
-import { ADMIN_ROUTES } from '@/lib/adminRoutes';
-import { adminIcon } from '@/components/admin/shell/adminIcons';
+import Modal from '@/components/ui/Modal';
+import DeleteWithPreview from '@/components/admin/DeleteWithPreview';
 import { useAdminInvoiceRules, useAdminMutations } from '@/hooks/useAdmin';
 import { dateTime } from '@/lib/format';
 import { pressable } from '@/lib/motion';
@@ -32,7 +30,6 @@ import SelectMenu from '@/components/ui/SelectMenu';
  * shows what *would* go out without sending anything - which is the first thing
  * anyone wants before switching a rule on against live invoices.
  */
-const ADMIN_PAGE = { ...ADMIN_ROUTES['/admin/settings/invoice-status'], icon: adminIcon('FileText') };
 
 const EMPTY_RULE = {
   label: '',
@@ -54,13 +51,32 @@ function timingText(rule, triggers) {
   return `${days} ${days === 1 ? 'day' : 'days'} ${rule.delayDays < 0 ? 'before' : 'after'} ${label}`;
 }
 
-function RuleDialog({ rule, triggers, tokens, channels, onClose }) {
+/**
+ * One status, as an open form on the page.
+ *
+ * **It was a modal.** Each status carries a label, a delay, a trigger, a
+ * channel, an email subject, a message with five placeholders and an active
+ * switch - and a staff member setting these up is comparing them against each
+ * other, which a dialog that shows one at a time actively prevents. Open on the
+ * page they read as the list they are.
+ *
+ * The optional `onDone` callback fires after a save: the create form clears
+ * itself, and an existing status stays where it is with a saved confirmation.
+ */
+// `tokens` and `triggers` default here rather than at each call site: this
+// renders once per status plus once for the create form, and the placeholder
+// list arrives a tick after the first paint.
+function RuleCard({ rule, triggers = [], tokens = [], channels, onDone, onDelete, bare = false }) {
   const editing = Boolean(rule.id);
   const [form, setForm] = useState({ ...EMPTY_RULE, ...rule });
   const [error, setError] = useState(null);
+  const [saved, setSaved] = useState(false);
   const { createInvoiceRule, saveInvoiceRule } = useAdminMutations();
 
-  const set = (patch) => setForm((current) => ({ ...current, ...patch }));
+  const set = (patch) => {
+    setForm((current) => ({ ...current, ...patch }));
+    setSaved(false);
+  };
   const channelStatus = channels?.[form.channel];
 
   async function save(event) {
@@ -78,15 +94,17 @@ function RuleDialog({ rule, triggers, tokens, channels, onClose }) {
       };
       if (editing) await saveInvoiceRule.mutateAsync({ id: rule.id, ...payload });
       else await createInvoiceRule.mutateAsync(payload);
-      onClose();
+      setSaved(true);
+      // The create form empties itself so the next status can be typed
+      // straight in; an existing one keeps what was just saved on screen.
+      if (!editing) setForm({ ...EMPTY_RULE });
+      onDone?.();
     } catch (err) {
       setError(err.message);
     }
   }
 
-  return (
-    <Modal open onClose={onClose} title={editing ? `Edit “${rule.label}”` : 'New invoice message'} size="lg">
-      <form onSubmit={save} className="space-y-4">
+  const body = <form onSubmit={save} className="space-y-4">
         <Input
           label="Name"
           hint="Only shown here - it is not sent to anybody."
@@ -207,26 +225,83 @@ function RuleDialog({ rule, triggers, tokens, channels, onClose }) {
         )}
 
         <div className="flex flex-wrap items-center gap-3 border-t border-line pt-4">
-          <Button type="submit" loading={createInvoiceRule.isPending || saveInvoiceRule.isPending}>
-            {editing ? 'Save' : 'Create'}
-          </Button>
-          <button
-            type="button"
-            onClick={onClose}
-            className={cn(pressable, 'inline-flex h-9 items-center rounded-md border border-line bg-surface px-3.5 text-sm font-medium text-ink-600 hover:border-line-strong hover:text-ink-900')}
+          <Button
+            type="submit"
+            icon={Save}
+            loading={createInvoiceRule.isPending || saveInvoiceRule.isPending}
           >
-            Cancel
-          </button>
+            {editing ? 'Save' : 'Add status'}
+          </Button>
+
+          {/* Delete sits with the status it deletes, at the opposite end of the
+              row from Save - a destructive control next to the one pressed on
+              every visit is how the wrong one gets pressed. Built-in statuses
+              have none: they can be switched off, never removed. */}
+          {editing && !rule.isBuiltIn && (
+            <button
+              type="button"
+              onClick={() => onDelete?.(rule)}
+              className={cn(
+                pressable,
+                'ml-auto inline-flex h-9 items-center gap-1.5 rounded-md border border-line bg-surface px-3.5 text-sm font-medium text-ink-600 hover:border-danger hover:bg-danger-50 hover:text-danger',
+              )}
+            >
+              <Trash2 className="size-3.5" strokeWidth={2.25} aria-hidden="true" />
+              Delete
+            </button>
+          )}
+
+          <p aria-live="polite" className="min-w-0">
+            {saved && (
+              <span className="flex items-center gap-1.5 text-sm text-ok">
+                <CheckCircle2 className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+                Saved.
+              </span>
+            )}
+          </p>
         </div>
-      </form>
-    </Modal>
+      </form>;
+
+  /*
+    `bare` drops the Panel.
+
+    The create form renders inside a Modal, which already draws a titled
+    surface - a Panel in there is a bordered box inside a bordered box, which
+    §2.4 rules out. An existing message keeps its Panel, because on the page
+    the cards ARE the list.
+  */
+  if (bare) return body;
+
+  return (
+    <Panel
+      title={
+        <span className="flex flex-wrap items-center gap-2">
+          {rule.label}
+          <Badge tone={form.channel === 'email' ? 'info' : 'warn'} size="sm">
+            {form.channel}
+          </Badge>
+          {rule.isBuiltIn && <Badge tone="neutral" size="sm">Built-in</Badge>}
+        </span>
+      }
+      description={timingText(rule, triggers)}
+    >
+      {body}
+    </Panel>
   );
 }
 
-export function AdminInvoiceStatusPage() {
+/**
+ * The timed-message half of Invoice statuses.
+ *
+ * Exported as a body rather than a page: it renders inside
+ * `AdminInvoiceLabelsPage`'s tab row, which owns the header and the measure.
+ * The two were separate screens with near-identical names - "Invoice Messages"
+ * and "Invoice Statuses" - which meant reading the menu twice to work out which
+ * one you wanted. They are two views of one subject, so they are two tabs.
+ */
+export function InvoiceMessagesBody({ adding = false, onAddingChange }) {
   const { data, isLoading } = useAdminInvoiceRules();
   const { saveInvoiceRule, deleteInvoiceRule, runInvoiceRules } = useAdminMutations();
-  const [editing, setEditing] = useState(null);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   // The trash icon used to delete on the click itself.
@@ -260,27 +335,8 @@ export function AdminInvoiceStatusPage() {
 
   return (
     <>
-      <PageHeader
-        icon={ADMIN_PAGE.icon}
-        title={ADMIN_PAGE.title}
-        description={ADMIN_PAGE.description}
-        action={
-          <Button size="sm" onClick={() => setEditing({ ...EMPTY_RULE })}>
-            <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
-            New message
-          </Button>
-        }
-      />
-
       {/* §6b rule 2 in spirit: state plainly what does not happen on its own.
           "Automatic" is the word on the tin, and nothing here is automatic yet. */}
-      {/* The measure wraps the banner too.
-
-          It sat outside the capped container, so a full-bleed warning ran to
-          1400px above panels that stopped at 760 - the page disagreed with
-          itself about where its own edge was, and the banner read as belonging
-          to the shell rather than to this screen. */}
-      <div className="max-w-form">
       <p className="mb-5 flex items-start gap-2.5 rounded-lg border border-warn/25 bg-warn-50 px-3.5 py-3 text-sm leading-relaxed text-ink-700">
         <Clock className="mt-0.5 size-4 shrink-0 text-warn" strokeWidth={2} aria-hidden="true" />
         <span>
@@ -292,64 +348,30 @@ export function AdminInvoiceStatusPage() {
       </p>
 
       <div className="space-y-4">
-        <Panel
-          title="Messages"
-          description={`${activeCount} of ${rules.length} switched on. Built-in messages can be edited and switched off, but not deleted.`}
-        >
-          <ul className="divide-y divide-line">
-            {rules.map((rule) => (
-              <li key={rule.id} className="flex flex-wrap items-start gap-3 py-3 first:pt-0">
-                <button
-                  type="button"
-                  onClick={() => toggle(rule)}
-                  role="switch"
-                  aria-checked={rule.isActive}
-                  aria-label={`${rule.isActive ? 'Switch off' : 'Switch on'} ${rule.label}`}
-                  className={cn(
-                    'mt-0.5 flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors',
-                    rule.isActive ? 'bg-ok' : 'bg-line-strong',
-                  )}
-                >
-                  <span
-                    className={cn(
-                      'size-4 rounded-full bg-white transition-transform',
-                      rule.isActive && 'translate-x-4',
-                    )}
-                  />
-                </button>
+        {/* One card per message, each editable in place. The create form used
+            to sit at the BOTTOM of this list as an unlabelled extra card,
+            which put "add a message" below everything else with nothing
+            separating it - on a shop with eight messages it was off-screen and
+            read as a ninth message somebody had failed to name. It is a modal
+            off the page's one Add button now, the same way statuses work. */}
+        {rules.map((rule) => (
+          <RuleCard
+            key={rule.id}
+            rule={rule}
+            triggers={triggers}
+            tokens={data?.tokens}
+            channels={data?.channels}
+            onDelete={setDeleting}
+          />
+        ))}
 
-                <button
-                  type="button"
-                  onClick={() => setEditing(rule)}
-                  className="min-w-0 flex-1 text-left"
-                >
-                  <span className="flex flex-wrap items-center gap-2">
-                    <span className="font-display text-md font-semibold text-ink-900">
-                      {rule.label}
-                    </span>
-                    {rule.isBuiltIn && <Badge tone="neutral">Built-in</Badge>}
-                    <Badge tone={rule.channel === 'email' ? 'info' : 'warn'}>{rule.channel}</Badge>
-                  </span>
-                  <span className="mt-0.5 block text-sm text-ink-500">
-                    {timingText(rule, triggers)}
-                    {rule.lastRunAt ? ` · last run ${dateTime(rule.lastRunAt)}` : ''}
-                  </span>
-                </button>
-
-                {!rule.isBuiltIn && (
-                  <button
-                    type="button"
-                    onClick={() => setDeleting(rule)}
-                    aria-label={`Delete ${rule.label}`}
-                    className={cn(pressable, 'flex size-8 shrink-0 items-center justify-center rounded-md border border-line text-ink-400 hover:border-danger hover:bg-danger-50 hover:text-danger')}
-                  >
-                    <Trash2 className="size-3.5" strokeWidth={2.25} aria-hidden="true" />
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-        </Panel>
+        {rules.length === 0 && (
+          <PanelEmpty
+            icon={Mail}
+            title="No timed messages yet"
+            body="A message goes out once per invoice, a set number of days after it is issued or falls overdue."
+          />
+        )}
 
         <Panel
           title="Run now"
@@ -425,18 +447,31 @@ export function AdminInvoiceStatusPage() {
         </Panel>
       </div>
 
-      {editing && (
-        <RuleDialog
-          rule={editing}
-          triggers={triggers}
-          tokens={data?.tokens ?? []}
-          channels={data?.channels}
-          onClose={() => setEditing(null)}
-        />
-      )}
+      <Modal
+        open={adding}
+        onClose={() => onAddingChange?.(false)}
+        title="Add a message"
+        size="lg"
+        align="top"
+      >
+        {adding && (
+          <RuleCard
+            rule={{ ...EMPTY_RULE }}
+            triggers={triggers}
+            tokens={data?.tokens}
+            channels={data?.channels}
+            bare
+            onDone={() => onAddingChange?.(false)}
+          />
+        )}
+      </Modal>
 
-      <ConfirmDialog
-        open={Boolean(deleting)}
+      {/* Nothing blocks deleting a message, so the preview is a consequence
+          rather than a refusal: how many invoices already received it, and the
+          fact that those sends stand. */}
+      <DeleteWithPreview
+        type="invoice-rule"
+        record={deleting}
         onClose={() => setDeleting(null)}
         onConfirm={() =>
           deleteInvoiceRule
@@ -444,18 +479,11 @@ export function AdminInvoiceStatusPage() {
             .then(() => setDeleting(null))
             .catch((e) => setError(e.message))
         }
-        title="Delete this rule?"
-        body={
-          deleting
-            ? `“${deleting.label}” stops running. To pause it without losing the setup, switch it inactive instead.`
-            : ''
-        }
-        confirmLabel="Delete rule"
+        confirmLabel="Delete message"
         loading={deleteInvoiceRule.isPending}
       />
-      </div>
     </>
   );
 }
 
-export default AdminInvoiceStatusPage;
+export default InvoiceMessagesBody;

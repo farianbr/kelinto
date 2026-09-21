@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { useSearchParams } from 'react-router';
-import { useFieldArray, useForm } from 'react-hook-form';
+import { useFieldArray } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
 import { AlertCircle, Coins, Plus, RotateCcw, Send, Trash2, Truck } from 'lucide-react';
 import { SUPPLIER_RETURN_REASON_VALUES } from '@shared/schemas/admin';
 import cn from '@/lib/cn';
@@ -89,8 +92,51 @@ const NEXT_LABEL = {
  * fault surfaces without paperwork). Letting a staff member type it would make the
  * expected credit an opinion rather than a record.
  */
+/**
+ * What the RETURN form holds.
+ *
+ * Money is typed in dollars and converted on submit, and a line with no
+ * product chosen is a half-filled row rather than an error - the submit
+ * transform drops those before they reach the route.
+ */
+const supplierReturnFormSchema = z.object({
+  supplier: z.string().trim().min(1, 'Choose a supplier.'),
+  purchaseOrder: z.string().trim().optional().or(z.literal('')),
+  reason: z.string().trim().max(500).optional().or(z.literal('')),
+  supplierRmaNumber: z.string().trim().max(60).optional().or(z.literal('')),
+  notes: z.string().trim().max(2000).optional().or(z.literal('')),
+  items: z
+    .array(
+      z.object({
+        product: z.string().trim().optional().or(z.literal('')),
+        qty: z.coerce.number().int().min(1, 'At least one.'),
+        reason: z.string().trim(),
+        note: z.string().trim().max(500).optional().or(z.literal('')),
+      }),
+    )
+    .refine((rows) => rows.some((row) => String(row.product ??'').trim()), {
+      message: 'Add at least one part going back.',
+    }),
+});
+
+/** Recording the credit a supplier actually gave. */
+const supplierCreditFormSchema = z.object({
+  amountDollars: z.coerce
+    .number({ invalid_type_error: 'Enter the credit amount.' })
+    .min(0, 'Cannot be negative.'),
+  reference: z.string().trim().max(60).optional().or(z.literal('')),
+  note: z.string().trim().max(2000).optional().or(z.literal('')),
+});
+
 function ReturnForm({ suppliers, purchaseOrders, products, onSubmit, onCancel, isPending, error }) {
-  const { register, handleSubmit, control, watch } = useForm({
+  const {
+    register,
+    handleSubmit,
+    control,
+    watch,
+    formState: { errors },
+  } = useAdminForm({
+    resolver: zodResolver(supplierReturnFormSchema),
     defaultValues: {
       supplier: suppliers[0]?.id ?? '',
       purchaseOrder: '',
@@ -122,6 +168,8 @@ function ReturnForm({ suppliers, purchaseOrders, products, onSubmit, onCancel, i
           control={control}
           name="supplier"
           label="Supplier"
+          required
+          error={errors.supplier?.message}
           options={suppliers.map((row) => ({ value: row.id, label: row.name }))}
         />
         <SelectField
@@ -223,7 +271,13 @@ function ReturnForm({ suppliers, purchaseOrders, products, onSubmit, onCancel, i
 
 /** Recording what the supplier actually gave back. */
 function CreditForm({ supplierReturn, onSubmit, onCancel, isPending, error }) {
-  const { register, handleSubmit, watch } = useForm({
+  const {
+    register,
+    handleSubmit,
+    watch,
+    formState: { errors },
+  } = useAdminForm({
+    resolver: zodResolver(supplierCreditFormSchema),
     defaultValues: {
       amountDollars: (supplierReturn.expectedCredit / 100).toFixed(2),
       reference: '',
@@ -255,7 +309,15 @@ function CreditForm({ supplierReturn, onSubmit, onCancel, isPending, error }) {
       )}
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <Input label="Credit given" inputMode="decimal" suffix="CAD" {...register('amountDollars')} />
+        <Input
+          label="Credit given"
+          inputMode="decimal"
+          suffix="CAD"
+          placeholder="0.00"
+          required
+          error={errors.amountDollars?.message}
+          {...register('amountDollars')}
+        />
         <Input label="Credit note" placeholder="CN-4471" {...register('reference')} />
       </div>
 

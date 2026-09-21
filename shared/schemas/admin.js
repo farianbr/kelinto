@@ -703,8 +703,17 @@ const ADMIN_NAV = [
       { key: 'email', label: 'Email', to: '/admin/marketing/email', icon: 'Mail' },
       { key: 'sms', label: 'SMS', to: '/admin/marketing/sms', icon: 'MessageSquare' },
       { key: 'whatsapp', label: 'WhatsApp', to: '/admin/marketing/whatsapp', icon: 'MessageCircle' },
-      { key: 'referrals', label: 'Referrals', to: '/admin/marketing/referrals', icon: 'Gift' },
-      { key: 'offers', label: 'Offers', to: '/admin/marketing/offers', icon: 'Tag' },
+      /**
+       * Offers and Referrals moved to Settings → Financial on 2026-09-21, at
+       * the client's request.
+       *
+       * Both are configuration rather than campaigns: a promo code and a
+       * commission percentage are set once and left, where the rows above this
+       * are things a staff member sends. The nav rows are gone; the screens
+       * and their routes are unchanged, and `requireFeature` still gates them
+       * on `marketing.offers` / `marketing.referrals` - a feature key names a
+       * capability, not a screen's position in a menu.
+       */
     ],
   },
   {
@@ -790,17 +799,27 @@ const ADMIN_NAV = [
         to: '/admin/settings?cat=integrations',
         icon: 'Plug',
       },
-      {
-        // The tenant's line to the platform (SAAS_PLATFORM §4.5). Under
-        // Settings because it is about the account rather than about the shop's
-        // trading, and it carries no `area` of its own: reaching the people who
-        // run the platform is not a capability a role grants or withholds.
-        key: 's-support',
-        label: 'Platform support',
-        to: '/admin/support',
-        icon: 'LifeBuoy',
-      },
     ],
+  },
+  {
+    /*
+      The tenant's line to the platform (SAAS_PLATFORM §4.5).
+
+      **A top-level row, not a Settings child.** It sat under Settings because
+      it concerns the account rather than the shop's trading - but Settings is
+      where you go to change how this business works, and this is where you go
+      when something is wrong with it. Somebody looking for help does not think
+      "this is a setting", and burying the support line one level down inside
+      the longest menu in the panel is the wrong place for the thing you reach
+      for when you are already stuck.
+
+      It carries no `area`: reaching the people who run the platform is not a
+      capability a role grants or withholds.
+    */
+    key: 'support',
+    label: 'Platform support',
+    to: '/admin/support',
+    icon: 'LifeBuoy',
   },
 ];
 
@@ -820,6 +839,10 @@ const ADMIN_LEGACY_REDIRECTS = {
   // bookmarked or emailed `/admin/rfqs` link lands on the screen that now does
   // that job rather than on a 404 that says only that something used to exist.
   '/admin/rfqs': '/admin/purchase-orders',
+  // Invoice messages folded into Invoice statuses as a tab on 2026-09-21: two
+  // sibling settings screens with near-identical names meant reading the menu
+  // twice to find either. The old path keeps working for a bookmark.
+  '/admin/settings/invoice-status': '/admin/settings/invoice-labels',
 };
 
 /**
@@ -1946,11 +1969,55 @@ const PERMISSION_AREAS = [
 
 const PERMISSION_LEVELS = ['none', 'view', 'full'];
 
+/**
+ * Settings, broken into the seven categories the panel already groups by.
+ *
+ * ## Why these are sub-areas rather than seven more top-level ones
+ *
+ * `settings` stayed a single area for a long time and it was too coarse the
+ * moment a business had more than one staff member: a bookkeeper who needs the
+ * expense categories had to be given the screen that mints API keys and the one
+ * that grants roles. But they are not peers of `sales` and `purchase` either -
+ * they are parts of one section, and a role that says "Settings: read only"
+ * should not then have to say it seven more times.
+ *
+ * So each one **inherits by default** (`inherit`, rendered as "Same as
+ * Settings") and is only pinned where it differs. That keeps the common role -
+ * everything the same - a single choice, and makes the exception explicit.
+ *
+ * The keys match `SETTINGS_CATEGORIES` in `client/src/lib/adminRoutes.js`, so a
+ * category added there gets a permission row rather than silently falling
+ * outside the system.
+ */
+const SETTINGS_SUBAREAS = [
+  'business',
+  'financial',
+  'users',
+  'scheduling',
+  'communications',
+  'system',
+  'integrations',
+];
+
+/** The permission area key for one settings category. */
+const settingsAreaKey = (category) => `settings.${category}`;
+
 /** Human labels for the Roles & Access selects. */
 const PERMISSION_LEVEL_LABELS = {
   none: 'No access',
   view: 'Read only',
   full: 'Full',
+};
+
+/**
+ * What a sub-area may hold. `inherit` is the default and the fourth option the
+ * three top-level levels do not have - it is the whole point of the nesting.
+ */
+const SUBAREA_LEVELS = ['inherit', ...PERMISSION_LEVELS];
+
+const SUBAREA_LEVEL_LABELS = {
+  inherit: 'Same as Settings',
+  ...PERMISSION_LEVEL_LABELS,
 };
 
 const BUSINESS_STATUSES = ['active', 'inactive', 'maintenance'];
@@ -2004,12 +2071,26 @@ const businessSchema = z.object({
   });
 });
 
-const areasSchema = z.object(
-  PERMISSION_AREAS.reduce(
+/**
+ * The seven top-level areas, plus a row per settings category.
+ *
+ * Sub-areas default to `inherit`, so a payload that names none of them - every
+ * client written before they existed - produces a role that behaves exactly as
+ * it did: `settings` decides the whole section.
+ */
+const areasSchema = z.object({
+  ...PERMISSION_AREAS.reduce(
     (out, area) => ({ ...out, [area]: z.enum(PERMISSION_LEVELS).default('none') }),
     {},
   ),
-);
+  ...SETTINGS_SUBAREAS.reduce(
+    (out, area) => ({
+      ...out,
+      [settingsAreaKey(area)]: z.enum(SUBAREA_LEVELS).default('inherit'),
+    }),
+    {},
+  ),
+});
 
 const roleSchema = z.object({
   name: z.string().trim().min(1, 'Enter a role name.').max(60),
@@ -2071,7 +2152,16 @@ const staffUserUpdateSchema = z.object({
  * and the portal shows it.
  */
 const MESSAGE_CHANNELS = ['call', 'sms', 'whatsapp', 'email', 'note'];
-const TEMPLATE_DOCUMENTS = ['none', 'order', 'invoice', 'quote', 'rma'];
+/**
+ * The records a template can be attached to.
+ *
+ * `ticket` was missing until 2026-09-21, which made the list a wholesaler's:
+ * orders, invoices, quotes and returns. A repair shop messages its customers
+ * about TICKETS more than anything else - that is the record a device moves
+ * through - so a notification screen offering every document except that one
+ * could not express its main case.
+ */
+const TEMPLATE_DOCUMENTS = ['none', 'ticket', 'order', 'invoice', 'quote', 'rma'];
 const CAMPAIGN_AUDIENCES = ['approved', 'pending', 'all_customers', 'with_orders'];
 
 const CAMPAIGN_AUDIENCE_LABELS = {
@@ -2116,6 +2206,16 @@ const messageTemplateSchema = z.object({
   name: z.string().trim().min(1, 'Name this template.').max(120),
   channel: z.enum(MESSAGE_CHANNELS),
   document: z.enum(TEMPLATE_DOCUMENTS).default('none'),
+
+  /**
+   * The status within that document this message belongs to.
+   *
+   * Free text, matching the model: the statuses differ per document and a
+   * business may add its own, so an enum here would be a second list to keep
+   * in step with the first. Empty means a general template bound to no
+   * status.
+   */
+  status: z.string().trim().max(60).optional().or(z.literal('')),
   subject: z.string().trim().max(200).optional(),
   body: z.string().trim().min(1, 'Write the message.').max(5000),
   isActive: z.boolean().default(true),
@@ -2188,6 +2288,70 @@ const businessInfoSchema = z.object({
    * has no reason to report it.
    */
   reviewUrl: z.string().trim().url('Enter a valid URL.').optional().or(z.literal('')),
+
+  /** The storefront wordmark. Empty renders the business name as text. */
+  logoUrl: z.string().trim().url('Enter a valid URL.').optional().or(z.literal('')),
+
+  // Where a customer writes TO. Both fall back to `email` when read, so a
+  // business with one mailbox types it once.
+  supportEmail: z
+    .string()
+    .trim()
+    .email('Enter a valid email address.')
+    .optional()
+    .or(z.literal('')),
+  billingEmail: z
+    .string()
+    .trim()
+    .email('Enter a valid email address.')
+    .optional()
+    .or(z.literal('')),
+
+  // A wa.me number, digits and an optional leading `+`. Not an email-style
+  // validation: what goes in the link is the digits, and a business that types
+  // its number with spaces or brackets should not be told it is wrong.
+  whatsapp: z
+    .string()
+    .trim()
+    .max(32)
+    .regex(/^[+\d][\d\s()-]*$/, 'Enter a phone number.')
+    .optional()
+    .or(z.literal('')),
+  mapUrl: z.string().trim().url('Enter a valid URL.').optional().or(z.literal('')),
+
+  /**
+   * Opening hours, printed rather than computed.
+   *
+   * Free text on both halves: "Mon – Fri" and "By appointment" are both real
+   * answers, and a structured weekday model cannot hold the second.
+   */
+  hours: z
+    .array(
+      z.object({
+        days: z.string().trim().min(1, 'Name the days.').max(60),
+        time: z.string().trim().min(1, 'Give the hours.').max(60),
+      }),
+    )
+    .max(10, 'Ten rows is enough for any week.')
+    .optional(),
+
+  /**
+   * Social profiles, one row per network the business is actually on.
+   *
+   * `handle` is printed beside the icon so a reader knows which account they
+   * are about to open before they click.
+   */
+  social: z
+    .array(
+      z.object({
+        network: z.string().trim().min(1).max(40),
+        url: z.string().trim().url('Enter a valid URL.'),
+        handle: z.string().trim().max(60).optional().or(z.literal('')),
+      }),
+    )
+    .max(12)
+    .optional(),
+
   address: z.object({
     line1: z.string().trim().max(160).optional().or(z.literal('')),
     line2: z.string().trim().max(160).optional().or(z.literal('')),
@@ -2250,6 +2414,26 @@ const saleSettingsSchema = z.object({
     )
     .optional(),
   rmaSlaDays: z.coerce.number().int().min(1, 'Enter at least one day.').max(365),
+
+  /**
+   * How long a ticket may stay open before the board flags it as overdue.
+   *
+   * **A separate promise from the RMA one**, which is why it is a separate
+   * field rather than the same number reused. A return is goods travelling
+   * back and is paced by a courier; a repair is work at a bench and is paced by
+   * the shop. `ticketService` has read this at nine call sites since tickets
+   * shipped - it drives the overdue count and the over-SLA badge - and until
+   * now nothing could write it, so every shop was held to a literal 7.
+   *
+   * Optional, so an older payload cannot write undefined over a figure a shop
+   * has already set.
+   */
+  ticketSlaDays: z.coerce
+    .number()
+    .int()
+    .min(1, 'Enter at least one day.')
+    .max(365, 'Use 365 days or fewer.')
+    .optional(),
 
   /**
    * What a kilometre of travel is worth, in **cents**, for an on-site repair.
@@ -2351,6 +2535,24 @@ const inventorySettingsSchema = z.object({
     .number()
     .min(0, 'A margin cannot be negative.')
     .max(99.9, 'A margin of 100% or more has no finite markup.'),
+
+  /**
+   * The reorder point assumed for a product that has none of its own.
+   *
+   * Unlike the two above this is **not** a pre-fill: it is read live by the
+   * dashboard badge, the Inventory pills, the reorder queue, the bell and the
+   * inventory report, so changing it re-classifies the catalogue on the next
+   * read. The screen says so.
+   *
+   * Optional, so a client that predates the field cannot blank it by saving
+   * the rest of the form.
+   */
+  lowStockThreshold: z.coerce
+    .number()
+    .int('Use a whole number of units.')
+    .min(1, 'Use at least one unit - zero would mean nothing is ever low.')
+    .max(100_000, 'Use 100,000 units or fewer.')
+    .optional(),
 });
 
 /**
@@ -2477,6 +2679,36 @@ const providerCredentialSchema = z.record(
  * so changing one here would detach products from a tree that still looks
  * correct on screen. Restructuring is a re-seed, not a form.
  */
+/**
+ * A new model, and the branch it hangs from (Device & Models → Add Model).
+ *
+ * **Four names, not a parent id.** Somebody adding "the new Pixel" does not
+ * know whether a `Google` brand node exists, and making them find out first
+ * would be three screens to add one phone. The service finds each level by
+ * slug or creates it.
+ *
+ * `series` is optional, matching the form: a model with no series hangs off
+ * the brand, which is what the seeded data does for the catalogue's flatter
+ * corners.
+ */
+const taxonomyCreateSchema = z.object({
+  deviceType: z.string().trim().min(1, 'Pick a category.').max(80),
+  brand: z.string().trim().min(1, 'Name the brand.').max(80),
+  series: z.string().trim().max(80).optional().or(z.literal('')),
+  name: z.string().trim().min(1, 'Name the model.').max(120),
+  aliases: z
+    .union([z.array(z.string().trim().max(60)), z.string().trim().max(600)])
+    .optional(),
+});
+
+/** A pasted or uploaded CSV of device models. See `taxonomyAdminService.importCsv`. */
+const taxonomyImportSchema = z.object({
+  text: z
+    .string()
+    .min(1, 'Paste some rows, or choose a file.')
+    .max(900_000, 'That file is too large. Import it in smaller batches.'),
+});
+
 const taxonomyNodeSchema = z.object({
   name: z.string().trim().min(1, 'Give this a name.').max(120),
   // Accepts an array or a comma-separated string; the service normalises both
@@ -2623,6 +2855,23 @@ const communicationsSettingsSchema = z.object({
   // Cents. 0 means "never notify on size" - distinct from an empty field.
   notifyAboveAmount: cents.default(0),
   lowStockEmail: z.string().trim().email('Enter a valid email address.').optional().or(z.literal('')),
+});
+
+/**
+ * One channel s send caps.
+ *
+ * Saved per channel rather than as one block, because the four are edited
+ * separately on the screen and a save of the email caps should not rewrite
+ * the SMS ones it happened to have in scope.
+ */
+const messageLimitSchema = z.object({
+  channel: z.enum(MESSAGE_CHANNELS, { required_error: 'Name the channel.' }),
+  // 0 is a real answer here: it means this channel sends nothing at all,
+  // which is how a business switches one off without removing its templates.
+  daily: z.coerce.number().int().min(0, 'Use 0 or more.').max(100000),
+  monthly: z.coerce.number().int().min(0, 'Use 0 or more.').max(1000000),
+  alertPercent: z.coerce.number().int().min(0, 'Use 0 to 100.').max(100, 'Use 0 to 100.'),
+  alertEmail: z.string().trim().email('Enter a valid email address.').optional().or(z.literal('')),
 });
 
 /**
@@ -2794,6 +3043,18 @@ const serviceCatalogSchema = z.object({
 const serviceCatalogUpdateSchema = serviceCatalogSchema.partial();
 
 /**
+ * A pasted or uploaded price list. Same shape as `taxonomyImportSchema`: the
+ * rows are validated one at a time in the service, because a single bad line
+ * must not cost the other thirty-nine.
+ */
+const serviceImportSchema = z.object({
+  text: z
+    .string()
+    .min(1, 'Paste some rows, or choose a file.')
+    .max(900_000, 'That file is too large. Import it in smaller batches.'),
+});
+
+/**
  * The devices a service business takes in (Sales § Ticket, § Quote).
  *
  * The same four levels the catalogue tree uses, on its own model - see
@@ -2894,6 +3155,33 @@ const kioskPinSchema = z.object({
 });
 
 /**
+ * The kiosk settings screen - everything about the tablet except its PIN.
+ *
+ * **The PIN is not in here, on purpose.** It is a credential and it has its own
+ * route (`PATCH /admin/kiosk/pin`), which audits the change and never stores or
+ * returns the digits. Folding it into this form would put a credential in the
+ * same payload as a welcome message, and would mean re-sending it on every
+ * unrelated save.
+ *
+ * `isEnabled` is the switch that decides whether a tablet may unlock at all,
+ * which is not the same question as the `sales.kiosk` feature flag: that one
+ * says this business may have a kiosk, this one says the tablet is live today.
+ */
+const kioskSettingsSchema = z.object({
+  isEnabled: z.boolean(),
+  welcomeMessage: z.string().trim().max(200, 'Keep the welcome under 200 characters.'),
+  thankYouMessage: z.string().trim().max(200, 'Keep the thank you under 200 characters.'),
+  readAloud: z.boolean(),
+  requireTerms: z.boolean(),
+  termsText: z.string().trim().max(1000, 'Keep the terms under 1,000 characters.'),
+}).refine((value) => !value.requireTerms || value.termsText.length > 0, {
+  // A required tick with nothing written beside it is a customer agreeing to a
+  // blank line, which is worth less than not asking at all.
+  message: 'Write the terms the customer is agreeing to, or stop requiring them.',
+  path: ['termsText'],
+});
+
+/**
  * Repair estimates (Sales § Quote, service businesses).
  *
  * The estimate and the ticket share a device shape on purpose, so the line and
@@ -2980,4 +3268,4 @@ const serviceQuoteConvertSchema = z.object({
   priority: z.enum(TICKET_PRIORITIES).default('normal'),
 });
 
-export { quoteToTicketSchema, ticketDepositSchema, ticketConvertSchema, TAX_RATES, INVOICE_SERVICE_TYPES, SERVICE_INVOICE_TYPES, ORDER_OPEN_STATUSES, ORDER_UNFULFILLED_STATUSES, approveUserSchema, rejectUserSchema, creditSchema, clientSchema, clientFormSchema, clientCreateFormSchema, clientUpdateSchema, CONSENT_CHANNELS, PREFERRED_CONTACT_OPTIONS, CUSTOMER_SOURCE_OPTIONS, contactConsentSchema, MEMBERSHIP_TIERS, tierSchema, internalNoteSchema, storeCreditSchema, refundSchema, userStatusSchema, productSchema, ORDER_STATUS_FLOW, orderStatusSchema, CARRIERS, ADMIN_NAV, ADMIN_LEGACY_REDIRECTS, invoicePaymentSchema, invoiceTipSchema, invoiceVoidSchema, webQuoteStatusSchema, creditPaymentSchema, invoiceUpdateSchema, bulkOrderStatusSchema, supplierSchema, purchaseOrderSchema, purchaseOrderStatusSchema, purchaseReceiveSchema, purchasePaymentSchema, purchaseInviteSchema, purchaseSendSchema, purchaseNegotiateSchema, purchaseConfirmSchema, proformaRevisionSchema, supplierQuoteSchema, supplierDeclineSchema, supplierProformaSchema, supplierDeliverySchema, superAdminLoginSchema, tenantSchema, tenantSlotsSchema, superAdminBusinessSchema, businessAssignSchema, businessFeatureSchema, impersonationSchema, tenantOwnerSchema, supportMessageSchema, planSchema, planFeatureSchema, businessStatusSchema, supplierLoginSchema, supplierForgotSchema, supplierResetSchema, supplierPasswordSchema, expenseSchema, expenseCategorySchema, stockAdjustSchema, productOpsSchema, quoteSchema, quoteStatusSchema, quoteConvertSchema, adminOrderSchema, adminInvoiceSchema, RMA_ITEM_DISPOSITIONS, rmaSchema, TICKET_STATUSES, TICKET_PRIORITIES, TICKET_SOURCES, TICKET_STATUS_LABELS, CONDITION_GRADES, CONDITION_PARTS, ticketSchema, ticketDeviceSchema, ticketLineSchema, ticketUpdateSchema, ticketStatusSchema, rmaStatusSchema, rmaInspectSchema, rmaResolveSchema, PERMISSION_AREAS, PERMISSION_LEVELS, PERMISSION_LEVEL_LABELS, BUSINESS_STATUSES, BUSINESS_COLOR_TOKENS, businessSchema, roleSchema, staffUserSchema, staffUserUpdateSchema, MESSAGE_CHANNELS, TEMPLATE_DOCUMENTS, CAMPAIGN_AUDIENCES, CAMPAIGN_AUDIENCE_LABELS, messageSchema, callLogSchema, messageTemplateSchema, campaignSchema, unsubscribeSchema, referralRateSchema, businessInfoSchema, saleSettingsSchema, shippingSettingsSchema, paymentMethodsSettingsSchema, inventorySettingsSchema, agreementTemplateSchema, agreementSignSchema, providerCredentialSchema, taxonomyNodeSchema, invoiceStatusRuleSchema, LABEL_COLOR_TOKENS, LABEL_COLOR_OPTIONS, invoiceLabelSchema, invoiceLabelSetSchema, invoiceRefundSchema, invoiceRemindSchema, communicationsSettingsSchema, SUPPLIER_RETURN_REASON_VALUES, supplierReturnSchema, supplierReturnStatusSchema, supplierCreditSchema, SUPPLIER_BILLING_CYCLES, supplierServiceSchema, supplierServiceUpdateSchema, supplierChargeSchema, SERVICE_CATEGORIES, SERVICE_CATEGORY_LABELS, serviceCatalogSchema, serviceCatalogUpdateSchema, DEVICE_KINDS, DEVICE_KIND_LABELS, deviceCatalogSchema, deviceCatalogUpdateSchema, kioskCheckInSchema, kioskUnlockSchema, kioskPinSchema, SERVICE_QUOTE_STATUSES, SERVICE_QUOTE_SOURCES, SERVICE_QUOTE_STATUS_LABELS, serviceQuoteLineSchema, serviceQuoteDeviceSchema, serviceQuoteSchema, serviceQuoteUpdateSchema, serviceQuoteStatusSchema, serviceQuoteConvertSchema };
+export { quoteToTicketSchema, ticketDepositSchema, ticketConvertSchema, TAX_RATES, INVOICE_SERVICE_TYPES, SERVICE_INVOICE_TYPES, ORDER_OPEN_STATUSES, ORDER_UNFULFILLED_STATUSES, approveUserSchema, rejectUserSchema, creditSchema, clientSchema, clientFormSchema, clientCreateFormSchema, clientUpdateSchema, CONSENT_CHANNELS, PREFERRED_CONTACT_OPTIONS, CUSTOMER_SOURCE_OPTIONS, contactConsentSchema, MEMBERSHIP_TIERS, tierSchema, internalNoteSchema, storeCreditSchema, refundSchema, userStatusSchema, productSchema, ORDER_STATUS_FLOW, orderStatusSchema, CARRIERS, ADMIN_NAV, ADMIN_LEGACY_REDIRECTS, invoicePaymentSchema, invoiceTipSchema, invoiceVoidSchema, webQuoteStatusSchema, creditPaymentSchema, invoiceUpdateSchema, bulkOrderStatusSchema, supplierSchema, purchaseOrderSchema, purchaseOrderStatusSchema, purchaseReceiveSchema, purchasePaymentSchema, purchaseInviteSchema, purchaseSendSchema, purchaseNegotiateSchema, purchaseConfirmSchema, proformaRevisionSchema, supplierQuoteSchema, supplierDeclineSchema, supplierProformaSchema, supplierDeliverySchema, superAdminLoginSchema, tenantSchema, tenantSlotsSchema, superAdminBusinessSchema, businessAssignSchema, businessFeatureSchema, impersonationSchema, tenantOwnerSchema, supportMessageSchema, planSchema, planFeatureSchema, businessStatusSchema, supplierLoginSchema, supplierForgotSchema, supplierResetSchema, supplierPasswordSchema, expenseSchema, expenseCategorySchema, stockAdjustSchema, productOpsSchema, quoteSchema, quoteStatusSchema, quoteConvertSchema, adminOrderSchema, adminInvoiceSchema, RMA_ITEM_DISPOSITIONS, rmaSchema, TICKET_STATUSES, TICKET_PRIORITIES, TICKET_SOURCES, TICKET_STATUS_LABELS, CONDITION_GRADES, CONDITION_PARTS, ticketSchema, ticketDeviceSchema, ticketLineSchema, ticketUpdateSchema, ticketStatusSchema, rmaStatusSchema, rmaInspectSchema, rmaResolveSchema, PERMISSION_AREAS, PERMISSION_LEVELS, PERMISSION_LEVEL_LABELS, SETTINGS_SUBAREAS, SUBAREA_LEVELS, SUBAREA_LEVEL_LABELS, settingsAreaKey, BUSINESS_STATUSES, BUSINESS_COLOR_TOKENS, businessSchema, roleSchema, staffUserSchema, staffUserUpdateSchema, MESSAGE_CHANNELS, TEMPLATE_DOCUMENTS, CAMPAIGN_AUDIENCES, CAMPAIGN_AUDIENCE_LABELS, messageSchema, callLogSchema, messageTemplateSchema, campaignSchema, unsubscribeSchema, referralRateSchema, businessInfoSchema, saleSettingsSchema, shippingSettingsSchema, paymentMethodsSettingsSchema, inventorySettingsSchema, agreementTemplateSchema, agreementSignSchema, providerCredentialSchema, taxonomyNodeSchema, taxonomyCreateSchema, taxonomyImportSchema, invoiceStatusRuleSchema, LABEL_COLOR_TOKENS, LABEL_COLOR_OPTIONS, invoiceLabelSchema, invoiceLabelSetSchema, invoiceRefundSchema, invoiceRemindSchema, communicationsSettingsSchema, messageLimitSchema, SUPPLIER_RETURN_REASON_VALUES, supplierReturnSchema, supplierReturnStatusSchema, supplierCreditSchema, SUPPLIER_BILLING_CYCLES, supplierServiceSchema, supplierServiceUpdateSchema, supplierChargeSchema, SERVICE_CATEGORIES, SERVICE_CATEGORY_LABELS, serviceCatalogSchema, serviceCatalogUpdateSchema, serviceImportSchema, DEVICE_KINDS, DEVICE_KIND_LABELS, deviceCatalogSchema, deviceCatalogUpdateSchema, kioskCheckInSchema, kioskUnlockSchema, kioskPinSchema, kioskSettingsSchema, SERVICE_QUOTE_STATUSES, SERVICE_QUOTE_SOURCES, SERVICE_QUOTE_STATUS_LABELS, serviceQuoteLineSchema, serviceQuoteDeviceSchema, serviceQuoteSchema, serviceQuoteUpdateSchema, serviceQuoteStatusSchema, serviceQuoteConvertSchema };

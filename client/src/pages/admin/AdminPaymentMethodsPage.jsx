@@ -53,6 +53,16 @@ export function AdminPaymentMethodsPage() {
     setMethods(data.financial.paymentMethods);
   }, [data, dirty]);
 
+  /**
+   * Adding stages the row; Save changes writes it.
+   *
+   * Briefly made an immediate write, because a row added and then lost to a
+   * refresh is a real defect. Reverted: one Save button for the whole list is
+   * the clearer model, and an add that writes while the renames beside it wait
+   * means the same screen commits two ways. What actually fixes the lost row is
+   * telling the staff member they have unsaved work before they leave - see
+   * `useUnsavedGuard` below.
+   */
   function add() {
     const label = draft.trim();
     if (!label) return;
@@ -114,7 +124,7 @@ export function AdminPaymentMethodsPage() {
   if (isLoading) return <p className="text-sm text-ink-500">Loading settings…</p>;
 
   return (
-    <>
+    <div className="form-page">
       <PageHeader
         icon={ADMIN_PAGE.icon}
         title={ADMIN_PAGE.title}
@@ -201,6 +211,7 @@ export function AdminPaymentMethodsPage() {
         </Panel>
 
         <SettingsFormActions
+          unsavedLabel="the payment methods"
           dirty={dirty}
           saving={savePaymentMethods.isPending}
           saved={saved}
@@ -214,7 +225,7 @@ export function AdminPaymentMethodsPage() {
           }}
         />
       </form>
-    </>
+    </div>
   );
 }
 

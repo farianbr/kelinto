@@ -705,6 +705,22 @@ export function useMarketingTemplates(channel) {
   });
 }
 
+/**
+ * The send caps, with how much of each has been used today and this month.
+ *
+ * Short stale time: the usage half moves every time anybody sends, and a cap
+ * page showing yesterday s number is the one thing it must not do.
+ */
+export function useMarketingLimits() {
+  const { canUseAdmin } = useAuth();
+  return useQuery({
+    queryKey: ['admin', 'marketing', 'limits'],
+    queryFn: () => api.get('/admin/marketing/limits'),
+    enabled: canUseAdmin,
+    staleTime: 15 * 1000,
+  });
+}
+
 export function useMarketingCampaigns(params) {
   const { canUseAdmin } = useAuth();
   return useQuery({
@@ -912,6 +928,26 @@ export function useAdminCredentials() {
 }
 
 // ---- phase 11d: taxonomy & invoice status rules -----------------------------
+
+/**
+ * What deleting one record would take with it.
+ *
+ * Only fetched while the dialog is open (`enabled`): this is a question asked
+ * at the moment of deciding, not data a list needs. Never cached beyond the
+ * moment either - `staleTime: 0` - because the whole value is that the count
+ * is current, and a stale one is worse than none.
+ */
+export function useDeletePreview(type, id, enabled = true) {
+  const { canUseAdmin } = useAuth();
+  return useQuery({
+    queryKey: ['admin', 'delete-preview', type, id],
+    queryFn: () => api.get(`/admin/delete-preview/${type}/${id}`),
+    enabled: Boolean(canUseAdmin && type && id && enabled),
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+  });
+}
 
 export function useAdminTaxonomy(params) {
   const { canUseAdmin } = useAuth();
@@ -1416,6 +1452,12 @@ export function useAdminMutations() {
       mutationFn: (body) => api.post('/admin/services', body),
       onSuccess: invalidate,
     }),
+    // Bulk price list, added or updated by name. Resolves to a per-row report
+    // rather than a count, because the rows it could not take are the point.
+    importServices: useMutation({
+      mutationFn: (body) => api.post('/admin/services/import', body),
+      onSuccess: invalidate,
+    }),
     updateService: useMutation({
       mutationFn: ({ id, ...body }) => api.patch(`/admin/services/${id}`, body),
       onSuccess: invalidate,
@@ -1678,6 +1720,13 @@ export function useAdminMutations() {
       onSuccess: invalidate,
     }),
 
+    // One channel at a time, so saving the email caps cannot rewrite the SMS
+    // ones that happened to be on screen.
+    saveMessageLimit: useMutation({
+      mutationFn: (body) => api.patch('/admin/marketing/limits', body),
+      onSuccess: invalidate,
+    }),
+
     createCampaign: useMutation({
       mutationFn: (body) => api.post('/admin/marketing/campaigns', body),
       onSuccess: invalidate,
@@ -1766,6 +1815,14 @@ export function useAdminMutations() {
     // Taxonomy writes invalidate the public tree as well: the sidebar, mega
     // menu and tab wizard all render from it, so an alias or a deactivation has
     // to show up on the storefront without a hard refresh.
+    importTaxonomyCsv: useMutation({
+      mutationFn: (body) => api.post('/admin/taxonomy/import', body),
+      onSuccess: invalidateContent('taxonomy'),
+    }),
+    createTaxonomyNode: useMutation({
+      mutationFn: (body) => api.post('/admin/taxonomy', body),
+      onSuccess: invalidateContent('taxonomy'),
+    }),
     saveTaxonomyNode: useMutation({
       mutationFn: ({ id, ...body }) => api.patch(`/admin/taxonomy/${id}`, body),
       onSuccess: invalidateContent('taxonomy'),
@@ -1789,6 +1846,17 @@ export function useAdminMutations() {
     }),
     saveCommunications: useMutation({
       mutationFn: (body) => api.patch('/admin/settings/communications', body),
+      onSuccess: invalidate,
+    }),
+    // The kiosk screen, minus its PIN. Two mutations rather than one because
+    // the PIN is a credential with its own audited route, and re-sending it
+    // alongside a welcome message on every save would be the wrong shape.
+    saveKioskSettings: useMutation({
+      mutationFn: (body) => api.patch('/admin/settings/kiosk', body),
+      onSuccess: invalidate,
+    }),
+    setKioskPin: useMutation({
+      mutationFn: (body) => api.patch('/admin/kiosk/pin', body),
       onSuccess: invalidate,
     }),
     runInvoiceRules: useMutation({

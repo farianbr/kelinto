@@ -27,7 +27,7 @@ export const SETTINGS_CATEGORIES = [
   {
     key: 'business',
     label: 'Business & Organization',
-    description: 'Who Cellvix is on an invoice, an email and the storefront footer.',
+    description: 'Who this business is on an invoice, an email and the storefront footer.',
   },
   {
     key: 'financial',
@@ -252,11 +252,23 @@ export const ADMIN_ROUTES = {
     description: 'Price quotes built for an account, and what became of them.',
   },
   '/admin/services': {
+    tabOrder: 5,
     label: 'Services',
     parent: 'sales',
     icon: 'Wrench',
     section: 'sales',
     phase: 7,
+    /**
+     * Also in Financial settings - both as a tab and as a card on the hub.
+     *
+     * The price list IS configuration: it is the master list a quote and a
+     * ticket pick their labour from. Unlike Discount Codes and Referrals,
+     * which moved out of Marketing entirely, this keeps its Sales nav row -
+     * the counter reaches it several times a day, and it was not asked to
+     * move. So `parent` stays `sales`, which keeps the breadcrumb honest, and
+     * `settingsTab` lends it to the Financial row and grid.
+     */
+    settingsTab: 'financial',
     title: 'Services',
     description: 'The labour a quote or a ticket is priced from.',
   },
@@ -296,7 +308,7 @@ export const ADMIN_ROUTES = {
     section: 'purchase',
     phase: 5,
     title: 'Suppliers',
-    description: 'The businesses Cellvix buys stock from.',
+    description: 'The businesses you buy stock from.',
   },
   '/admin/suppliers/:id': {
     label: 'Supplier',
@@ -455,23 +467,79 @@ export const ADMIN_ROUTES = {
     title: 'WhatsApp',
     description: 'Compose and log WhatsApp messages to an account.',
   },
+  /**
+   * Referrals - moved out of Marketing on 2026-09-21, alongside Discount
+   * Codes, at the client's request.
+   *
+   * **The commission rate stays admin-only, wherever the screen sits.**
+   * `PATCH /admin/referrals/rate` is `adminOnly`, not `settings: full`,
+   * because the percentage multiplies every future payout - §6.13's reasoning
+   * does not change because the card moved categories. A `settings: full` role
+   * can open this screen and read the ledger; only an admin can move the rate.
+   */
   '/admin/marketing/referrals': {
+    tabOrder: 7,
     label: 'Referrals',
-    parent: 'marketing',
+    parent: 'settings:financial',
     icon: 'Gift',
-    section: 'marketing',
+    section: 'settings',
     phase: 10,
+    built: true,
+    feature: 'marketing.referrals',
     title: 'Referral commission',
-    description: 'Who referred whom, and the store credit it has earned.',
+    description: 'The commission rate, who referred whom, and the store credit it has earned.',
   },
+  /**
+   * Discount Codes - moved out of Marketing on 2026-09-21, at the client's
+   * request.
+   *
+   * A promo code is configuration an admin sets once, not a campaign they
+   * send, so it sits with the rest of what Financial settings decides. The URL
+   * is unchanged: every link ever shared points at it, and `Offer` is still
+   * the only record behind a discount - `pricingService` remains the one place
+   * a discount is decided, and this is one screen reached from a new place,
+   * not a second discount surface.
+   */
   '/admin/marketing/offers': {
-    label: 'Offers',
-    parent: 'marketing',
-    icon: 'Tag',
-    section: 'marketing',
+    tabOrder: 6,
+    label: 'Discount Codes',
+    parent: 'settings:financial',
+    icon: 'Percent',
+    section: 'settings',
     phase: 1,
-    title: 'Offers',
-    description: 'Promotions, promo codes and combo bundles.',
+    built: true,
+    feature: 'marketing.offers',
+    title: 'Discount codes',
+    description: 'Promo codes, combo bundles and the offers a price can carry.',
+  },
+  /**
+   * New and edit offer - a page, not a modal (2026-09-21).
+   *
+   * No `tabOrder` and no `settingsTab`: a form reached FROM a tab is not itself
+   * a tab, and listing it would put "New offer" in the row beside the screens
+   * it is opened from. `parent` gives it the breadcrumb back to the list.
+   */
+  '/admin/marketing/offers/new': {
+    label: 'New offer',
+    parent: '/admin/marketing/offers',
+    icon: 'Percent',
+    section: 'settings',
+    phase: 1,
+    built: true,
+    feature: 'marketing.offers',
+    title: 'New offer',
+    description: 'A promo code, a combo bundle or a deal.',
+  },
+  '/admin/marketing/offers/:id': {
+    label: 'Edit offer',
+    parent: '/admin/marketing/offers',
+    icon: 'Percent',
+    section: 'settings',
+    phase: 1,
+    built: true,
+    feature: 'marketing.offers',
+    title: 'Edit offer',
+    description: 'A promo code, a combo bundle or a deal.',
   },
   '/admin/marketing/blog': {
     label: 'Blog',
@@ -581,6 +649,7 @@ export const ADMIN_ROUTES = {
     description: 'Company name, contact details, GST/HST number and logo.',
   },
   '/admin/settings/sale': {
+    tabOrder: 1,
     label: 'Sale Settings',
     parent: 'settings:financial',
     icon: 'Coins',
@@ -590,21 +659,8 @@ export const ADMIN_ROUTES = {
     title: 'Sale settings',
     description: 'Regional defaults, invoice numbering, warranty by grade and shipping.',
   },
-  '/admin/settings/invoice-status': {
-    label: 'Invoice Messages',
-    parent: 'settings:financial',
-    icon: 'FileText',
-    section: 'settings',
-    phase: 11,
-    built: true,
-    // Renamed from "Invoice Status", which collided with the manual status
-    // list below it: two settings screens both called Invoice Status, one
-    // sending timed email and one editing a picker, is a menu a staff member
-    // has to click twice to read. These are messages; those are statuses.
-    title: 'Invoice messages',
-    description: 'Time-lapse status messages, each firing once per invoice.',
-  },
   '/admin/settings/invoice-labels': {
+    tabOrder: 2,
     label: 'Invoice Statuses',
     parent: 'settings:financial',
     icon: 'Tag',
@@ -612,30 +668,116 @@ export const ADMIN_ROUTES = {
     phase: 12,
     built: true,
     title: 'Invoice statuses',
+    // Both halves live here now, as tabs: the manual list somebody sets by
+    // hand, and the timed messages that go out on their own.
     description:
-      'The manual statuses an admin can set on an invoice, separate from whether it is paid.',
+      'The statuses an admin sets on an invoice, and the timed messages invoices send.',
   },
   '/admin/settings/devices': {
+    tabOrder: 12,
     label: 'Devices taken in',
     parent: 'settings:financial',
     icon: 'Smartphone',
     section: 'settings',
     phase: 11,
     built: true,
+    // Same contract the kiosk card below states: the server already answers 404
+    // on every `/admin/devices` route without this flag, so a card drawn
+    // without it is a tile that opens onto nothing. A parts wholesaler takes no
+    // hardware across a counter and has no list of it to keep.
+    feature: 'sales.devices',
     title: 'Devices this shop takes in',
     description: 'The list behind the device pickers on a ticket, an estimate and the kiosk.',
   },
-  '/admin/settings/taxonomy': {
-    label: 'Taxonomy',
+  '/admin/settings/kiosk': {
+    tabOrder: 13,
+    label: 'Kiosk',
     parent: 'settings:financial',
-    icon: 'Boxes',
+    icon: 'Tablet',
     section: 'settings',
     phase: 11,
     built: true,
+    // Only a business with the flag has a kiosk at all, and the summary grid
+    // reads this to decide whether to draw the card. Without it a parts
+    // wholesaler would be offered a tablet for customers to check devices in
+    // at, over a counter it does not have.
+    feature: 'sales.kiosk',
+    title: 'Self-service check-in',
+    description: 'The counter tablet: whether it is live, its PIN, and what it says.',
+  },
+  '/admin/settings/taxonomy': {
+    tabOrder: 4,
+    // "Device & Models", not "Taxonomy": the second is what the model is
+    // called in the code and means nothing to the person looking for the list
+    // of phones. The page's own title has said devices, brands and models all
+    // along.
+    label: 'Device & Models',
+    parent: 'settings:financial',
+    // Not `Smartphone`: "Devices taken in" already carries that one, and the
+    // two sit next to each other in the Financial row.
+    icon: 'TabletSmartphone',
+    section: 'settings',
+    phase: 11,
+    built: true,
+    /**
+     * The catalogue tree, so it belongs to a business that HAS a catalogue.
+     *
+     * Ungated, this sat in the Financial row of every business beside
+     * "Devices taken in" - two screens with near-identical names, one of
+     * them permanently reading "0 entries · Nothing here" on a repair shop.
+     * Reported as "what is the difference, just keep one", which is the right
+     * reaction to a menu offering both.
+     *
+     * They are NOT the same list, and merging them would break the one that
+     * works: `Taxonomy` is the storefront filter and every read of it counts
+     * products and prunes any branch counting zero, while `DeviceCatalog` is
+     * what a shop takes across the counter - mostly devices it stocks no
+     * parts for, which that pruning rule would delete outright. See the
+     * docstring on `models/DeviceCatalog.js`.
+     *
+     * So the fix is the gate rather than the merge. `storefront.public` is
+     * the exact complement of the `sales.devices` flag on the other screen:
+     * product businesses get this one, service businesses get that one, and
+     * a `both` business genuinely has two lists because it genuinely does
+     * both jobs.
+     */
+    feature: 'storefront.public',
     title: 'Devices, brands, models & aliases',
     description: 'The master list behind every device picker and the search box.',
   },
+  /**
+   * Add a device model - a page, not a modal.
+   *
+   * No `tabOrder`: a form reached FROM a tab is not itself a tab, and listing
+   * it would put "Add Model" in the row beside the screens it is opened from.
+   * `parent` gives it the breadcrumb back to the list.
+   */
+  '/admin/settings/taxonomy/add': {
+    label: 'Add Model',
+    parent: '/admin/settings/taxonomy',
+    icon: 'TabletSmartphone',
+    section: 'settings',
+    phase: 11,
+    built: true,
+    // Same gate as the list it belongs to - a child of a hidden screen that
+    // stays reachable is a hidden screen with a back door.
+    feature: 'storefront.public',
+    title: 'Add device model',
+    description: 'A new entry for the searchable device picker.',
+  },
+  '/admin/settings/taxonomy/import': {
+    label: 'Import CSV',
+    parent: '/admin/settings/taxonomy',
+    icon: 'TabletSmartphone',
+    section: 'settings',
+    phase: 11,
+    built: true,
+    feature: 'storefront.public',
+    title: 'Import device models',
+    description: 'Bulk-add or update the device master list.',
+  },
   '/admin/settings/shipping': {
+    tabOrder: 11,
     label: 'Shipping Rates',
     parent: 'settings:financial',
     icon: 'Truck',
@@ -646,6 +788,7 @@ export const ADMIN_ROUTES = {
     description: 'Flat rate, free-over threshold and per-province surcharges.',
   },
   '/admin/settings/payment-methods': {
+    tabOrder: 8,
     label: 'Payment Methods',
     parent: 'settings:financial',
     icon: 'CreditCard',
@@ -656,6 +799,7 @@ export const ADMIN_ROUTES = {
     description: 'The list behind every payment and expense form.',
   },
   '/admin/settings/expense-categories': {
+    tabOrder: 9,
     label: 'Expense Categories',
     parent: 'settings:financial',
     icon: 'Receipt',
@@ -665,6 +809,7 @@ export const ADMIN_ROUTES = {
     description: 'How money out is grouped in the P&L and the expense report.',
   },
   '/admin/settings/inventory': {
+    tabOrder: 10,
     label: 'Inventory Settings',
     parent: 'settings:financial',
     icon: 'Boxes',
@@ -677,9 +822,11 @@ export const ADMIN_ROUTES = {
     // screen under Financial, and product groups were never built. A page
     // header that names sections the page does not have sends a staff member
     // scrolling for something that is not below.
-    description: 'The markup and margin a new product is pre-filled with.',
+    description:
+      'The markup and margin a new product is pre-filled with, and when stock counts as low.',
   },
   '/admin/settings/agreements': {
+    tabOrder: 14,
     label: 'Supplier Agreements',
     // Filed under Financial beside Expense Categories, which is where the rest
     // of the purchasing configuration lives.
@@ -716,6 +863,10 @@ export const ADMIN_ROUTES = {
     section: 'settings',
     phase: 11,
     built: true,
+    // The board reads `GET /admin/appointments`, which is gated on this flag -
+    // so without it the screen draws its whole chrome around a 404 and reads as
+    // an empty week rather than as a feature this business does not have.
+    feature: 'scheduling.appointments',
     title: 'Calendar',
     description: 'The weekly board, by staff and by status.',
   },
@@ -726,6 +877,8 @@ export const ADMIN_ROUTES = {
     section: 'settings',
     phase: 11,
     built: true,
+    // Reads the same gated route as the Calendar board above.
+    feature: 'scheduling.appointments',
     title: 'Appointments',
     description: 'The booking grid.',
   },

@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
+import { rejectUserSchema } from '@shared/schemas/admin';
 import { ArrowUpRight, Check, UserCheck, X } from 'lucide-react';
 import cn from '@/lib/cn';
 import { pressable } from '@/lib/motion';
@@ -42,7 +44,11 @@ export function RejectForm({ user, onSubmit, onCancel, isPending }) {
     register,
     handleSubmit,
     formState: { errors },
-  } = useForm();
+  } = useAdminForm({
+    // The inline rules here only checked for emptiness and a length of 3.
+    // `rejectUserSchema` is what the route applies, so the two now agree.
+    resolver: zodResolver(rejectUserSchema),
+  });
 
   return (
     <form onSubmit={handleSubmit((values) => onSubmit(values.reason))} className="space-y-4">
@@ -56,10 +62,8 @@ export function RejectForm({ user, onSubmit, onCancel, isPending }) {
         placeholder="Could not verify the business registration."
         error={errors.reason?.message}
         data-autofocus
-        {...register('reason', {
-          required: 'Give a reason - it goes in the notification email.',
-          minLength: { value: 3, message: 'Give a reason.' },
-        })}
+        required
+        {...register('reason')}
       />
 
       <div className="flex justify-end gap-2 pt-1">

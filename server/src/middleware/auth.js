@@ -64,9 +64,30 @@ async function authenticate(req, res, next) {
      * alternative - putting the population in the token - would mean a token
      * minted before a role changed kept looking in the wrong place.
      */
-    const user =
-      (await controlModels().User.findOne({ _id: payload.sub, role: 'admin' })) ??
-      (await db().User.findById(payload.sub));
+    /**
+     * **Both lookups at once, not one after the other.**
+     *
+     * These were chained with `??`, which makes the second wait for the first to
+     * come back before it is even issued - so every buyer and every staff member
+     * (the accounts that are *not* in the control plane, which is most of them)
+     * paid two full round trips to the database on every request. The admin case
+     * was fast and the common case was not.
+     *
+     * The precedence the `??` expressed is preserved exactly: the control-plane
+     * admin still wins when both resolve. What changes is that the two queries
+     * are in flight together, so the cost is one round trip rather than two.
+     *
+     * Issuing a lookup whose result may be discarded is the deliberate trade: a
+     * second indexed read by `_id` is cheap, and it is already being made in the
+     * common path. Nothing is written here, so there is no interaction between
+     * the two.
+     */
+    const [controlAdmin, businessUser] = await Promise.all([
+      controlModels().User.findOne({ _id: payload.sub, role: 'admin' }),
+      db().User.findById(payload.sub),
+    ]);
+
+    const user = controlAdmin ?? businessUser;
 
     if (user) {
       req.user = user;

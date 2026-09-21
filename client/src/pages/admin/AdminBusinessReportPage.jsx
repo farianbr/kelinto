@@ -28,6 +28,7 @@ import { useTaxonomy } from '@/hooks/useCatalog';
 import Skeleton from '@/components/ui/Skeleton';
 import { pressable } from '@/lib/motion';
 import SelectMenu from '@/components/ui/SelectMenu';
+import useActiveBusinessName from '@/hooks/useActiveBusinessName';
 
 /**
  * Business Overview - the printable period report (ERP rework §6.11).
@@ -130,6 +131,7 @@ function ReportTable({ headers, rows, total, empty, caption }) {
 }
 
 export function AdminBusinessReportPage() {
+  const businessName = useActiveBusinessName();
   const [searchParams, setSearchParams] = useSearchParams();
   const range = useDateRange('this-month');
   const brand = searchParams.get('brand') ?? '';
@@ -212,7 +214,7 @@ export function AdminBusinessReportPage() {
       {/* The printed header. Hidden on screen because the page header above
           already says all this - on paper there is no shell to say it. */}
       <div className="hidden print:mb-6 print:block">
-        <h1 className="text-2xl font-bold">Cellvix - Business Overview</h1>
+        <h1 className="text-2xl font-bold">{businessName} - Business Overview</h1>
         <p className="mt-1 text-sm">
           {data?.range ? `${date(data.range.from)} to ${date(data.range.to)}` : ''}
           {brand ? ` · ${brands?.find((row) => row.slug === brand)?.name ?? brand}` : ' · every brand'}
@@ -405,7 +407,7 @@ export function AdminBusinessReportPage() {
                 {(tax.net ?? 0) < 0 ? '−' : ''}
                 {money(Math.abs(tax.net ?? 0))}
               </span>
-              {(tax.net ?? 0) < 0 && ' - a refund or credit is due to Cellvix.'}
+              {(tax.net ?? 0) < 0 && ` - a refund or credit is due to ${businessName}.`}
             </p>
           </Panel>
         </>

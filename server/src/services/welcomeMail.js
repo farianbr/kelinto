@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import env from '../config/env.js';
 import { sendMail } from './mailer.js';
-import { BUSINESS_INFO } from '../../../shared/business.js';
+import { sendingBusiness } from './sendingBusiness.js';
 import { displayNameOf } from '../utils/displayName.js';
 
 /**
@@ -119,7 +119,7 @@ const MAIL = {
   radiusInner: '10px',
 };
 
-function renderHtml({ user, password, origin, approved }) {
+function renderHtml({ user, password, origin, approved, business }) {
   const account = `${origin}/account`;
   const security = `${origin}/account/company`;
 
@@ -134,7 +134,7 @@ function renderHtml({ user, password, origin, approved }) {
   return `<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Welcome to Cellvix</title></head>
+<title>Welcome to ${escapeHtml(business.name)}</title></head>
 <body style="margin:0;padding:0;background:${surface2};">
   <!-- Preheader: the line inboxes show beside the subject. Hidden in the body. -->
   <div style="display:none;max-height:0;overflow:hidden;opacity:0;">
@@ -164,7 +164,7 @@ function renderHtml({ user, password, origin, approved }) {
 
         <tr><td style="padding:36px 36px 8px;">
           <div style="font:700 ${MAIL.micro}/1 ${display};letter-spacing:0.14em;text-transform:uppercase;color:${ink300};">
-            ${escapeHtml(BUSINESS_INFO.name)}
+            ${escapeHtml(business.name)}
           </div>
           <h1 style="margin:14px 0 0;font:700 ${MAIL.hero}/1.2 ${display};letter-spacing:-0.02em;color:${ink900};">
             ${password ? 'Your account is ready' : 'Thanks for signing up'}
@@ -220,7 +220,7 @@ function renderHtml({ user, password, origin, approved }) {
           <table role="presentation" cellpadding="0" cellspacing="0">
             <tr><td style="border-radius:${MAIL.radiusInner};background:${MAIL.brand};">
               <a href="${password ? origin : account}" style="display:inline-block;padding:13px 26px;font:600 ${MAIL.base}/1 ${display};color:#ffffff;text-decoration:none;">
-                ${password ? 'Sign in to Cellvix' : 'Go to your dashboard'}
+                ${password ? `Sign in to ${escapeHtml(business.name)}` : 'Go to your dashboard'}
               </a>
             </td></tr>
           </table>
@@ -252,7 +252,7 @@ function renderHtml({ user, password, origin, approved }) {
 
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;">
         <tr><td style="padding:18px 36px 0;text-align:center;font:400 ${MAIL.micro}/1.7 ${body};color:${ink300};">
-          ${escapeHtml(BUSINESS_INFO.name)} &nbsp;·&nbsp; ${escapeHtml(BUSINESS_INFO.address.city)}, ${escapeHtml(BUSINESS_INFO.address.region)}<br />
+          ${escapeHtml(business.name)} &nbsp;·&nbsp; ${escapeHtml(business.address.city)}, ${escapeHtml(business.address.region)}<br />
           You are receiving this because an account was opened for this address.
           Reply to this email and it reaches our team.
         </td></tr>
@@ -264,9 +264,11 @@ function renderHtml({ user, password, origin, approved }) {
 </html>`;
 }
 
-function renderText({ user, password, origin, approved }) {
+function renderText({ user, password, origin, approved, business }) {
   const lines = [
-    password ? 'Your Cellvix account is ready' : 'Thanks for signing up to Cellvix',
+    password
+      ? `Your ${business.name} account is ready`
+      : `Thanks for signing up to ${business.name}`,
     '',
     password
       ? `We have opened a wholesale account for ${displayNameOf(user)}.`
@@ -296,7 +298,7 @@ function renderText({ user, password, origin, approved }) {
       ? 'Your account is approved, so wholesale pricing and ordering are live the moment you sign in.'
       : 'Approval usually takes one business day. You can sign in and browse now; wholesale pricing and ordering unlock once our team has verified your business.',
     '',
-    `${BUSINESS_INFO.name} · ${BUSINESS_INFO.address.city}, ${BUSINESS_INFO.address.region}`,
+    `${business.name} · ${business.address.city}, ${business.address.region}`,
     'Reply to this email and it reaches our team.',
   );
 
@@ -316,13 +318,26 @@ async function sendWelcomeEmail({ user, password = null }) {
   try {
     const origin = env.publicOrigin;
     const approved = user.status === 'approved';
+    /**
+     * The business the account was opened with, not the house brand.
+     *
+     * The subject line is the half that shows in an inbox before anything is
+     * opened, and it said "Cellvix" to every customer of every business - so a
+     * repair customer of CellShoppe was told their account with a wholesaler
+     * they have never dealt with was ready. That reads as phishing, and a
+     * customer who treats it as phishing never opens the mail that carries
+     * their password.
+     */
+    const business = await sendingBusiness();
 
     return await sendMail({
       to: user.email,
       from: env.MAIL_FROM_ADMIN,
-      subject: password ? 'Your Cellvix account is ready' : 'Welcome to Cellvix',
-      html: renderHtml({ user, password, origin, approved }),
-      text: renderText({ user, password, origin, approved }),
+      subject: password
+        ? `Your ${business.name} account is ready`
+        : `Welcome to ${business.name}`,
+      html: renderHtml({ user, password, origin, approved, business }),
+      text: renderText({ user, password, origin, approved, business }),
     });
   } catch (error) {
     console.error(`  Mail: welcome email for ${user?.email} could not be built - ${error.message}`);
@@ -352,6 +367,8 @@ async function sendPasswordResetEmail({ user, token, origin, expiresMinutes = 60
   try {
     const base = origin || env.publicOrigin;
     const link = `${base}/reset-password?token=${encodeURIComponent(token)}`;
+    // The business whose account this password opens - see `sendWelcomeEmail`.
+    const business = await sendingBusiness();
 
     const { display, body, ink900, ink500, ink300, line, surface2 } = MAIL;
 
@@ -375,7 +392,7 @@ async function sendPasswordResetEmail({ user, token, origin, expiresMinutes = 60
 
       <tr><td style="padding:36px 36px 8px;">
         <div style="font:700 ${MAIL.micro}/1 ${display};letter-spacing:0.14em;text-transform:uppercase;color:${ink300};">
-          ${escapeHtml(BUSINESS_INFO.name)}
+          ${escapeHtml(business.name)}
         </div>
       </td></tr>
 
@@ -412,7 +429,7 @@ async function sendPasswordResetEmail({ user, token, origin, expiresMinutes = 60
 
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;">
       <tr><td style="padding:18px 36px 0;text-align:center;font:400 ${MAIL.micro}/1.7 ${body};color:${ink300};">
-        ${escapeHtml(BUSINESS_INFO.name)} &nbsp;·&nbsp; ${escapeHtml(BUSINESS_INFO.address.city)}, ${escapeHtml(BUSINESS_INFO.address.region)}<br />
+        ${escapeHtml(business.name)} &nbsp;·&nbsp; ${escapeHtml(business.address.city)}, ${escapeHtml(business.address.region)}<br />
         This link expires in ${expiresMinutes} minutes and can only be used once.
       </td></tr>
     </table>
@@ -421,7 +438,7 @@ async function sendPasswordResetEmail({ user, token, origin, expiresMinutes = 60
 </body></html>`;
 
     const text = [
-      'Reset your Cellvix password',
+      `Reset your ${business.name} password`,
       '',
       `Somebody asked to reset the password for ${user.email}.`,
       `Open this link within ${expiresMinutes} minutes to choose a new one:`,
@@ -435,7 +452,7 @@ async function sendPasswordResetEmail({ user, token, origin, expiresMinutes = 60
     return await sendMail({
       to: user.email,
       from: env.MAIL_FROM_ADMIN,
-      subject: 'Reset your Cellvix password',
+      subject: `Reset your ${business.name} password`,
       html,
       text,
     });

@@ -120,6 +120,31 @@ const FEATURES = [
     defaults: { product: false, service: true },
   },
   {
+    key: 'sales.kiosk',
+    label: 'Kiosk',
+    description: 'The self-service check-in tablet a customer fills in at the counter.',
+    area: 'sales',
+    /**
+     * No nav row, because the kiosk is not a screen inside the panel.
+     *
+     * It runs at `/kiosk`, outside `AdminShell`, on its own cookie and with no
+     * staff account behind it. What belongs in the sidebar is the screen that
+     * configures it, which lives in Settings beside the device tree.
+     *
+     * The flag gates that settings screen and the launch shortcut. It does
+     * **not** gate `/kiosk/config` and `/kiosk/unlock`: those are public by
+     * design so a locked tablet can draw its own lock screen, and
+     * `kiosk.isEnabled` in Settings is what actually refuses an unlock. Two
+     * switches, and they mean different things - the flag says this business
+     * may have a kiosk at all, the setting says the tablet in the window is
+     * live today.
+     *
+     * Service businesses only: a customer hands a device across a counter. A
+     * parts wholesaler has nobody standing there with something to check in.
+     */
+    defaults: { product: false, service: true },
+  },
+  {
     key: 'sales.services',
     label: 'Services',
     description: 'The price list a quote or a ticket picks its labour from.',
@@ -279,7 +304,9 @@ const FEATURES = [
     label: 'Referrals',
     description: 'Customer referral codes and their payouts.',
     area: 'marketing',
-    nav: 'referrals',
+    // No nav row since 2026-09-21: the screen moved to Settings → Financial.
+    // The key still names the capability and still gates the route - a feature
+    // names what a business may do, not where the menu puts it.
     defaults: { product: true, service: true },
   },
   {
@@ -287,7 +314,8 @@ const FEATURES = [
     label: 'Offers',
     description: 'Discounts, combos and promo codes.',
     area: 'marketing',
-    nav: 'offers',
+    // No nav row since 2026-09-21 - see the note on `marketing.referrals`.
+    // Reached as Discount Codes in Settings → Financial.
     defaults: { product: true, service: true },
   },
   {

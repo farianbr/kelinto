@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router';
-import { useFieldArray, useForm, useWatch } from 'react-hook-form';
+import { useFieldArray, useWatch } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
 import {
   AlertCircle,
   ArrowLeft,
@@ -196,7 +198,7 @@ export function AdminServiceQuoteFormPage() {
 
   const quote = existing?.quote;
 
-  const { register, control, handleSubmit, setValue, reset } = useForm({
+  const { register, control, handleSubmit, setValue, reset } = useAdminForm({
     values: quote
       ? {
           user: quote.user ?? '',

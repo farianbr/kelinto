@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import cn from '@/lib/cn';
 import api from '@/lib/api';
-import { BUSINESS_INFO } from '@/lib/constants';
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 import { contactSchema, CONTACT_TOPICS } from '@shared/schemas/contact';
 import Input from '@/components/ui/Input';
 import PhoneField from '@/components/ui/PhoneField';
@@ -31,29 +31,41 @@ import Reveal from '@/components/motion/Reveal';
 import { useAuth } from '@/hooks/useAuth';
 import { ease, pressable } from '@/lib/motion';
 
-const CHANNELS = [
-  {
-    icon: Phone,
-    label: 'Sales desk',
-    value: BUSINESS_INFO.phone,
-    hint: 'Stock, sourcing and credit',
-    href: `tel:${BUSINESS_INFO.phone.replace(/[^\d+]/g, '')}`,
-  },
-  {
-    icon: Mail,
-    label: 'Sales',
-    value: BUSINESS_INFO.email,
-    hint: 'Accounts, pricing and quotes',
-    href: `mailto:${BUSINESS_INFO.email}`,
-  },
-  {
-    icon: Mail,
-    label: 'Support',
-    value: BUSINESS_INFO.supportEmail,
-    hint: 'Orders, returns and warranty',
-    href: `mailto:${BUSINESS_INFO.supportEmail}`,
-  },
-];
+/**
+ * The ways to reach this business, built per render rather than at import.
+ *
+ * A channel with no value behind it is dropped: a Support card reading nothing,
+ * linking to `mailto:`, is worse than a page offering two ways in instead of
+ * three. Support also collapses into Sales when the business has not set a
+ * separate inbox - `publicProfile` falls `supportEmail` back to `email`, so
+ * without this check the page would print the same address twice under two
+ * headings.
+ */
+const channelsFor = (info) =>
+  [
+    info.phone && {
+      icon: Phone,
+      label: 'Sales desk',
+      value: info.phone,
+      hint: 'Stock, sourcing and credit',
+      href: `tel:${info.phone.replace(/[^\d+]/g, '')}`,
+    },
+    info.email && {
+      icon: Mail,
+      label: 'Sales',
+      value: info.email,
+      hint: 'Accounts, pricing and quotes',
+      href: `mailto:${info.email}`,
+    },
+    info.supportEmail &&
+      info.supportEmail !== info.email && {
+        icon: Mail,
+        label: 'Support',
+        value: info.supportEmail,
+        hint: 'Orders, returns and warranty',
+        href: `mailto:${info.supportEmail}`,
+      },
+  ].filter(Boolean);
 
 const PROMISES = [
   {
@@ -84,13 +96,15 @@ const PROMISES = [
  * micro-interaction the brief asks for is the pin, which lifts on hover.
  */
 function MapCard({ className }) {
+  const info = useBusinessInfo();
+
   return (
     <div className={cn('group overflow-hidden rounded-xl border border-line bg-surface', className)}>
       <svg
         viewBox="0 0 400 260"
         className="h-auto w-full"
         role="img"
-        aria-label={`Map showing the ${BUSINESS_INFO.address.city} warehouse`}
+        aria-label={`Map showing the ${info.address.city} warehouse`}
       >
         {/* street grid */}
         <g stroke="var(--color-line-strong)" strokeWidth="1.6" fill="none">
@@ -174,6 +188,8 @@ function usePrefill() {
  */
 export function ContactPage() {
   const { user } = useAuth();
+  const info = useBusinessInfo();
+  const channels = channelsFor(info);
   const prefill = usePrefill();
   const [sent, setSent] = useState(null);
   const reduce = useReducedMotion();
@@ -246,7 +262,7 @@ export function ContactPage() {
             value and hint sit beside it. From `sm` the three-up grid takes
             over and the card goes back to its stacked, taller shape. */}
         <ul className="mt-8 grid gap-2 sm:grid-cols-3 lg:mt-14">
-          {CHANNELS.map(({ icon: Icon, label, value, hint, href }, index) => (
+          {channels.map(({ icon: Icon, label, value, hint, href }, index) => (
             <Reveal key={label} delay={index * 0.08} as="li">
               {/* The same two-element pill the FAQ rows use: a 2px edge that
                   becomes the brand gradient on hover, around a face that does
@@ -387,25 +403,30 @@ export function ContactPage() {
 
           {/* ---- hours and pickup ------------------------------------------ */}
           <div className="space-y-3 lg:pt-2">
-            <Reveal delay={0.12}>
-              <div className="rounded-xl border border-line bg-surface-2 p-5 sm:p-6">
-                <p className="eyebrow mb-4 flex items-center gap-1.5 text-ink-400">
-                  <Clock className="size-3.5" strokeWidth={2.25} aria-hidden="true" />
-                  Hours
-                </p>
-                <ul className="space-y-2.5">
-                  {BUSINESS_INFO.hours.map((row) => (
-                    <li
-                      key={row.days}
-                      className="flex justify-between gap-4 border-b border-line pb-2.5 text-md last:border-0 last:pb-0"
-                    >
-                      <span className="text-ink-500">{row.days}</span>
-                      <span className="font-medium text-ink-900">{row.time}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </Reveal>
+            {/* The card goes entirely when the business has not entered its
+                hours - a Hours panel with no rows in it is a question the page
+                raises and then refuses to answer. */}
+            {info.hours.length > 0 && (
+              <Reveal delay={0.12}>
+                <div className="rounded-xl border border-line bg-surface-2 p-5 sm:p-6">
+                  <p className="eyebrow mb-4 flex items-center gap-1.5 text-ink-400">
+                    <Clock className="size-3.5" strokeWidth={2.25} aria-hidden="true" />
+                    Hours
+                  </p>
+                  <ul className="space-y-2.5">
+                    {info.hours.map((row) => (
+                      <li
+                        key={row.days}
+                        className="flex justify-between gap-4 border-b border-line pb-2.5 text-md last:border-0 last:pb-0"
+                      >
+                        <span className="text-ink-500">{row.days}</span>
+                        <span className="font-medium text-ink-900">{row.time}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </Reveal>
+            )}
 
             <Reveal delay={0.2}>
               <div className="rounded-xl border border-line bg-surface-2 p-5 sm:p-6">
@@ -488,19 +509,18 @@ export function ContactPage() {
               id="warehouse-heading"
               className="mt-5 text-3xl leading-[1.06] tracking-[-0.03em] sm:text-d-sm lg:text-d-md"
             >
-              One warehouse, in {BUSINESS_INFO.address.city}
+              One warehouse, in {info.address.city}
             </h2>
 
             <address className="mt-6 not-italic">
               <p className="flex items-start gap-3 text-lg leading-relaxed text-ink-700">
                 <MapPin className="mt-1 size-4 shrink-0 text-brand" strokeWidth={2} aria-hidden="true" />
                 <span>
-                  {BUSINESS_INFO.address.line1}
+                  {info.address.line1}
                   <br />
-                  {BUSINESS_INFO.address.city}, {BUSINESS_INFO.address.region}{' '}
-                  {BUSINESS_INFO.address.postal}
+                  {info.address.city}, {info.address.region} {info.address.postal}
                   <br />
-                  {BUSINESS_INFO.address.country}
+                  {info.address.country}
                 </span>
               </p>
             </address>

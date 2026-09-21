@@ -57,9 +57,24 @@ function createApp() {
       },
     }),
   );
+  /**
+   * Who may read an authenticated response.
+   *
+   * **A function rather than a list, because tenants arrive without a deploy.**
+   * Every business answers on its own subdomain (SAAS_PLATFORM §4.2), so a fixed
+   * array meant adding a tenant was an env edit plus a restart - a deployment
+   * step per customer, on the one flow the super-admin console exists to make
+   * self-service.
+   *
+   * `env.isAllowedOrigin` admits a listed origin or a single-label subdomain of
+   * a domain named in `CORS_WILDCARD_ORIGINS`, and nothing else; the matching
+   * rules and what they refuse are documented there. A refused origin is
+   * answered without the CORS headers rather than with an error, which is what
+   * `cors` does on `false` and what a browser expects.
+   */
   app.use(
     cors({
-      origin: env.origins,
+      origin: (origin, callback) => callback(null, env.isAllowedOrigin(origin)),
       credentials: true, // the session is an httpOnly cookie
     }),
   );

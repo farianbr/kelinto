@@ -18,7 +18,8 @@ import {
 } from 'lucide-react';
 import cn from '@/lib/cn';
 import { date } from '@/lib/format';
-import { BUSINESS_INFO, GRADES, GRADE_ORDER } from '@/lib/constants';
+import { GRADES, GRADE_ORDER } from '@/lib/constants';
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 import Reveal from '@/components/motion/Reveal';
 import CountUp from '@/components/motion/CountUp';
 import Button from '@/components/ui/Button';
@@ -279,6 +280,8 @@ function RackScene() {
    ========================================================================== */
 
 function Hero() {
+  const info = useBusinessInfo();
+
   return (
     <Slab aria-labelledby="about-heading">
       <Reveal className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] lg:items-end lg:gap-14">
@@ -300,7 +303,7 @@ function Hero() {
           </p>
           <p className="mt-5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-ink-500">
             <MapPin className="size-4 text-brand" strokeWidth={2} aria-hidden="true" />
-            Shipped from {BUSINESS_INFO.address.city}, {BUSINESS_INFO.address.region}
+            Shipped from {info.address.city}, {info.address.region}
             <span className="text-ink-200" aria-hidden="true">
               ·
             </span>
@@ -481,6 +484,7 @@ function Grading() {
 }
 
 function Warehouse() {
+  const info = useBusinessInfo();
   const checks = [
     { icon: PackageCheck, text: 'Powered on and function-tested before packing' },
     { icon: Boxes, text: 'Anti-static packaging on every screen and board' },
@@ -499,7 +503,7 @@ function Warehouse() {
             One warehouse, one standard
           </h2>
           <p className="mt-6 text-lg leading-relaxed text-ink-400">
-            Everything ships from {BUSINESS_INFO.address.city}. Orders placed before 2 PM ET go out
+            Everything ships from {info.address.city}. Orders placed before 2 PM ET go out
             the same day, and every line is picked against the same grading sheet - so the Grade A
             pull you ordered last month is the Grade A pull that arrives this month.
           </p>

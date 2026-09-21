@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
-import { useFieldArray, useForm } from 'react-hook-form';
+import { useFieldArray } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
 import {
   AlertCircle,
   Package,
@@ -69,11 +72,22 @@ const PILLS = [
  * the timeline is what the buyer's tracking page renders, and rewriting it would
  * mean rewriting what the customer was already told.
  */
+/** Refunding money off an order. A blank box posted NaN cents before this. */
+const refundFormSchema = z
+  .object({
+    amountDollars: z.coerce
+      .number({ invalid_type_error: 'Enter an amount.' })
+      .positive('Enter an amount greater than zero.'),
+  })
+  // Everything else on these small dialogs is a picker or a note, and is
+  // passed through rather than restated.
+  .passthrough();
+
 function StatusForm({ order, onSubmit, onCancel, isPending, error }) {
   const currentIndex = ORDER_STATUS_FLOW.indexOf(order.status);
   const nextStatus = ORDER_STATUS_FLOW[currentIndex + 1] ?? order.status;
 
-  const { register, handleSubmit, watch, control } = useForm({
+  const { register, handleSubmit, watch, control } = useAdminForm({
     defaultValues: {
       status: nextStatus,
       note: '',
@@ -182,7 +196,12 @@ function StatusForm({ order, onSubmit, onCancel, isPending, error }) {
  */
 function RefundForm({ order, onSubmit, onCancel, isPending, error }) {
   const refundable = order.total - (order.refundedTotal ?? 0);
-  const { register, handleSubmit } = useForm({
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useAdminForm({
+    resolver: zodResolver(refundFormSchema),
     defaultValues: { amountDollars: (refundable / 100).toFixed(2), note: '' },
   });
 
@@ -203,7 +222,15 @@ function RefundForm({ order, onSubmit, onCancel, isPending, error }) {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-[140px_minmax(0,1fr)]">
-        <Input label="Amount" inputMode="decimal" suffix="CAD" {...register('amountDollars')} />
+        <Input
+          label="Amount"
+          inputMode="decimal"
+          suffix="CAD"
+          placeholder="0.00"
+          required
+          error={errors.amountDollars?.message}
+          {...register('amountDollars')}
+        />
         <Input label="Reason" placeholder="Screen arrived cracked" {...register('note')} />
       </div>
 
@@ -250,7 +277,7 @@ const ADMIN_PAGE = { ...ADMIN_ROUTES['/admin/orders'], icon: adminIcon('Package'
  * own provincial rate, which this form does not know.
  */
 function OrderForm({ clients, products, businesses = [], onSubmit, onCancel, isPending, error }) {
-  const { register, handleSubmit, control, watch } = useForm({
+  const { register, handleSubmit, control, watch } = useAdminForm({
     defaultValues: {
       user: clients[0]?.id ?? '',
       // Blank means "the business I am working in", which the server fills in.

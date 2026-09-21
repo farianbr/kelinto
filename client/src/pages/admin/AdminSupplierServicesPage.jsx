@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useSearchParams } from 'react-router';
-import { useForm } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
 import {
   AlertCircle,
   Ban,
@@ -93,10 +95,46 @@ const PILLS = [
 ];
 
 /** The create/edit form. `mode` only changes which billing cycles are offered. */
+/** What the service/subscription form holds. Dollars, converted on submit. */
+const supplierServiceFormSchema = z
+  .object({
+    name: z.string().trim().min(1, 'Name this.').max(120),
+    code: z.string().trim().max(40).optional().or(z.literal('')),
+    supplier: z.string().trim().min(1, 'Choose a supplier.'),
+    category: z.string().trim().min(1, 'Choose an expense category.'),
+    amountDollars: z.coerce
+      .number({ invalid_type_error: 'Enter an amount.' })
+      .min(0, 'Cannot be negative.'),
+    billing: z.string().trim(),
+    startedAt: z.string().trim().optional().or(z.literal('')),
+    reference: z.string().trim().max(120).optional().or(z.literal('')),
+    notes: z.string().trim().max(2000).optional().or(z.literal('')),
+  })
+  // The renewal date and the active flag are managed by the screen rather
+  // than typed, so they pass through untouched.
+  .passthrough();
+
+/** Recording one charge against it. */
+const supplierChargeFormSchema = z.object({
+  amountDollars: z.coerce
+    .number({ invalid_type_error: 'Enter an amount.' })
+    .min(0, 'Cannot be negative.'),
+  date: z.string().trim().min(1, 'Pick a date.'),
+  description: z.string().trim().max(200).optional().or(z.literal('')),
+  reference: z.string().trim().max(120).optional().or(z.literal('')),
+});
+
 function ServiceForm({ mode, suppliers, categories, row, onSubmit, onCancel, isPending, error }) {
   const editing = Boolean(row);
 
-  const { register, handleSubmit, control, watch } = useForm({
+  const {
+    register,
+    handleSubmit,
+    control,
+    watch,
+    formState: { errors },
+  } = useAdminForm({
+    resolver: zodResolver(supplierServiceFormSchema),
     defaultValues: {
       name: row?.name ?? '',
       code: row?.code ?? '',
@@ -152,6 +190,8 @@ function ServiceForm({ mode, suppliers, categories, row, onSubmit, onCancel, isP
       <div className="grid gap-3 sm:grid-cols-[1fr_140px]">
         <Input
           label="Name"
+          required
+          error={errors.name?.message}
           placeholder={mode === 'subscription' ? 'Warehouse WMS licence' : 'Pallet disposal'}
           {...register('name')}
         />
@@ -219,7 +259,12 @@ function ServiceForm({ mode, suppliers, categories, row, onSubmit, onCancel, isP
 
 /** Recording what was actually charged. Pre-filled with the agreed cost. */
 function ChargeForm({ row, onSubmit, onCancel, isPending, error }) {
-  const { register, handleSubmit } = useForm({
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useAdminForm({
+    resolver: zodResolver(supplierChargeFormSchema),
     defaultValues: {
       amountDollars: (row.amount / 100).toFixed(2),
       date: new Date().toISOString().slice(0, 10),
@@ -245,8 +290,22 @@ function ChargeForm({ row, onSubmit, onCancel, isPending, error }) {
       )}
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <Input label="Amount" inputMode="decimal" suffix="CAD" {...register('amountDollars')} />
-        <Input label="Charged on" type="date" {...register('date')} />
+        <Input
+          label="Amount"
+          inputMode="decimal"
+          suffix="CAD"
+          placeholder="0.00"
+          required
+          error={errors.amountDollars?.message}
+          {...register('amountDollars')}
+        />
+        <Input
+          label="Charged on"
+          type="date"
+          required
+          error={errors.date?.message}
+          {...register('date')}
+        />
       </div>
 
       <Input label="Description" placeholder="Leave blank to use the name" {...register('description')} />

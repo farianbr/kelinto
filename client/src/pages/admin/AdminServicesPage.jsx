@@ -1,11 +1,25 @@
 import { useMemo, useState } from 'react';
-import { useForm } from 'react-hook-form';
-import { AlertCircle, Clock, Pencil, Plus, Power, ShieldCheck, Trash2, Wrench } from 'lucide-react';
+import { useNavigate } from 'react-router';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+import useAdminForm from '@/hooks/useAdminForm';
+import {
+  AlertCircle,
+  Clock,
+  FileSpreadsheet,
+  Pencil,
+  Plus,
+  Power,
+  ShieldCheck,
+  Trash2,
+  Wrench,
+} from 'lucide-react';
 
 import { money, count as formatCount } from '@/lib/format';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
 import Modal from '@/components/ui/Modal';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import DeleteWithPreview from '@/components/admin/DeleteWithPreview';
 import Input from '@/components/ui/Input';
 import SelectField from '@/components/ui/SelectField';
 import Checkbox from '@/components/ui/Checkbox';
@@ -37,7 +51,7 @@ const CATEGORY_OPTIONS = SERVICE_CATEGORIES.map((value) => ({
 
 const PILLS = [
   { value: 'active', label: 'Active' },
-  { value: 'inactive', label: 'Retired' },
+  { value: 'inactive', label: 'Inactive' },
   { value: 'all', label: 'All' },
 ];
 
@@ -67,8 +81,39 @@ function marginOf(service) {
   return Math.round(((service.priceCents - service.costCents) / service.priceCents) * 100);
 }
 
+/**
+ * What the FORM holds.
+ *
+ * `serviceCatalogSchema` describes the payload: `deviceTypes` is an array
+ * there and a comma-separated string here, and `cost` is deliberately blank
+ * rather than zero when nobody has said what the work costs. Validating the
+ * payload shape against these fields would refuse input that is perfectly
+ * correct, so the two that differ are restated.
+ */
+const serviceFormSchema = z.object({
+  name: z.string().trim().min(2, 'Give the service a name.').max(160),
+  description: z.string().trim().max(500).optional().or(z.literal('')),
+  category: z.string().trim(),
+  price: z.coerce.number().min(0, 'Price cannot be negative.').max(1_000_000),
+  cost: z
+    .union([z.literal(''), z.coerce.number().min(0, 'Cost cannot be negative.').max(1_000_000)])
+    .optional(),
+  durationMinutes: z.coerce.number().int().min(0).max(100_000),
+  warrantyDays: z.coerce.number().int().min(0).max(3650),
+  deviceTypes: z.string().trim().max(600).optional().or(z.literal('')),
+  taxable: z.boolean(),
+  isActive: z.boolean(),
+  order: z.coerce.number().int().min(0).max(10_000),
+});
+
 function ServiceForm({ service, onSubmit, onCancel, isPending, error }) {
-  const { register, handleSubmit, control } = useForm({
+  const {
+    register,
+    handleSubmit,
+    control,
+    formState: { errors },
+  } = useAdminForm({
+    resolver: zodResolver(serviceFormSchema),
     defaultValues: {
       name: service?.name ?? '',
       description: service?.description ?? '',
@@ -95,7 +140,13 @@ function ServiceForm({ service, onSubmit, onCancel, isPending, error }) {
         </p>
       )}
 
-      <Input label="Name" placeholder="e.g. Screen replacement" {...register('name')} />
+      <Input
+        label="Name"
+        placeholder="e.g. Screen replacement"
+        required
+        error={errors.name?.message}
+        {...register('name')}
+      />
       <Input
         label="Description"
         placeholder="Shown under the name when picking it"
@@ -112,7 +163,16 @@ function ServiceForm({ service, onSubmit, onCancel, isPending, error }) {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <Input label="Price (CAD)" type="number" step="0.01" min="0" {...register('price')} />
+        <Input
+          label="Price (CAD)"
+          type="number"
+          step="0.01"
+          min="0"
+          placeholder="0.00"
+          required
+          error={errors.price?.message}
+          {...register('price')}
+        />
         <Input
           label="Cost to us (CAD)"
           type="number"
@@ -130,8 +190,22 @@ function ServiceForm({ service, onSubmit, onCancel, isPending, error }) {
           min="0"
           {...register('durationMinutes')}
         />
-        <Input label="Warranty (days)" type="number" min="0" {...register('warrantyDays')} />
-        <Input label="Sort order" type="number" min="0" {...register('order')} />
+        <Input
+          label="Warranty (days)"
+          type="number"
+          min="0"
+          placeholder="0"
+          error={errors.warrantyDays?.message}
+          {...register('warrantyDays')}
+        />
+        <Input
+          label="Sort order"
+          type="number"
+          min="0"
+          placeholder="0"
+          error={errors.order?.message}
+          {...register('order')}
+        />
       </div>
 
       <Checkbox label="Tax applies to this service" {...register('taxable')} />
@@ -158,6 +232,7 @@ function ServiceForm({ service, onSubmit, onCancel, isPending, error }) {
  * is labelled "list price" rather than "price".
  */
 export function AdminServicesPage() {
+  const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
@@ -288,7 +363,7 @@ export function AdminServicesPage() {
       priority: 2,
       render: (service) => (
         <Badge tone={service.isActive ? 'ok' : 'neutral'} size="sm">
-          {service.isActive ? 'active' : 'retired'}
+          {service.isActive ? 'active' : 'inactive'}
         </Badge>
       ),
     },
@@ -298,7 +373,7 @@ export function AdminServicesPage() {
     { key: 'edit', label: 'Edit service', icon: Pencil, onSelect: setEditing },
     {
       key: 'toggle',
-      label: (service) => (service.isActive ? 'Retire' : 'Reactivate'),
+      label: (service) => (service.isActive ? 'Deactivate' : 'Reactivate'),
       icon: Power,
       onSelect: (service) =>
         updateService.mutate({ id: service.id, isActive: !service.isActive }),
@@ -319,9 +394,18 @@ export function AdminServicesPage() {
         title={ADMIN_PAGE.title}
         description={ADMIN_PAGE.description}
         action={
-          <Button onClick={() => setCreating(true)} icon={Plus}>
-            Add service
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              icon={FileSpreadsheet}
+              onClick={() => navigate('/admin/services/import')}
+            >
+              Import CSV
+            </Button>
+            <Button onClick={() => setCreating(true)} icon={Plus}>
+              Add service
+            </Button>
+          </div>
         }
       />
 
@@ -461,18 +545,14 @@ export function AdminServicesPage() {
         says how many - so this dialog does not try to predict the answer, it
         names the record and the consequence and lets the refusal speak.
       */}
-      <ConfirmDialog
-        open={Boolean(deleting)}
+      {/* The real counts, fetched before the decision - this used to promise in
+          prose what "would" happen if the service was in use, which is the same
+          information one step too late. */}
+      <DeleteWithPreview
+        type="service"
+        record={deleting}
         onClose={() => setDeleting(null)}
-        title="Delete this service?"
-        body={
-          deleting
-            ? `${deleting.name} will be removed from the price list. If any quote or ticket ` +
-              'has already used it, the delete is refused and you will be asked to retire it instead.'
-            : ''
-        }
         confirmLabel="Delete service"
-        tone="danger"
         loading={deleteService.isPending}
         error={deleteService.error?.message}
         onConfirm={() =>
