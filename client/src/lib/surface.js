@@ -21,6 +21,14 @@ const surface = SURFACES.has(readMeta('app-surface')) ? readMeta('app-surface') 
 /** The admin panel's host, when that split is on. */
 const panelHost = readMeta('app-panel-host');
 
+/**
+ * The business this panel host belongs to, by name - set only on a business's
+ * own panel domain (`app.cellshoppe.ca`), never on the shared panel host. The
+ * host is pinned to that business: no switcher, no super admin, and the sign-in
+ * greets the business rather than the platform.
+ */
+const panelBusiness = readMeta('app-panel-business');
+
 /** The super admin panel's host, when that split is on. */
 const superAdminHost = readMeta('app-superadmin-host');
 
@@ -44,4 +52,4 @@ function urlOn(host, pathAndQuery) {
 const panelUrl = (pathAndQuery) => urlOn(panelHost, pathAndQuery);
 const superAdminUrl = (pathAndQuery) => urlOn(superAdminHost, pathAndQuery);
 
-export { superAdminHost, superAdminUrl, panelHost, panelUrl, surface };
+export { superAdminHost, superAdminUrl, panelBusiness, panelHost, panelUrl, surface };

@@ -8,7 +8,7 @@ import ShopPage from '@/pages/ShopPage';
 import HomeOrShop from '@/components/layout/HomeOrShop';
 import RouteFallback from '@/components/layout/RouteFallback';
 import GoToPanel, { GoToHost } from '@/components/layout/GoToPanel';
-import { superAdminHost, panelHost, surface } from '@/lib/surface';
+import { superAdminHost, panelBusiness, panelHost, surface } from '@/lib/surface';
 
 /**
  * The Shop page owns "/" and is the landing surface for every visitor, so it
@@ -674,10 +674,11 @@ function PanelRoutes() {
       {supplierRoutes}
       {supplierResetRoute}
       {/* The super admin lives on its own host once it has one - never here, on
-          the host every tenant's staff sign in on. */}
+          the host every tenant's staff sign in on. And never on a business's
+          own panel domain at all: that host belongs to the business. */}
       {superAdminHost ? (
         <Route path="superadmin/*" element={<GoToHost to="superadmin" />} />
-      ) : (
+      ) : panelBusiness ? null : (
         superAdminRoutes
       )}
 

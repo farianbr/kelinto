@@ -7,6 +7,7 @@ import { pressable } from '@/lib/motion';
 import { useAuth } from '@/hooks/useAuth';
 import { useAdminBusinesses } from '@/hooks/useAdmin';
 import { getBusiness, setBusiness, subscribeBusiness } from '@/store/businessStore';
+import { panelBusiness } from '@/lib/surface';
 
 /**
  * Which shop the panel is looking at (§6.14).
@@ -46,7 +47,9 @@ export function BusinessSwitcher() {
 
   // Staff are pinned. One business in the business is not a choice either - a
   // switcher offering a single option is a control that cannot do anything.
-  if (!isAdmin || businesses.length < 2) return null;
+  // Nor is a business's own panel domain: the server holds every request on it
+  // to that business, so a switch there would change the label and nothing else.
+  if (!isAdmin || businesses.length < 2 || panelBusiness) return null;
 
   const active = businesses.find((business) => business.id === selected);
 

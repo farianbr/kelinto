@@ -56,7 +56,7 @@ const TTL_MS = 60_000;
  */
 async function loadConfig(businessId) {
   const business = await Business.findById(businessId)
-    .select('code businessType featureOverrides tenant deletedAt slug domain')
+    .select('code businessType featureOverrides tenant deletedAt slug domain panelDomain')
     .lean();
 
   if (!business) return null;
@@ -86,6 +86,8 @@ async function loadConfig(businessId) {
     // rest of the entry when the super admin changes an address.
     slug: business.slug ?? null,
     domain: business.domain ?? null,
+    // Where its STAFF answer, when the business has a panel domain of its own.
+    panelDomain: business.panelDomain ?? null,
     tenant: tenant ? { id: String(tenant._id), status: tenant.status, name: tenant.name } : null,
   };
 }

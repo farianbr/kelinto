@@ -4,6 +4,7 @@ import {
   AlertCircle,
   Building2,
   Check,
+  Globe,
   Layers,
   LogIn,
   Lock,
@@ -485,7 +486,8 @@ function BusinessForm({ tenant, storefrontDomain, onSubmit, onCancel, isPending,
 }
 
 /**
- * Where a business answers: its web address and an optional domain it owns.
+ * Where a business answers: its web address, and up to two domains it owns -
+ * one its customers use (the storefront) and one its staff use (the panel).
  *
  * Opened from the address itself on the business row. The form is the
  * confirmation (§3.0.1) - somebody opened it and typed - but it states the one
@@ -503,20 +505,34 @@ function AddressForm({
 }) {
   const [slug, setSlug] = useState(business.slug ?? suggestSlug(business.name));
   const [domain, setDomain] = useState(business.domain ?? '');
+  const [panelDomain, setPanelDomain] = useState(business.panelDomain ?? '');
   const [submitted, setSubmitted] = useState(false);
 
   const slugProblem = businessSlugProblem(slug);
   const domainProblem = customDomainProblem(domain, platformDomains);
+  const panelProblem =
+    customDomainProblem(panelDomain, platformDomains) ??
+    (panelDomain && normaliseDomain(panelDomain) === normaliseDomain(domain)
+      ? 'One address cannot be the storefront and the panel.'
+      : null);
   const moving = Boolean(business.slug) && slug !== business.slug;
-  const unchanged = slug === (business.slug ?? '') && normaliseDomain(domain) === (business.domain ?? '');
+  const unchanged =
+    slug === (business.slug ?? '') &&
+    normaliseDomain(domain) === (business.domain ?? '') &&
+    normaliseDomain(panelDomain) === (business.panelDomain ?? '');
+  // The one step only the business can take, named exactly: the record in
+  // THEIR DNS. Everything on our side (certificate, origin) follows by itself.
+  const newDomains = [domain, panelDomain]
+    .map(normaliseDomain)
+    .filter((value) => value && value !== business.domain && value !== business.panelDomain);
 
   return (
     <form
       onSubmit={(event) => {
         event.preventDefault();
         setSubmitted(true);
-        if (slugProblem || domainProblem) return;
-        onSubmit({ slug, domain: normaliseDomain(domain) });
+        if (slugProblem || domainProblem || panelProblem) return;
+        onSubmit({ slug, domain: normaliseDomain(domain), panelDomain: normaliseDomain(panelDomain) });
       }}
     >
       <PlatformError>{error}</PlatformError>
@@ -540,7 +556,7 @@ function AddressForm({
 
       <div className="mt-3">
         <PlatformInput
-          label="Custom domain"
+          label="Storefront domain"
           placeholder="shop.example.com"
           value={domain}
           onChange={(event) => setDomain(event.target.value)}
@@ -548,9 +564,33 @@ function AddressForm({
           autoCorrect="off"
           spellCheck={false}
           error={submitted || domain ? domainProblem : null}
-          hint="Optional. The business points its own domain at the platform, and the server has to allow it as an origin before it loads."
+          hint="Optional. Where this business's customers shop, on a domain it owns."
         />
       </div>
+
+      <div className="mt-3">
+        <PlatformInput
+          label="Panel domain"
+          placeholder="app.example.com"
+          value={panelDomain}
+          onChange={(event) => setPanelDomain(event.target.value)}
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          error={submitted || panelDomain ? panelProblem : null}
+          hint="Optional. Where its staff sign in to the ERP. Only this business's accounts can sign in there."
+        />
+      </div>
+
+      {newDomains.length > 0 && storefrontDomain && (
+        <div className="mt-3">
+          <PlatformNotice icon={Globe}>
+            The business adds a CNAME record for {newDomains.join(' and ')} pointing to{' '}
+            {storefrontDomain}. The certificate is issued on the first visit after that; nothing
+            changes on the server.
+          </PlatformNotice>
+        </div>
+      )}
 
       <PlatformActions>
         <PlatformButton variant="ghost" type="button" onClick={onCancel}>
@@ -1269,6 +1309,16 @@ export function SuperAdminTenantsPage() {
                                 ? business.domain || addressOf(business.slug, storefrontDomain)
                                 : 'No web address'}
                             </button>
+                            {business.panelDomain && (
+                              <>
+                                <span className="text-plat-dim" aria-hidden="true">
+                                  ·
+                                </span>
+                                <span className="font-mono text-plat-muted">
+                                  {business.panelDomain} (panel)
+                                </span>
+                              </>
+                            )}
                           </span>
 
                           {/* A deleted business still holds its slot until the
@@ -1459,19 +1509,11 @@ export function SuperAdminTenantsPage() {
                 {
                   onSuccess: (result) => {
                     setAddressFor(null);
-                    toast.ok(
-                      'Address saved',
-                      `${addressFor.name} answers at ${addressOf(result.business.slug, storefrontDomain)}.`,
-                    );
-                    // Said now, while the person who can act on it is looking:
-                    // the domain is saved but will not load until the server
-                    // accepts it as an origin, and nothing else tells them.
-                    if (result.domainNeedsOrigin) {
-                      toast.info(
-                        'Custom domain needs a server change',
-                        `Add https://${result.business.domain} to CLIENT_ORIGIN on the server and restart it, or the domain will not load.`,
-                      );
-                    }
+                    const { slug, domain, panelDomain } = result.business;
+                    const where = [addressOf(slug, storefrontDomain), domain, panelDomain && `${panelDomain} (panel)`]
+                      .filter(Boolean)
+                      .join(' · ');
+                    toast.ok('Address saved', `${addressFor.name} answers at ${where}.`);
                   },
                 },
               )

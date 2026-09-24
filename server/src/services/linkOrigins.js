@@ -18,8 +18,10 @@ import { businessConfig } from '../middleware/businessConfigCache.js';
  *   - `storefrontOrigin()` - a CUSTOMER: the business's own address, custom
  *     domain first, then `<slug>.<platform>`. That is where `/account`,
  *     `/portal`, `/unsubscribe` and every storefront page live for them.
- *   - `panelOrigin()` - STAFF and SUPPLIERS: the shared panel host, where
- *     `/admin` and `/supplier` live once the split is on.
+ *   - `staffPanelOrigin()` - STAFF: the business's own panel domain when it
+ *     has one, else the shared panel host.
+ *   - `panelOrigin()` - SUPPLIERS: the shared panel host, where `/supplier`
+ *     lives once the split is on.
  * Both fall back to `env.publicOrigin` when nothing more specific is
  * configured, which is exactly the old behaviour - so an installation with no
  * split changes nothing.
@@ -37,10 +39,26 @@ async function storefrontOrigin(businessId = currentBusinessId()) {
   return env.publicOrigin;
 }
 
-/** Where staff and suppliers sign in: the shared panel host once there is one. */
+/**
+ * Where suppliers sign in: the shared panel host once there is one. A supplier
+ * account is platform-wide, so its links never belong to one business.
+ */
 function panelOrigin() {
   return env.PANEL_HOST ? env.originFor(env.PANEL_HOST) : env.publicOrigin;
 }
 
-export { storefrontOrigin, panelOrigin };
-export default { storefrontOrigin, panelOrigin };
+/**
+ * Where a business's STAFF sign in: its own panel domain when it has one
+ * (`Business.panelDomain`), else the shared panel host. A CellShoppe low-stock
+ * alert should open app.cellshoppe.ca, the address its staff actually use.
+ */
+async function staffPanelOrigin(businessId = currentBusinessId()) {
+  if (businessId) {
+    const business = await businessConfig(businessId);
+    if (business?.panelDomain && !business.deletedAt) return env.originFor(business.panelDomain);
+  }
+  return panelOrigin();
+}
+
+export { storefrontOrigin, panelOrigin, staffPanelOrigin };
+export default { storefrontOrigin, panelOrigin, staffPanelOrigin };

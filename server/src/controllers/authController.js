@@ -88,7 +88,10 @@ const login = asyncHandler(async (req, res) => {
   let user;
   let business;
   try {
-    ({ user, business } = await authService.login(req.body));
+    ({ user, business } = await authService.login(req.body, {
+      // A business's own panel domain signs in that business's accounts only.
+      pinned: req.hostPinned ? req.businessScope : null,
+    }));
   } catch (error) {
     await auditService.recordSecurity({
       req,

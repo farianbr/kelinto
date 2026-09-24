@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken';
 import Business from '../models/Business.js';
 import env from '../config/env.js';
-import { isReservedSubdomain } from '../../../shared/hosts.js';
+import { lookupHost, resetHostDirectory, subdomainOf } from '../services/hostDirectory.js';
 import { businessConfig } from './businessConfigCache.js';
 
 /**
@@ -20,6 +20,8 @@ import { businessConfig } from './businessConfigCache.js';
  * 1. **An impersonation grant.** Already pinned by `impersonationAuth`, and it
  *    outranks everything: a staff member inside one business must not reach
  *    another by editing a host header or a query string.
+ * 1b. **A business's own panel domain** - pinned the same way, for the same
+ *    reason: the host IS the business.
  * 2. **`X-Business` header.** Development and internal tooling. Trusted because
  *    it is *not* an authorisation - it selects which business to serve, and
  *    every permission check still runs inside it.
@@ -43,38 +45,8 @@ import { businessConfig } from './businessConfigCache.js';
  * one-business deployment from needing DNS to function.
  */
 
-/** host -> business id. Domains change rarely; a miss costs one indexed read. */
-const byHost = new Map();
 /** How many businesses exist, cached - it decides the single-business shortcut. */
 let businessCount = null;
-
-/** `shop.example.com` -> `shop`. Null when the host has no meaningful label. */
-function subdomainOf(host) {
-  const name = String(host ?? '')
-    .toLowerCase()
-    .split(':')[0]
-    .trim();
-
-  if (!name) return null;
-  // An IP address or a bare `localhost` names no business.
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(name)) return null;
-
-  const parts = name.split('.');
-  /**
-   * `cellshoppe.localhost` is a subdomain too. Browsers resolve every
-   * `*.localhost` name to this machine without any setup (RFC 6761), which is
-   * what lets the whole subdomain arrangement be exercised in development
-   * exactly as it runs in production - only with `localhost` for the domain.
-   */
-  const local = parts.length === 2 && parts[1] === 'localhost';
-  if (parts.length < 3 && !local) return null;
-
-  const label = parts[0];
-  // `www`, `app` and the rest are the platform's own surfaces, not a tenant.
-  // See `shared/hosts.js` for why a business may never answer on one.
-  if (isReservedSubdomain(label)) return null;
-  return label;
-}
 
 async function countBusinesses() {
   if (businessCount !== null) return businessCount;
@@ -89,7 +61,7 @@ let defaultId = null;
  * Which business serves a request that named none - **cached, because it is on
  * the path of every such request.**
  *
- * `byHost` above caches the host lookup, so a request arriving on a known
+ * `services/hostDirectory.js` caches the host lookup, so a request arriving on a known
  * domain costs nothing after the first. A request whose host names no business
  * fell straight past that cache into this query, so **every request on
  * localhost, and every request on a deployment before DNS is pointed, paid a
@@ -116,44 +88,31 @@ async function defaultBusinessId() {
   return defaultId;
 }
 
-/**
- * Look a host up, cached.
- *
- * Matches a custom domain first and a slug-shaped subdomain second, because a
- * business that has bought a domain means it more than it means its original
- * handle.
- */
-async function businessForHost(host) {
-  if (!host) return null;
-
-  const key = String(host).toLowerCase();
-  if (byHost.has(key)) return byHost.get(key);
-
-  const bare = key.split(':')[0];
-  const sub = subdomainOf(key);
-
-  const found = await Business.findOne({
-    deletedAt: null,
-    $or: [
-      { domain: bare },
-      ...(sub ? [{ slug: sub }, { code: sub }] : []),
-    ],
-  })
-    .select('_id')
-    .lean();
-
-  const id = found ? String(found._id) : null;
-  // Cached even when null, so a request for an unknown host does not re-read
-  // the collection on every retry.
-  byHost.set(key, id);
-  return id;
-}
-
 async function resolveBusiness(req, _res, next) {
   try {
     // 1. An impersonation grant already decided, and it is not negotiable.
     if (req.businessScopePinned && req.businessScope) {
       req.businessScopeSource = 'pinned';
+      return next();
+    }
+
+    /**
+     * 1b. A business's own panel domain (`Business.panelDomain`).
+     *
+     * **Pinned, and above everything a request can say about itself.** The
+     * host is the business: `app.cellshoppe.ca` is CellShoppe's ERP and
+     * nothing else, so no header, session claim or `?business=` may open
+     * another database on it. `req.hostPinned` carries that on to
+     * `resolveBusinessScope`, which ignores the switcher's query string, and
+     * to sign-in, which looks for this business's accounts only.
+     *
+     * `req.hostEntry` is set by `attachSurface` (`utils/surface.js`), which
+     * runs first.
+     */
+    if (req.hostEntry?.role === 'panel') {
+      req.businessScope = req.hostEntry.businessId;
+      req.businessScopeSource = 'panel-domain';
+      req.hostPinned = true;
       return next();
     }
 
@@ -239,9 +198,9 @@ async function resolveBusiness(req, _res, next) {
     }
 
     // 4. The host, which is how production routes.
-    const fromHost = await businessForHost(req.get('host'));
+    const fromHost = req.hostEntry ?? (await lookupHost(req.get('host')));
     if (fromHost) {
-      req.businessScope = fromHost;
+      req.businessScope = fromHost.businessId;
       req.businessScopeSource = 'host';
       return next();
     }
@@ -295,7 +254,7 @@ async function resolveBusiness(req, _res, next) {
 
 /** Forget the host and count caches. After a domain change, and for tests. */
 function resetBusinessResolution() {
-  byHost.clear();
+  resetHostDirectory();
   businessCount = null;
   defaultId = null;
 }

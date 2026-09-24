@@ -10,6 +10,7 @@ import { PlatformButton } from '@/components/superadmin/PlatformUI';
 import { PlatformError, PlatformInput } from '@/components/superadmin/PlatformForm';
 import RouteFallback from '@/components/layout/RouteFallback';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import { panelBusiness } from '@/lib/surface';
 
 /**
  * The front door of the admin host (`PANEL_HOST`), in the console's theme.
@@ -27,6 +28,10 @@ import { useDocumentTitle } from '@/hooks/useDocumentTitle';
  * built from storefront controls. The behaviour is the same and the server is
  * the same: one password opening accounts at several businesses gets the
  * choice, and a customer who lands here is told where to go instead.
+ *
+ * **On a business's own panel domain it is that business's door** (`panelBusiness`):
+ * named after it, and the server signs in only its accounts, so there is never
+ * a choice to offer.
  */
 export function PanelSignInPage() {
   const { user, isLoading, canUseAdmin, signIn, signOut } = useAuth();
@@ -35,7 +40,7 @@ export function PanelSignInPage() {
   const [error, setError] = useState(null);
   const [choice, setChoice] = useState(null);
   const [choosing, setChoosing] = useState(null);
-  useDocumentTitle('Sign in');
+  useDocumentTitle(panelBusiness ? `Sign in to ${panelBusiness}` : 'Sign in');
 
   const form = useForm({ defaultValues: { email: '', password: '', remember: true } });
 
@@ -74,8 +79,12 @@ export function PanelSignInPage() {
             <Layers className="size-5 text-white" strokeWidth={2.25} aria-hidden="true" />
           </span>
           <span>
-            <span className="block text-md font-semibold leading-tight text-plat-text">Kelinto</span>
-            <span className="block text-xs leading-tight text-plat-dim">Business panel</span>
+            <span className="block text-md font-semibold leading-tight text-plat-text">
+              {panelBusiness ?? 'Kelinto'}
+            </span>
+            <span className="block text-xs leading-tight text-plat-dim">
+              {panelBusiness ? 'Staff panel' : 'Business panel'}
+            </span>
           </span>
         </div>
 
@@ -127,10 +136,12 @@ export function PanelSignInPage() {
           ) : (
             <>
               <h1 className="text-xl font-semibold leading-tight text-plat-text">
-                Sign in to your business
+                {panelBusiness ? 'Sign in' : 'Sign in to your business'}
               </h1>
               <p className="mt-1 text-sm leading-normal text-plat-muted">
-                For owners and staff. Customers sign in on their store&apos;s own website.
+                {panelBusiness
+                  ? `For ${panelBusiness} owners and staff.`
+                  : 'For owners and staff. Customers sign in on their store’s own website.'}
               </p>
 
               {error && (

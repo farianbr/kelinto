@@ -133,6 +133,26 @@ const businessSchema = new mongoose.Schema(
     },
 
     /**
+     * A domain the business owns that serves its ERP panel rather than its
+     * storefront - `app.cellshoppe.ca`.
+     *
+     * `domain` above is where the business's CUSTOMERS go; this is where its
+     * STAFF go. A request on it is pinned to this business alone: the sign-in
+     * finds only this business's accounts, and no switcher or query string can
+     * move the request into another one (`resolveBusiness`). The shared panel
+     * host keeps working beside it.
+     *
+     * Unique across both fields, not just this one - one host cannot be a
+     * storefront and a panel at once (`superAdminService.setBusinessAddress`).
+     */
+    panelDomain: {
+      type: String,
+      lowercase: true,
+      trim: true,
+      default: null,
+    },
+
+    /**
      * A web address the tenant has ASKED for, waiting on a super admin.
      *
      * `slug` above is the live address and only the platform writes it; this is
@@ -284,6 +304,10 @@ businessSchema.index(
   { domain: 1 },
   { unique: true, partialFilterExpression: { domain: { $type: 'string' } } },
 );
+businessSchema.index(
+  { panelDomain: 1 },
+  { unique: true, partialFilterExpression: { panelDomain: { $type: 'string' } } },
+);
 
 businessSchema.methods.toPublic = function toPublic() {
   return {
@@ -292,6 +316,7 @@ businessSchema.methods.toPublic = function toPublic() {
     code: this.code,
     slug: this.slug ?? null,
     domain: this.domain ?? null,
+    panelDomain: this.panelDomain ?? null,
     addressRequest: this.addressRequest ?? null,
     businessType: this.businessType,
     status: this.status,

@@ -30,8 +30,13 @@ async function learnSurface() {
   try {
     const response = await fetch('/api/dev/surface');
     if (!response.ok) return;
-    const { surface, panelHost, superAdminHost } = await response.json();
-    const tags = { 'app-surface': surface, 'app-panel-host': panelHost, 'app-superadmin-host': superAdminHost };
+    const { surface, panelHost, superAdminHost, panelBusiness } = await response.json();
+    const tags = {
+      'app-surface': surface,
+      'app-panel-host': panelHost,
+      'app-superadmin-host': superAdminHost,
+      'app-panel-business': panelBusiness,
+    };
     for (const [name, content] of Object.entries(tags)) {
       if (!content) continue;
       const meta = document.createElement('meta');

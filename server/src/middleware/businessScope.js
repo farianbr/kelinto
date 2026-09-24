@@ -177,6 +177,10 @@ async function scopeRequest(req, next) {
  * host's business on every request that carries no query string at all.
  */
 function applyQuery(req, next) {
+  // A business's own panel domain is that business, whatever the switcher in a
+  // stale tab still has selected (`resolveBusiness` step 1b).
+  if (req.hostPinned) return next();
+
   const requested = String(req.query.business ?? '').trim();
 
   if (requested === 'all') req.businessScope = null;

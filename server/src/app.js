@@ -20,7 +20,8 @@ import { resolveBusiness } from './middleware/resolveBusiness.js';
 import { enforceTenantStatus } from './middleware/tenantStatus.js';
 import { openBusinessDb } from './middleware/businessDb.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
-import { superAdminHostOnly, injectSurface, surfaceInfo } from './utils/surface.js';
+import { attachSurface, superAdminHostOnly, injectSurface, surfaceInfo } from './utils/surface.js';
+import { isBusinessOrigin, isServedHost } from './services/hostDirectory.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST = path.resolve(here, '..', '..', 'client', 'dist');
@@ -76,7 +77,15 @@ function createApp() {
    */
   app.use(
     cors({
-      origin: (origin, callback) => callback(null, env.isAllowedOrigin(origin)),
+      origin: (origin, callback) => {
+        if (env.isAllowedOrigin(origin)) return callback(null, true);
+        // A business's custom or panel domain, read from the database - so a
+        // domain saved in the super admin console needs no CLIENT_ORIGIN edit.
+        return isBusinessOrigin(origin).then(
+          (allowed) => callback(null, allowed),
+          () => callback(null, false),
+        );
+      },
       credentials: true, // the session is an httpOnly cookie
     }),
   );
@@ -98,10 +107,28 @@ function createApp() {
    * further down and remains the one place that decides a staff member cannot
    * widen their own scope.
    */
+  /**
+   * The TLS gate: may the web server request a certificate for this host?
+   *
+   * Caddy's on-demand TLS asks this (`ask` in the Caddyfile) the first time a
+   * host it has no certificate for connects, and issues one only on a 200. So
+   * a business's custom domain gets HTTPS on its first visit, with nobody on
+   * the server, and a domain that is not ours never gets one. Ahead of
+   * business resolution because the question is about the host, not a business.
+   */
+  app.get('/api/internal/tls-allowed', async (req, res) => {
+    const allowed = await isServedHost(String(req.query.domain ?? '')).catch(() => false);
+    res.status(allowed ? 200 : 404).end();
+  });
+
+  // Which host this is and which application it serves, once per request.
+  // Ahead of `resolveBusiness`, which pins a business's own panel domain.
+  app.use(attachSurface);
+
   // Development only: which app this host is, for the page Vite serves (see
   // utils/surface.js). Ahead of business resolution because it needs none.
   if (!env.isProd) {
-    app.get('/api/dev/surface', (req, res) => res.json(surfaceInfo(req.get('host'))));
+    app.get('/api/dev/surface', (req, res) => res.json(surfaceInfo(req)));
   }
 
   app.use(resolveBusiness);
@@ -234,7 +261,7 @@ function createApp() {
        */
       res.set('Cache-Control', 'no-cache');
       res.vary('Host');
-      res.type('html').send(injectSurface(shell, req.get('host')));
+      res.type('html').send(injectSurface(shell, req));
     });
   }
 

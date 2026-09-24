@@ -2,7 +2,7 @@ import { sendMail } from './mailer.js';
 import env from '../config/env.js';
 import { sendingBusiness } from './sendingBusiness.js';
 import { MAIL, escapeHtml } from './welcomeMail.js';
-import { storefrontOrigin, panelOrigin } from './linkOrigins.js';
+import { storefrontOrigin, staffPanelOrigin } from './linkOrigins.js';
 
 /**
  * The three sends the Email Settings screen offered and nobody had written.
@@ -204,8 +204,8 @@ async function sendLowStockEmail({ to, items, total }) {
   if (!items?.length) return { delivered: false, via: null, error: 'Nothing is low.' };
 
   const business = await sendingBusiness();
-  // A staff alert: the link opens the admin panel, on the panel host.
-  const origin = panelOrigin();
+  // A staff alert: the link opens the admin panel, on this business's panel host.
+  const origin = await staffPanelOrigin();
 
   const shown = items.slice(0, 10);
   const more = Math.max(0, (total ?? items.length) - shown.length);

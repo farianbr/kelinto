@@ -535,24 +535,41 @@ async function setBusinessAddress(businessId, body) {
   const slug = await availableSlug(body.slug, { exceptId: business._id });
 
   const domain = normaliseDomain(body.domain) || null;
-  if (domain) {
-    const problem = customDomainProblem(domain, env.platformDomains);
-    if (problem) throw ApiError.badRequest(problem, 'BUSINESS_DOMAIN_INVALID', { domain: problem });
+  const panelDomain = normaliseDomain(body.panelDomain) || null;
 
-    const clash = await Business.findOne({ domain, _id: { $ne: business._id } })
+  if (domain && panelDomain && domain === panelDomain) {
+    const message = 'One address cannot be the storefront and the panel.';
+    throw ApiError.badRequest(message, 'BUSINESS_DOMAIN_INVALID', { panelDomain: message });
+  }
+
+  // Both fields are checked against BOTH fields of every other business: a
+  // host is one business's storefront or one business's panel, never two.
+  for (const [field, value] of [['domain', domain], ['panelDomain', panelDomain]]) {
+    if (!value) continue;
+    const problem = customDomainProblem(value, env.platformDomains);
+    if (problem) throw ApiError.badRequest(problem, 'BUSINESS_DOMAIN_INVALID', { [field]: problem });
+
+    const clash = await Business.findOne({
+      _id: { $ne: business._id },
+      $or: [{ domain: value }, { panelDomain: value }],
+    })
       .select('name')
       .lean();
     if (clash) {
-      throw ApiError.conflict(`${domain} already points at ${clash.name}.`, 'BUSINESS_DOMAIN_TAKEN');
+      throw ApiError.conflict(`${value} already points at ${clash.name}.`, 'BUSINESS_DOMAIN_TAKEN');
     }
   }
 
-  const previous = { slug: business.slug ?? null, domain: business.domain ?? null };
+  const previous = {
+    slug: business.slug ?? null,
+    domain: business.domain ?? null,
+    panelDomain: business.panelDomain ?? null,
+  };
 
   // `updateOne`, not `save()`: the same reason `ensureDefaultBusiness` gives.
   // A stale field elsewhere on an old document must not refuse an edit that
   // does not touch it.
-  await Business.updateOne({ _id: business._id }, { $set: { slug, domain } });
+  await Business.updateOne({ _id: business._id }, { $set: { slug, domain, panelDomain } });
 
   // `resolveBusiness` caches host -> business, including misses. Without this
   // the old address keeps answering and the new one keeps failing until the
@@ -561,12 +578,17 @@ async function setBusinessAddress(businessId, body) {
   forgetBusinessConfig(business._id);
 
   const fresh = await Business.findById(business._id);
+  /**
+   * No server step follows any more. CORS reads saved domains from the
+   * database (`hostDirectory.isBusinessOrigin`) and the web server asks the
+   * TLS gate before issuing a certificate, so a domain works as soon as the
+   * business's DNS points here. What the console still has to say is the one
+   * step only the business can take: the DNS record itself.
+   */
   return {
     business: fresh.toPublic(),
     previous,
-    // A custom domain works only once the server accepts it as an origin. Said
-    // in the response so the console can say it to the person who just set one.
-    domainNeedsOrigin: Boolean(domain && !env.origins.includes(`https://${domain}`)),
+    dnsTarget: env.storefrontDomain ?? null,
   };
 }
 

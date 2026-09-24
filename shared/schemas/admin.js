@@ -1284,18 +1284,34 @@ const addressRejectSchema = z.object({
   note: z.string().trim().min(1, 'Say why, so the business can ask for something else.').max(500),
 });
 
-const businessAddressSchema = z.object({
-  slug: businessSlugSchema,
-  domain: z
-    .string()
-    .transform(normaliseDomain)
-    .superRefine((value, ctx) => {
-      const problem = customDomainProblem(value);
-      if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem });
-    })
-    .optional()
-    .or(z.literal('')),
-});
+/** A domain the business owns, as typed or pasted. Empty clears it. */
+const customDomainField = z
+  .string()
+  .transform(normaliseDomain)
+  .superRefine((value, ctx) => {
+    const problem = customDomainProblem(value);
+    if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem });
+  })
+  .optional()
+  .or(z.literal(''));
+
+const businessAddressSchema = z
+  .object({
+    slug: businessSlugSchema,
+    // Where the business's customers go: its storefront.
+    domain: customDomainField,
+    // Where its staff go: its ERP panel, on a domain it owns.
+    panelDomain: customDomainField,
+  })
+  .superRefine((value, ctx) => {
+    if (value.domain && value.panelDomain && value.domain === value.panelDomain) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['panelDomain'],
+        message: 'One address cannot be the storefront and the panel. Use a second one, like app.' + value.domain + '.',
+      });
+    }
+  });
 
 const businessAssignSchema = z.object({
   // Empty unassigns, which is a different act from moving it and has to stay

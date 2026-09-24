@@ -3,7 +3,6 @@ import { asyncHandler } from '../utils/ApiError.js';
 import * as supplierPortalService from '../services/supplierPortalService.js';
 import * as purchaseBidService from '../services/purchaseBidService.js';
 import Business from '../models/Business.js';
-import { surfaceFor } from '../utils/surface.js';
 import { DEFAULT_BUSINESS_COLOR, migrateColorToken } from '../../../shared/businessPalette.js';
 
 /**
@@ -55,7 +54,9 @@ const me = asyncHandler(async (req, res) => {
    * every business's suppliers sign in there - and naming the default one would
    * be the wrong company asking for a password.
    */
-  const named = surfaceFor(req.get('host')) !== 'panel' && req.businessScope;
+  // A business's own panel domain is not shared: it names its business.
+  const shared = req.surface === 'panel' && !req.hostPinned;
+  const named = !shared && req.businessScope;
   const business = named
     ? await Business.findById(req.businessScope).select('name colorToken').lean()
     : null;

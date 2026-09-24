@@ -11,6 +11,7 @@ import { sendWelcomeEmail, sendPasswordResetEmail } from './welcomeMail.js';
 import { displayNameOf } from '../utils/displayName.js';
 import { currentBusinessId } from '../db/context.js';
 import { businessesFor, inBusinessDb } from './loginDirectory.js';
+import { businessConfig } from '../middleware/businessConfigCache.js';
 
 // "Remember me" drives a long-lived cookie so the buyer is auto-signed-in on
 // return visits (brief §8.1).
@@ -238,6 +239,18 @@ async function findForAudit(email) {
 }
 
 /**
+ * May a tenant admin sign in on this host? Anywhere unpinned; on a business's
+ * own panel domain only when their tenant owns that business.
+ */
+async function adminMaySignInHere(admin, pinned) {
+  if (!pinned) return true;
+  const business = await businessConfig(pinned);
+  if (!business || business.deletedAt) return false;
+  const tenant = admin.tenant ? String(admin.tenant) : null;
+  return tenant === business.tenantId;
+}
+
+/**
  * Every account this address might mean, with the database each one lives in.
  *
  * Three places, because the person typing an address has no way to say which
@@ -252,12 +265,19 @@ async function findForAudit(email) {
  *    business where this address has a panel account. This is what makes the
  *    shared admin host work, where the business the request resolved to is only
  *    the default and a staff member's account is usually somewhere else.
+ *
+ * **On a business's own panel domain (`pinned`) only that business counts.**
+ * Its staff, and a tenant admin whose tenant owns it; never the directory's
+ * other businesses, because `app.cellshoppe.ca` signing somebody into another
+ * company's panel would be that company's password typed into CellShoppe's page.
  */
-async function loginCandidates(email) {
+async function loginCandidates(email, pinned = null) {
   const candidates = [];
 
   const admin = await controlModels().User.findOne({ email, role: 'admin' }).select('+passwordHash');
-  if (admin) candidates.push({ user: admin, business: null });
+  if (admin && (await adminMaySignInHere(admin, pinned))) {
+    candidates.push({ user: admin, business: null });
+  }
 
   const hereId = currentBusinessId();
   const here = await db().User.findOne({ email }).select('+passwordHash');
@@ -267,6 +287,8 @@ async function loginCandidates(email) {
       : null;
     candidates.push({ user: here, business: record });
   }
+
+  if (pinned) return candidates;
 
   for (const business of await businessesFor(email)) {
     // Already covered by step 2 - the same account, not a second one.
@@ -299,8 +321,8 @@ async function loginCandidates(email) {
  * business an address appears in would tell anybody who types a colleague's
  * email where that colleague works, without knowing their password.
  */
-async function login({ email, password, business: chosen = null }) {
-  const candidates = await loginCandidates(email);
+async function login({ email, password, business: chosen = null }, { pinned = null } = {}) {
+  const candidates = await loginCandidates(email, pinned);
 
   const matches = [];
   for (const candidate of candidates) {

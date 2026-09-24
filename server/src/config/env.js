@@ -86,9 +86,10 @@ const schema = z.object({
    *
    * Only the subdomain label is wildcarded, never the registrable domain: one
    * label, no dots, so `*.kelinto.com` admits `shop.kelinto.com` and refuses
-   * `kelinto.com.attacker.example`. A tenant on a **custom** domain is still an
-   * explicit `CLIENT_ORIGIN` entry, deliberately - a domain we do not control
-   * is not one a pattern should admit sight unseen.
+   * `kelinto.com.attacker.example`. A business's **custom** domain is not
+   * admitted by any pattern - a domain we do not control is not one a pattern
+   * should admit sight unseen. It is admitted because a super admin saved it on
+   * the business (`hostDirectory.isBusinessOrigin`, checked in `app.js`).
    */
   CORS_WILDCARD_ORIGINS: z.string().default(''),
 
