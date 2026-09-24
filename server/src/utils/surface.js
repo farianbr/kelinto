@@ -1,5 +1,5 @@
 import env from '../config/env.js';
-import { hostOf, isUnnamed, lookupHost } from '../services/hostDirectory.js';
+import { hostOf, isUnnamed, lookupHost, markHostLive } from '../services/hostDirectory.js';
 
 /**
  * Which application a host serves (CONSOLIDATE_AND_ROUTING §1).
@@ -48,12 +48,15 @@ function surfaceFor(hostHeader, entry = null) {
 /**
  * Where this host's `/admin` lives.
  *
- * A business with a panel domain of its own sends its storefront's `/admin`
- * there, and its panel domain keeps every panel link on itself. Everything else
- * uses the shared `PANEL_HOST`, or nothing when there is none.
+ * On a business's own panel domain, itself. On its storefront, its panel
+ * domain once that domain is LIVE (`hostDirectory.markHostLive`) - before then
+ * it may not resolve yet, and sending staff there would send them nowhere.
+ * Everything else uses the shared `PANEL_HOST`, or nothing when there is none.
  */
 function panelHostFor(entry) {
-  return entry?.panelDomain || env.PANEL_HOST || null;
+  if (entry?.role === 'panel') return entry.panelDomain;
+  if (entry?.panelDomain && entry.panelDomainLive) return entry.panelDomain;
+  return env.PANEL_HOST || null;
 }
 
 /**
@@ -73,6 +76,13 @@ async function attachSurface(req, _res, next) {
     req.hostEntry = null;
   }
   req.surface = surfaceFor(req.get('host'), req.hostEntry);
+
+  // The first HTTPS request on a custom domain proves it works, and makes it
+  // the business's default address. Not awaited: nothing in this request
+  // depends on it, and the write happens once per domain.
+  markHostLive(req, req.hostEntry).catch((error) =>
+    console.error(`  Could not mark ${req.get('host')} live - ${error.message}`),
+  );
   next();
 }
 

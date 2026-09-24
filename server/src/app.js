@@ -21,10 +21,38 @@ import { enforceTenantStatus } from './middleware/tenantStatus.js';
 import { openBusinessDb } from './middleware/businessDb.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { attachSurface, superAdminHostOnly, injectSurface, surfaceInfo } from './utils/surface.js';
-import { isBusinessOrigin, isServedHost } from './services/hostDirectory.js';
+import { canonicalPageUrl, isBusinessOrigin, isServedHost } from './services/hostDirectory.js';
+import { businessConfig } from './middleware/businessConfigCache.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST = path.resolve(here, '..', '..', 'client', 'dist');
+
+/**
+ * A business's live custom domain is its default address, so a PAGE asked for
+ * on an older one is sent there. Two cases, and only pages - the API answers on
+ * every host so a tab left open mid-checkout keeps working:
+ *
+ * - **Storefront.** `<slug>.<platform>` forwards to the live storefront domain,
+ *   path and query intact. 301, because it is permanent and search engines
+ *   should move the listing - but cached for a day only, so a domain removed
+ *   later does not leave browsers stuck on a dead address.
+ * - **Panel.** On the shared panel host, a session signed into a business with
+ *   a live panel domain is sent to it. 302: it depends on who is signed in, and
+ *   the session does not travel (cookies belong to a host), so they sign in
+ *   once more there. A tenant admin's session names no business and stays.
+ */
+async function defaultAddressFor(req) {
+  const storefront = canonicalPageUrl(req, req.hostEntry);
+  if (storefront) return { url: storefront, status: 301, maxAge: 86400 };
+
+  if (req.surface === 'panel' && !req.hostPinned && req.businessScopeSource === 'session') {
+    const business = await businessConfig(req.businessScope);
+    if (business?.panelDomainLive && !business.deletedAt) {
+      return { url: `${env.originFor(business.panelDomain)}${req.originalUrl}`, status: 302, maxAge: 0 };
+    }
+  }
+  return null;
+}
 
 function createApp() {
   const app = express();
@@ -248,10 +276,21 @@ function createApp() {
      */
     const shell = fs.readFileSync(path.join(CLIENT_DIST, 'index.html'), 'utf8');
 
-    app.get('*', (req, res, next) => {
+    app.get('*', async (req, res, next) => {
       // An unknown /api path is a client error, not a page. Let it fall through
       // to notFoundHandler and answer JSON rather than the SPA shell.
       if (req.path.startsWith('/api/')) return next();
+
+      try {
+        const elsewhere = await defaultAddressFor(req);
+        if (elsewhere) {
+          res.set('Cache-Control', elsewhere.maxAge ? `public, max-age=${elsewhere.maxAge}` : 'no-store');
+          return res.redirect(elsewhere.status, elsewhere.url);
+        }
+      } catch (error) {
+        // A redirect is a courtesy; failing to work one out serves the page.
+        console.error(`  Default-address check failed - ${error.message}`);
+      }
 
       /**
        * The same file on every host, told which application to be

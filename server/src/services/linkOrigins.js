@@ -27,16 +27,27 @@ import { businessConfig } from '../middleware/businessConfigCache.js';
  * split changes nothing.
  */
 
-/** The storefront origin of a business (the current one by default). */
-async function storefrontOrigin(businessId = currentBusinessId()) {
-  if (!businessId) return env.publicOrigin;
-  const business = await businessConfig(businessId);
-  if (!business || business.deletedAt) return env.publicOrigin;
-  if (business.domain) return env.originFor(business.domain);
+/**
+ * The storefront origin of one business's config (`businessConfig`), or null
+ * when it has no address at all. The one place this rule lives.
+ *
+ * A custom domain is the default once it is live; before that it may not
+ * resolve yet, so the subdomain that already works is used instead.
+ */
+function originOfStorefront(business) {
+  if (!business || business.deletedAt) return null;
+  if (business.domain && business.domainLive) return env.originFor(business.domain);
   if (business.slug && env.storefrontDomain) {
     return env.originFor(`${business.slug}.${env.storefrontDomain}`);
   }
-  return env.publicOrigin;
+  if (business.domain) return env.originFor(business.domain);
+  return null;
+}
+
+/** The storefront origin of a business (the current one by default). */
+async function storefrontOrigin(businessId = currentBusinessId()) {
+  if (!businessId) return env.publicOrigin;
+  return originOfStorefront(await businessConfig(businessId)) ?? env.publicOrigin;
 }
 
 /**
@@ -48,17 +59,17 @@ function panelOrigin() {
 }
 
 /**
- * Where a business's STAFF sign in: its own panel domain when it has one
- * (`Business.panelDomain`), else the shared panel host. A CellShoppe low-stock
+ * Where a business's STAFF sign in: its own panel domain once it is live
+ * (`Business.panelDomain`, `panelDomainLiveAt`), else the shared panel host. A CellShoppe low-stock
  * alert should open app.cellshoppe.ca, the address its staff actually use.
  */
 async function staffPanelOrigin(businessId = currentBusinessId()) {
   if (businessId) {
     const business = await businessConfig(businessId);
-    if (business?.panelDomain && !business.deletedAt) return env.originFor(business.panelDomain);
+    if (business?.panelDomainLive && !business.deletedAt) return env.originFor(business.panelDomain);
   }
   return panelOrigin();
 }
 
-export { storefrontOrigin, panelOrigin, staffPanelOrigin };
-export default { storefrontOrigin, panelOrigin, staffPanelOrigin };
+export { originOfStorefront, storefrontOrigin, panelOrigin, staffPanelOrigin };
+export default { originOfStorefront, storefrontOrigin, panelOrigin, staffPanelOrigin };

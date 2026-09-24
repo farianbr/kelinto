@@ -1,4 +1,4 @@
-import { asyncHandler } from '../utils/ApiError.js';
+import ApiError, { asyncHandler } from '../utils/ApiError.js';
 import * as authService from '../services/authService.js';
 import auditService from '../services/auditService.js';
 import { PERMISSION_AREAS } from '../models/Role.js';
@@ -7,6 +7,7 @@ import { currentBusinessId } from '../db/context.js';
 import { inBusinessDb } from '../services/loginDirectory.js';
 import { businessConfig } from '../middleware/businessConfigCache.js';
 import env from '../config/env.js';
+import { originOfStorefront } from '../services/linkOrigins.js';
 
 /**
  * The session shape, plus the resolved permission map for Cellvix staff.
@@ -108,6 +109,22 @@ const login = asyncHandler(async (req, res) => {
     throw error;
   }
 
+  /**
+   * A business with a live panel domain signs its staff in THERE, not on the
+   * shared panel host: its own domain is its default address. Refused before
+   * any session is issued, with the address, and the sign-in page carries the
+   * email across. Only business-bound accounts - a tenant admin (no
+   * `business`) reaches every business its tenant owns and stays here.
+   */
+  if (business && req.surface === 'panel' && !req.hostPinned) {
+    const own = await businessConfig(String(business._id));
+    if (own?.panelDomainLive) {
+      throw new ApiError(409, 'USE_PANEL_DOMAIN', `${business.name} staff sign in at ${own.panelDomain}.`, {
+        url: env.originFor(own.panelDomain),
+      });
+    }
+  }
+
   authService.issueSession(res, user, req.body.remember, business?._id ?? null);
 
   /**
@@ -170,11 +187,7 @@ const logout = asyncHandler(async (req, res) => {
  */
 async function storefrontOrigin(req) {
   if (!req.user || !req.businessScope) return null;
-  const business = await businessConfig(req.businessScope);
-  if (!business || business.deletedAt) return null;
-  if (business.domain) return env.originFor(business.domain);
-  if (business.slug && env.storefrontDomain) return env.originFor(`${business.slug}.${env.storefrontDomain}`);
-  return null;
+  return originOfStorefront(await businessConfig(req.businessScope));
 }
 
 const me = asyncHandler(async (req, res) => {

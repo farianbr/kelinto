@@ -569,7 +569,21 @@ async function setBusinessAddress(businessId, body) {
   // `updateOne`, not `save()`: the same reason `ensureDefaultBusiness` gives.
   // A stale field elsewhere on an old document must not refuse an edit that
   // does not touch it.
-  await Business.updateOne({ _id: business._id }, { $set: { slug, domain, panelDomain } });
+  // A changed domain starts over as not-yet-live: it becomes the default only
+  // once a request proves its DNS and certificate work (`markHostLive`).
+  await Business.updateOne(
+    { _id: business._id },
+    {
+      $set: {
+        slug,
+        domain,
+        panelDomain,
+        domainLiveAt: domain && domain === previous.domain ? business.domainLiveAt ?? null : null,
+        panelDomainLiveAt:
+          panelDomain && panelDomain === previous.panelDomain ? business.panelDomainLiveAt ?? null : null,
+      },
+    },
+  );
 
   // `resolveBusiness` caches host -> business, including misses. Without this
   // the old address keeps answering and the new one keeps failing until the

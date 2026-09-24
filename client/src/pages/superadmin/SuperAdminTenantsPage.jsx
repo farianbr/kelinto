@@ -586,8 +586,9 @@ function AddressForm({
         <div className="mt-3">
           <PlatformNotice icon={Globe}>
             The business adds a CNAME record for {newDomains.join(' and ')} pointing to{' '}
-            {storefrontDomain}. The certificate is issued on the first visit after that; nothing
-            changes on the server.
+            {storefrontDomain}. The certificate is issued on the first visit after that, and from
+            then on it is the business&apos;s default address: the {storefrontDomain} one forwards
+            to it. Nothing changes on the server.
           </PlatformNotice>
         </div>
       )}
@@ -1317,6 +1318,19 @@ export function SuperAdminTenantsPage() {
                                 <span className="font-mono text-plat-muted">
                                   {business.panelDomain} (panel)
                                 </span>
+                              </>
+                            )}
+                            {/* A custom domain becomes the default only once a
+                                request has proved its DNS and certificate work.
+                                Until then the operator needs to know it is not
+                                live yet, and why nothing redirects. */}
+                            {((business.domain && !business.domainLiveAt) ||
+                              (business.panelDomain && !business.panelDomainLiveAt)) && (
+                              <>
+                                <span className="text-plat-dim" aria-hidden="true">
+                                  ·
+                                </span>
+                                <span className="text-plat-warn">Waiting for DNS</span>
                               </>
                             )}
                           </span>

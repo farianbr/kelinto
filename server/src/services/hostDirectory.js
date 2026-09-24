@@ -1,6 +1,7 @@
 import Business from '../models/Business.js';
 import env from '../config/env.js';
 import { isReservedSubdomain } from '../../../shared/hosts.js';
+import { forgetBusinessConfig } from '../middleware/businessConfigCache.js';
 
 /**
  * Every hostname this installation answers on, and what each one is.
@@ -95,13 +96,17 @@ const byHost = new Map();
 /**
  * Which business a host belongs to, and in which role.
  *
- * Returns `{ businessId, role, name, panelDomain }` or null:
+ * Returns an entry or null:
  *
- * - `role: 'panel'` - the host is that business's own `panelDomain`.
- * - `role: 'storefront'` - its custom `domain`, or `<slug>.<platform>`.
- *
- * `panelDomain` travels on a storefront entry too, so the storefront can send
- * `/admin` to the business's own panel rather than the shared one.
+ * - `role` - `'panel'` when the host is the business's own `panelDomain`,
+ *   else `'storefront'` (its custom `domain`, or `<slug>.<platform>`).
+ * - `matchedBy` - which field the host matched: `domain`, `panelDomain` or
+ *   `slug`. A slug match on a business with a live storefront domain is what
+ *   redirects (`canonicalPageUrl`).
+ * - `domain` / `panelDomain` - the business's custom domains, each paired with
+ *   whether it is live (`domainLive`, `panelDomainLive`, see `markHostLive`).
+ *   They travel on every entry so a storefront can send `/admin` to the
+ *   business's own panel, and the slug host can send customers to the domain.
  *
  * A custom domain is matched before a slug, because a business that bought a
  * domain means it more than it means the handle we gave it.
@@ -111,7 +116,7 @@ async function lookupHost(hostHeader) {
   if (isUnnamed(host)) return null;
   if (byHost.has(host)) return byHost.get(host);
 
-  const fields = '_id name domain panelDomain';
+  const fields = '_id name domain panelDomain domainLiveAt panelDomainLiveAt';
   // Two reads rather than one `$or`, so an exact domain always wins over a
   // slug that happens to match the same host's first label.
   let found = await Business.findOne({
@@ -137,8 +142,12 @@ async function lookupHost(hostHeader) {
     ? {
         businessId: String(found._id),
         role: found.panelDomain === host ? 'panel' : 'storefront',
+        matchedBy: found.domain === host ? 'domain' : found.panelDomain === host ? 'panelDomain' : 'slug',
         name: found.name,
+        domain: found.domain ?? null,
+        domainLive: Boolean(found.domain && found.domainLiveAt),
         panelDomain: found.panelDomain ?? null,
+        panelDomainLive: Boolean(found.panelDomain && found.panelDomainLiveAt),
       }
     : null;
 
@@ -146,6 +155,51 @@ async function lookupHost(hostHeader) {
   // the collection on every retry.
   byHost.set(host, entry);
   return entry;
+}
+
+/**
+ * Record that a custom domain works, the first time a request proves it.
+ *
+ * A request that reached the app over HTTPS on a business's custom domain has
+ * passed through the business's DNS and a certificate issued for that domain,
+ * which is exactly what "this domain is ready to be the default" means. Only
+ * HTTPS counts: plain http on any host is redirected by the web server before
+ * it gets here.
+ *
+ * One write per domain, ever: the filter only matches while the date is empty
+ * and the domain is still this one, so concurrent first requests cannot
+ * double-write and a domain changed in the meantime is left alone.
+ */
+async function markHostLive(req, entry) {
+  if (!entry || entry.matchedBy === 'slug' || !req.secure) return;
+  const field = entry.matchedBy;
+  if (field === 'domain' ? entry.domainLive : entry.panelDomainLive) return;
+
+  const liveField = field === 'domain' ? 'domainLiveAt' : 'panelDomainLiveAt';
+  const { modifiedCount } = await Business.updateOne(
+    { _id: entry.businessId, [field]: hostOf(req.get('host')), [liveField]: null },
+    { $set: { [liveField]: new Date() } },
+  );
+  if (modifiedCount) {
+    // Every cached entry for this business holds the old answer, the slug
+    // host's included - and that is the one whose redirect this switches on.
+    resetHostDirectory();
+    forgetBusinessConfig(entry.businessId);
+  }
+}
+
+/**
+ * Where a PAGE request on this host should be sent instead, or null.
+ *
+ * A business's live storefront domain is its canonical address, so its slug
+ * subdomain forwards there with the path and query intact. Pages only: the API
+ * keeps answering on every host, because a tab left open on the old address may
+ * be mid-checkout.
+ */
+function canonicalPageUrl(req, entry) {
+  if (!entry || entry.role !== 'storefront' || entry.matchedBy !== 'slug') return null;
+  if (!entry.domain || !entry.domainLive) return null;
+  return `${env.originFor(entry.domain)}${req.originalUrl}`;
 }
 
 /**
@@ -196,6 +250,8 @@ export {
   subdomainOf,
   isPlatformHost,
   lookupHost,
+  markHostLive,
+  canonicalPageUrl,
   isServedHost,
   isBusinessOrigin,
   resetHostDirectory,

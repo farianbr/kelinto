@@ -42,7 +42,10 @@ export function PanelSignInPage() {
   const [choosing, setChoosing] = useState(null);
   useDocumentTitle(panelBusiness ? `Sign in to ${panelBusiness}` : 'Sign in');
 
-  const form = useForm({ defaultValues: { email: '', password: '', remember: true } });
+  // Carried across when the shared panel sends somebody to their business's
+  // own panel domain (`USE_PANEL_DOMAIN` below), so they only retype the password.
+  const carriedEmail = new URLSearchParams(window.location.search).get('email') ?? '';
+  const form = useForm({ defaultValues: { email: carriedEmail, password: '', remember: true } });
 
   if (isLoading) return <RouteFallback />;
   // `canUseAdmin` rather than the role: a staff member with no role has no panel.
@@ -54,6 +57,12 @@ export function PanelSignInPage() {
       const signedIn = await signIn(values);
       if (['admin', 'staff'].includes(signedIn.role)) navigate('/admin');
     } catch (err) {
+      // Their business signs its staff in on its own domain. A session cannot
+      // follow them there (it belongs to this host), so they sign in there.
+      if (err.code === 'USE_PANEL_DOMAIN' && err.fields?.url) {
+        window.location.assign(`${err.fields.url}/?email=${encodeURIComponent(values.email)}`);
+        return;
+      }
       if (err.code === 'BUSINESS_CHOICE_REQUIRED' && err.fields?.choices?.length) {
         setChoice({ values, choices: err.fields.choices });
         return;

@@ -153,6 +153,21 @@ const businessSchema = new mongoose.Schema(
     },
 
     /**
+     * When each custom domain was first seen WORKING: a real HTTPS request
+     * arrived on it, which proves the business's DNS points here and the
+     * certificate was issued (`hostDirectory.markHostLive`).
+     *
+     * **A live domain becomes the business's default address.** The slug
+     * subdomain redirects to its storefront domain, the shared panel sends the
+     * business's staff to its panel domain, and every link the server builds
+     * uses them. Only once live, because a domain saved before its DNS exists
+     * would otherwise redirect a working address to a dead one. Cleared
+     * whenever the domain itself changes.
+     */
+    domainLiveAt: { type: Date, default: null },
+    panelDomainLiveAt: { type: Date, default: null },
+
+    /**
      * A web address the tenant has ASKED for, waiting on a super admin.
      *
      * `slug` above is the live address and only the platform writes it; this is
@@ -317,6 +332,8 @@ businessSchema.methods.toPublic = function toPublic() {
     slug: this.slug ?? null,
     domain: this.domain ?? null,
     panelDomain: this.panelDomain ?? null,
+    domainLiveAt: this.domainLiveAt ?? null,
+    panelDomainLiveAt: this.panelDomainLiveAt ?? null,
     addressRequest: this.addressRequest ?? null,
     businessType: this.businessType,
     status: this.status,

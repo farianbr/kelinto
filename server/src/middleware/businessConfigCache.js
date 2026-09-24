@@ -56,7 +56,7 @@ const TTL_MS = 60_000;
  */
 async function loadConfig(businessId) {
   const business = await Business.findById(businessId)
-    .select('code businessType featureOverrides tenant deletedAt slug domain panelDomain')
+    .select('code businessType featureOverrides tenant deletedAt slug domain panelDomain domainLiveAt panelDomainLiveAt')
     .lean();
 
   if (!business) return null;
@@ -88,6 +88,10 @@ async function loadConfig(businessId) {
     domain: business.domain ?? null,
     // Where its STAFF answer, when the business has a panel domain of its own.
     panelDomain: business.panelDomain ?? null,
+    // Whether each custom domain has been seen working, which is what makes it
+    // the business's default address (`hostDirectory.markHostLive`).
+    domainLive: Boolean(business.domain && business.domainLiveAt),
+    panelDomainLive: Boolean(business.panelDomain && business.panelDomainLiveAt),
     tenant: tenant ? { id: String(tenant._id), status: tenant.status, name: tenant.name } : null,
   };
 }
