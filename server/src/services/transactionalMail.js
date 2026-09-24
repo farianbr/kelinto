@@ -2,6 +2,7 @@ import { sendMail } from './mailer.js';
 import env from '../config/env.js';
 import { sendingBusiness } from './sendingBusiness.js';
 import { MAIL, escapeHtml } from './welcomeMail.js';
+import { storefrontOrigin, panelOrigin } from './linkOrigins.js';
 
 /**
  * The three sends the Email Settings screen offered and nobody had written.
@@ -88,7 +89,8 @@ async function sendQuoteCreatedEmail({ user, quote }) {
   if (!user?.email) return { delivered: false, via: null, error: 'No email address on file.' };
 
   const business = await sendingBusiness();
-  const origin = env.publicOrigin;
+  // The customer's own storefront, where `/account` is (see `linkOrigins`).
+  const origin = await storefrontOrigin();
   const name = user.contactName || user.businessName || 'there';
 
   const expires = quote.validUntil
@@ -146,7 +148,8 @@ async function sendPaymentReceiptEmail({ user, invoice, amount }) {
   if (!user?.email) return { delivered: false, via: null, error: 'No email address on file.' };
 
   const business = await sendingBusiness();
-  const origin = env.publicOrigin;
+  // The customer's own storefront, where `/account` is (see `linkOrigins`).
+  const origin = await storefrontOrigin();
   const name = user.contactName || user.businessName || 'there';
   // `amount` is the invoice total on this model; `total` does not exist on it.
   const outstanding = Math.max(0, (invoice.amount ?? 0) - (invoice.amountPaid ?? 0));
@@ -201,7 +204,8 @@ async function sendLowStockEmail({ to, items, total }) {
   if (!items?.length) return { delivered: false, via: null, error: 'Nothing is low.' };
 
   const business = await sendingBusiness();
-  const origin = env.publicOrigin;
+  // A staff alert: the link opens the admin panel, on the panel host.
+  const origin = panelOrigin();
 
   const shown = items.slice(0, 10);
   const more = Math.max(0, (total ?? items.length) - shown.length);

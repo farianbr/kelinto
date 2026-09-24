@@ -169,7 +169,7 @@ async function run() {
 
   console.log('\n  Seeding supplier agreements…\n');
 
-  const businesses = await db().Business.find({}).select('name code').lean();
+  const businesses = await db().Business.find({ deletedAt: null }).select('name code').lean();
   const targets = businesses.length ? businesses : [null];
 
   for (const business of targets) {

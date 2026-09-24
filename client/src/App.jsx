@@ -7,6 +7,8 @@ import useEarlyBusinessTheme from '@/hooks/useEarlyBusinessTheme';
 import ShopPage from '@/pages/ShopPage';
 import HomeOrShop from '@/components/layout/HomeOrShop';
 import RouteFallback from '@/components/layout/RouteFallback';
+import GoToPanel, { GoToHost } from '@/components/layout/GoToPanel';
+import { superAdminHost, panelHost, surface } from '@/lib/surface';
 
 /**
  * The Shop page owns "/" and is the landing surface for every visitor, so it
@@ -21,6 +23,8 @@ const PaymentFailedPage = lazy(() => import('@/pages/PaymentFailedPage'));
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
 const AboutPage = lazy(() => import('@/pages/AboutPage'));
 const ResetPasswordPage = lazy(() => import('@/pages/ResetPasswordPage'));
+const PanelSignInPage = lazy(() => import('@/pages/PanelSignInPage'));
+const PlatformLandingPage = lazy(() => import('@/pages/PlatformLandingPage'));
 const ContactPage = lazy(() => import('@/pages/ContactPage'));
 const BlogPage = lazy(() => import('@/pages/BlogPage'));
 const BlogPostPage = lazy(() => import('@/pages/BlogPostPage'));
@@ -42,6 +46,8 @@ const SupplierProformasPage = lazy(() => import('@/pages/supplier/SupplierProfor
 const SupplierDeliveriesPage = lazy(() => import('@/pages/supplier/SupplierDeliveriesPage'));
 const SupplierProfilePage = lazy(() => import('@/pages/supplier/SupplierProfilePage'));
 const SupplierAgreementPage = lazy(() => import('@/pages/supplier/SupplierAgreementPage'));
+const SupplierBusinessesPage = lazy(() => import('@/pages/supplier/SupplierBusinessesPage'));
+const SupplierResetPage = lazy(() => import('@/pages/supplier/SupplierResetPage'));
 const SuperAdminLayout = lazy(() => import('@/components/superadmin/SuperAdminLayout'));
 const SuperAdminTenantsPage = lazy(() => import('@/pages/superadmin/SuperAdminTenantsPage'));
 const SuperAdminPlansPage = lazy(() => import('@/pages/superadmin/SuperAdminPlansPage'));
@@ -155,195 +161,270 @@ const AdminServiceInvoiceFormPage = lazy(() => import('@/pages/admin/AdminServic
  * lands ahead of its page, and is deliberately not deleted.
  */
 
-export function App() {
-  /**
-   * The panel's accent, from the moment the app starts.
-   *
-   * `RouteProgress` below is mounted outside `<Routes>`, so on a reload it
-   * draws before `AdminShell` exists to declare which business is on screen.
-   * Without this it fell back to the Cellvix ramp baked into the gradient
-   * utility, and a CellShoppe admin saw a red bar on every page load. See
-   * `hooks/useEarlyBusinessTheme.js`.
-   */
-  useEarlyBusinessTheme();
+/**
+ * The admin panel's route tree, held as a value so both route sets below can
+ * mount it: the full set (every host, before the split) and the panel host's
+ * own. One tree, so a screen added here cannot exist on one host and be missing
+ * on the other.
+ *
+ * Outside RootLayout by design (§4) - it owns the whole viewport. AdminShell is
+ * also the UI half of the guard; requireAdmin enforces it server-side.
+ */
+const adminRoutes = (
+  <Route
+    path="admin"
+    element={
+      <Suspense fallback={<RouteFallback />}>
+        <AdminShell />
+      </Suspense>
+    }
+  >
+    <Route index element={<AdminOverviewPage />} />
+    <Route path="clients" element={<AdminCustomersPage />} />
+    <Route path="clients/:id" element={<AdminClientProfilePage />} />
+    <Route path="clients/:id/edit" element={<AdminCustomerEditPage />} />
+    <Route path="orders" element={<AdminOrdersPage />} />
+    <Route path="inventory" element={<AdminProductsPage />} />
+    <Route path="inventory/:id" element={<AdminInventoryDetailPage />} />
+    <Route path="invoices" element={<AdminInvoicesPage />} />
 
+    {/* Purchase (phase 5). */}
+    <Route path="suppliers" element={<AdminSuppliersPage />} />
+    <Route path="suppliers/:id" element={<AdminSupplierProfilePage />} />
+    <Route path="supplier-returns" element={<AdminSupplierReturnsPage />} />
+    <Route path="supplier-services" element={<AdminSupplierServicesPage mode="service" />} />
+    <Route path="supplier-subscriptions" element={<AdminSupplierServicesPage mode="subscription" />} />
+    {/* Supplier bidding lives on the purchase order itself (§6.8a) - the
+        separate `/admin/rfqs` screens folded in on 2026-09-11, and
+        `ADMIN_LEGACY_REDIRECTS` forwards the old path. */}
+    <Route path="purchase-orders" element={<AdminPurchaseOrdersPage />} />
+    {/* Before `:id`, or the dynamic route matches "create" as an order id
+        and the page renders "purchase order not found". */}
+    <Route path="purchase-orders/create" element={<AdminPurchaseOrderCreatePage />} />
+    <Route path="purchase-orders/:id" element={<AdminPurchaseOrderDetailPage />} />
+    <Route path="expenses" element={<AdminExpensesPage />} />
+    {/* Categories live under Settings - the expense screen links there, and
+        the old `/admin/expenses/categories` path still redirects to it. */}
+    <Route path="settings/expense-categories" element={<AdminExpenseCategoriesPage />} />
+
+    {/* Reports (phase 6). `business` is registered ahead of the tabbed
+        screen so the literal path cannot be swallowed. */}
+    {/* Quotes & RMA (phase 7). */}
+    <Route path="quotes" element={<AdminQuotesPage />} />
+    {/* Enquiries from the storefront contact form, before anybody prices them. */}
+    <Route path="web-quotes" element={<AdminWebQuotesPage />} />
+    {/* The estimate builder. Declared BEFORE "quotes/:id" so "create"
+        is matched as a literal rather than swallowed as an id. */}
+    <Route path="quotes/create" element={<AdminServiceQuoteFormPage />} />
+    <Route path="quotes/:id/edit" element={<AdminServiceQuoteFormPage />} />
+    <Route path="quotes/:id" element={<AdminQuoteDetailPage />} />
+    {/* The labour price list the quote and ticket pickers read. */}
+    {/* Before the bare list route is irrelevant here (no `:id`), but kept
+        adjacent so the pair reads as one screen and its importer. */}
+    <Route path="services" element={<AdminServicesPage />} />
+    <Route path="services/import" element={<AdminServiceImportPage />} />
+    <Route path="rma" element={<AdminRmaPage />} />
+    <Route path="rma/:id" element={<AdminRmaDetailPage />} />
+
+    {/* Repair tickets. The detail screen DOES exist - see `tickets/:id`
+        below. The note that used to sit here said it did not, and two links
+        on the customer profile were still routing to `?q=<number>` to work
+        around that, which dropped the staff member on a filtered list instead
+        of the ticket they clicked. */}
+    <Route path="tickets" element={<AdminTicketsPage />} />
+    {/* Intake is a full screen, not a modal - see the page for why. */}
+    <Route path="tickets/new" element={<AdminTicketFormPage />} />
+    <Route path="tickets/:id/edit" element={<AdminTicketFormPage />} />
+    <Route path="tickets/:id" element={<AdminTicketDetailPage />} />
+
+    <Route path="reports/business" element={<AdminBusinessReportPage />} />
+    <Route path="reports" element={<AdminReportsPage />} />
+    <Route path="marketing/offers" element={<AdminOffersPage />} />
+    {/* `new` before `:id`, or the parameter swallows the literal and the
+        create screen opens as an edit for an offer called "new". */}
+    <Route path="marketing/offers/new" element={<AdminOfferFormPage />} />
+    <Route path="marketing/offers/:id" element={<AdminOfferFormPage />} />
+    <Route path="marketing/blog" element={<AdminBlogPage />} />
+    <Route path="marketing/faq" element={<AdminFaqPage />} />
+    <Route path="marketing/articles" element={<AdminProductArticlesPage />} />
+    <Route path="marketing/articles/:productId" element={<AdminProductArticleEditPage />} />
+    <Route path="marketing/reviews" element={<AdminReviewsPage />} />
+
+    {/* Marketing channels (phase 9). SMS, WhatsApp and Calls share one
+        component - same MessageLog, different channel. Only email sends
+        today; the other two log and say so (§6b U3–U5). */}
+    <Route path="marketing/sms" element={<AdminSmsPage />} />
+    <Route path="marketing/whatsapp" element={<AdminWhatsappPage />} />
+    <Route path="marketing/calls" element={<AdminCallsPage />} />
+    <Route path="marketing/email" element={<AdminEmailPage />} />
+    {/* Referral commission (phase 10). Admin-only server-side - this pays
+        real money on an automatic trigger (§6.13). */}
+    <Route path="marketing/referrals" element={<AdminReferralsPage />} />
+
+    {/* Business, staff & roles (phase 8). `add` and `:id/edit` share one
+        form component - the same fields with a different verb. */}
+    <Route path="businesses" element={<AdminBusinessesPage />} />
+    <Route path="businesses/add" element={<AdminBusinessFormPage />} />
+    <Route path="businesses/:id/edit" element={<AdminBusinessFormPage />} />
+    <Route path="businesses/:id" element={<AdminBusinessDetailPage />} />
+    <Route path="settings/users" element={<AdminUsersPage />} />
+    <Route path="settings/roles" element={<AdminRolesPage />} />
+
+    {/* Settings - the summary and every category landing are one screen,
+        separated by `?cat=`, so they share a route (§6.15). */}
+    <Route path="settings" element={<AdminSettingsPage />} />
+    <Route path="settings/business-info" element={<AdminBusinessInfoPage />} />
+    <Route path="settings/sale" element={<AdminSaleSettingsPage />} />
+    <Route path="settings/shipping" element={<AdminShippingSettingsPage />} />
+    <Route path="settings/payment-methods" element={<AdminPaymentMethodsPage />} />
+    <Route path="settings/inventory" element={<AdminInventorySettingsPage />} />
+    <Route path="settings/agreements" element={<AdminAgreementsPage />} />
+    <Route path="settings/activity-log" element={<AdminActivityLogPage />} />
+    {/* The tenant's line to the platform. No feature gate: reaching us is
+        not a capability a tenant buys (SAAS_PLATFORM §4.5). */}
+    <Route path="support" element={<AdminSupportPage />} />
+    <Route path="settings/security-log" element={<AdminSecurityLogPage />} />
+    <Route path="settings/api-keys" element={<AdminApiKeysPage />} />
+    <Route path="settings/third-party" element={<AdminThirdPartyPage />} />
+    {/* Reference data a staff member sets up once, so it sits beside the parts
+        taxonomy in Settings rather than in the daily Sales list. */}
+    <Route path="settings/devices" element={<AdminDevicesPage />} />
+    <Route path="settings/kiosk" element={<AdminKioskSettingsPage />} />
+    <Route path="settings/taxonomy" element={<AdminTaxonomyPage />} />
+    <Route path="settings/taxonomy/add" element={<AdminTaxonomyAddPage />} />
+    <Route path="settings/taxonomy/import" element={<AdminTaxonomyImportPage />} />
+    <Route path="settings/invoice-labels" element={<AdminInvoiceLabelsPage />} />
+    <Route path="settings/email" element={<AdminEmailSettingsPage />} />
+    <Route path="settings/templates" element={<AdminTemplatesPage />} />
+    <Route path="settings/calendar" element={<AdminCalendarPage />} />
+    <Route path="settings/appointments" element={<AdminAppointmentsPage />} />
+    <Route path="profile" element={<AdminProfilePage />} />
+    <Route path="orders/:orderNumber" element={<AdminOrderDetailPage />} />
+    {/* Declared before ":number" so "create" is matched as a literal
+        rather than read as an invoice number. */}
+    <Route path="invoices/create" element={<AdminServiceInvoiceFormPage />} />
+    {/* The same form as "create", with the record loaded - see the note on
+        the component. A distinct path rather than a flag, so the edit
+        screen is linkable and Back behaves. */}
+    <Route path="invoices/:number/edit" element={<AdminServiceInvoiceFormPage />} />
+    <Route path="invoices/:number" element={<AdminInvoiceDetailPage />} />
+
+    {/* Approvals is the Clients screen filtered, and keeps its own screen
+        until phase 2 folds it in as a status filter. */}
+    <Route path="approvals" element={<AdminApprovalsPage />} />
+
+
+    {/* Old flat-admin URLs stay alive as redirects rather than 404s (§4). */}
+    <Route path="products" element={<Navigate to="/admin/inventory" replace />} />
+    <Route path="customers" element={<Navigate to="/admin/clients" replace />} />
+    <Route path="offers" element={<Navigate to="/admin/marketing/offers" replace />} />
+    <Route path="blog" element={<Navigate to="/admin/marketing/blog" replace />} />
+    <Route path="faqs" element={<Navigate to="/admin/marketing/faq" replace />} />
+    <Route
+      path="expenses/categories"
+      element={<Navigate to="/admin/settings/expense-categories" replace />}
+    />
+    {/* Invoice messages became a tab on Invoice statuses (2026-09-21). */}
+    <Route
+      path="settings/invoice-status"
+      element={<Navigate to="/admin/settings/invoice-labels" replace />}
+    />
+
+    <Route path="*" element={<Navigate to="/admin" replace />} />
+  </Route>
+);
+
+/**
+ * The supplier portal's route tree (§6.8a), shared by both route sets like
+ * `adminRoutes`. On the admin host it is `app.<platform>/supplier`: one
+ * supplier account signs in there and works with every business it supplies.
+ *
+ * Outside RootLayout for the same reason the admin panel is: a supplier is not
+ * a customer, and the shop header, mega menu, cart and price gate all belong to
+ * a buyer's session. Its layout handles the signed-out case by rendering
+ * sign-in in place, so an emailed request link survives the login.
+ */
+const supplierRoutes = (
+  <Route
+    path="supplier"
+    element={
+      <Suspense fallback={<RouteFallback />}>
+        <SupplierPortalLayout />
+      </Suspense>
+    }
+  >
+    <Route index element={<SupplierDashboardPage />} />
+    {/* `orders` before `orders/:id`, or the dynamic route matches the list
+        path as an id and the page renders "order not found". */}
+    <Route path="orders" element={<SupplierOrdersPage />} />
+    <Route path="orders/:id" element={<SupplierPurchaseOrderPage />} />
+    <Route path="proformas" element={<SupplierProformasPage />} />
+    <Route path="deliveries" element={<SupplierDeliveriesPage />} />
+    <Route path="agreement" element={<SupplierAgreementPage />} />
+    <Route path="profile" element={<SupplierProfilePage />} />
+    <Route path="businesses" element={<SupplierBusinessesPage />} />
+    <Route path="*" element={<Navigate to="/supplier" replace />} />
+  </Route>
+);
+
+/**
+ * Where a supplier's reset email lands. A sibling of the portal rather than a
+ * child, because the portal's layout answers a signed-out visitor with sign-in.
+ */
+const supplierResetRoute = (
+  <Route
+    path="supplier/reset"
+    element={
+      <Suspense fallback={<RouteFallback />}>
+        <SupplierResetPage />
+      </Suspense>
+    }
+  />
+);
+
+/**
+ * The super admin panel's route tree (SAAS_PLATFORM §4.5), shared the same way
+ * as `adminRoutes`.
+ *
+ * A third application on a third session - outside RootLayout and outside
+ * AdminShell, because a super admin belongs to neither population and must not
+ * carry either one's chrome. In production it is `/superadmin` on the admin
+ * host (`PANEL_HOST`); the path form is also what keeps it reachable in
+ * development without a DNS entry.
+ */
+const superAdminRoutes = (
+  <Route
+    path="superadmin"
+    element={
+      <Suspense fallback={<RouteFallback />}>
+        <SuperAdminLayout />
+      </Suspense>
+    }
+  >
+    <Route index element={<SuperAdminTenantsPage />} />
+    <Route path="plans" element={<SuperAdminPlansPage />} />
+    <Route path="support" element={<SuperAdminSupportPage />} />
+    <Route path="*" element={<Navigate to="/superadmin" replace />} />
+  </Route>
+);
+
+/**
+ * Every route, on every host that is not the admin host.
+ *
+ * Before the split (`PANEL_HOST` unset) and in development this is the whole
+ * application, exactly as it always was. On a storefront host the panel and the
+ * super admin forward to the admin host instead - see the two conditionals below.
+ */
+function SiteRoutes() {
   return (
-    <>
-      {/* Mounted once, outside the routes: a toast outlives the screen that
-          raised it - an email sent from an invoice should still confirm after
-          the staff member has navigated on. */}
-      <Toaster />
-
-      {/* Same reasoning, and the same place: one bar for the whole app rather
-          than one per shell. It reports every in-flight request, so a route
-          change, a filter and a background refetch all say so the same way. */}
-      <RouteProgress />
-
     <Routes>
-      {/* The ERP panel. Outside RootLayout by design (§4) - it owns the whole
-          viewport. AdminShell is also the UI half of the guard; requireAdmin
-          enforces it server-side. */}
-      <Route
-        path="admin"
-        element={
-          <Suspense fallback={<RouteFallback />}>
-            <AdminShell />
-          </Suspense>
-        }
-      >
-        <Route index element={<AdminOverviewPage />} />
-        <Route path="clients" element={<AdminCustomersPage />} />
-        <Route path="clients/:id" element={<AdminClientProfilePage />} />
-        <Route path="clients/:id/edit" element={<AdminCustomerEditPage />} />
-        <Route path="orders" element={<AdminOrdersPage />} />
-        <Route path="inventory" element={<AdminProductsPage />} />
-        <Route path="inventory/:id" element={<AdminInventoryDetailPage />} />
-        <Route path="invoices" element={<AdminInvoicesPage />} />
-
-        {/* Purchase (phase 5). */}
-        <Route path="suppliers" element={<AdminSuppliersPage />} />
-        <Route path="suppliers/:id" element={<AdminSupplierProfilePage />} />
-        <Route path="supplier-returns" element={<AdminSupplierReturnsPage />} />
-        <Route path="supplier-services" element={<AdminSupplierServicesPage mode="service" />} />
-        <Route path="supplier-subscriptions" element={<AdminSupplierServicesPage mode="subscription" />} />
-        {/* Supplier bidding lives on the purchase order itself (§6.8a) - the
-            separate `/admin/rfqs` screens folded in on 2026-09-11, and
-            `ADMIN_LEGACY_REDIRECTS` forwards the old path. */}
-        <Route path="purchase-orders" element={<AdminPurchaseOrdersPage />} />
-        {/* Before `:id`, or the dynamic route matches "create" as an order id
-            and the page renders "purchase order not found". */}
-        <Route path="purchase-orders/create" element={<AdminPurchaseOrderCreatePage />} />
-        <Route path="purchase-orders/:id" element={<AdminPurchaseOrderDetailPage />} />
-        <Route path="expenses" element={<AdminExpensesPage />} />
-        {/* Categories live under Settings - the expense screen links there, and
-            the old `/admin/expenses/categories` path still redirects to it. */}
-        <Route path="settings/expense-categories" element={<AdminExpenseCategoriesPage />} />
-
-        {/* Reports (phase 6). `business` is registered ahead of the tabbed
-            screen so the literal path cannot be swallowed. */}
-        {/* Quotes & RMA (phase 7). */}
-        <Route path="quotes" element={<AdminQuotesPage />} />
-        {/* Enquiries from the storefront contact form, before anybody prices them. */}
-        <Route path="web-quotes" element={<AdminWebQuotesPage />} />
-        {/* The estimate builder. Declared BEFORE "quotes/:id" so "create"
-            is matched as a literal rather than swallowed as an id. */}
-        <Route path="quotes/create" element={<AdminServiceQuoteFormPage />} />
-        <Route path="quotes/:id/edit" element={<AdminServiceQuoteFormPage />} />
-        <Route path="quotes/:id" element={<AdminQuoteDetailPage />} />
-        {/* The labour price list the quote and ticket pickers read. */}
-        {/* Before the bare list route is irrelevant here (no `:id`), but kept
-            adjacent so the pair reads as one screen and its importer. */}
-        <Route path="services" element={<AdminServicesPage />} />
-        <Route path="services/import" element={<AdminServiceImportPage />} />
-        <Route path="rma" element={<AdminRmaPage />} />
-        <Route path="rma/:id" element={<AdminRmaDetailPage />} />
-
-        {/* Repair tickets. The detail screen DOES exist - see `tickets/:id`
-            below. The note that used to sit here said it did not, and two links
-            on the customer profile were still routing to `?q=<number>` to work
-            around that, which dropped the staff member on a filtered list instead
-            of the ticket they clicked. */}
-        <Route path="tickets" element={<AdminTicketsPage />} />
-        {/* Intake is a full screen, not a modal - see the page for why. */}
-        <Route path="tickets/new" element={<AdminTicketFormPage />} />
-        <Route path="tickets/:id/edit" element={<AdminTicketFormPage />} />
-        <Route path="tickets/:id" element={<AdminTicketDetailPage />} />
-
-        <Route path="reports/business" element={<AdminBusinessReportPage />} />
-        <Route path="reports" element={<AdminReportsPage />} />
-        <Route path="marketing/offers" element={<AdminOffersPage />} />
-        {/* `new` before `:id`, or the parameter swallows the literal and the
-            create screen opens as an edit for an offer called "new". */}
-        <Route path="marketing/offers/new" element={<AdminOfferFormPage />} />
-        <Route path="marketing/offers/:id" element={<AdminOfferFormPage />} />
-        <Route path="marketing/blog" element={<AdminBlogPage />} />
-        <Route path="marketing/faq" element={<AdminFaqPage />} />
-        <Route path="marketing/articles" element={<AdminProductArticlesPage />} />
-        <Route path="marketing/articles/:productId" element={<AdminProductArticleEditPage />} />
-        <Route path="marketing/reviews" element={<AdminReviewsPage />} />
-
-        {/* Marketing channels (phase 9). SMS, WhatsApp and Calls share one
-            component - same MessageLog, different channel. Only email sends
-            today; the other two log and say so (§6b U3–U5). */}
-        <Route path="marketing/sms" element={<AdminSmsPage />} />
-        <Route path="marketing/whatsapp" element={<AdminWhatsappPage />} />
-        <Route path="marketing/calls" element={<AdminCallsPage />} />
-        <Route path="marketing/email" element={<AdminEmailPage />} />
-        {/* Referral commission (phase 10). Admin-only server-side - this pays
-            real money on an automatic trigger (§6.13). */}
-        <Route path="marketing/referrals" element={<AdminReferralsPage />} />
-
-        {/* Business, staff & roles (phase 8). `add` and `:id/edit` share one
-            form component - the same fields with a different verb. */}
-        <Route path="businesses" element={<AdminBusinessesPage />} />
-        <Route path="businesses/add" element={<AdminBusinessFormPage />} />
-        <Route path="businesses/:id/edit" element={<AdminBusinessFormPage />} />
-        <Route path="businesses/:id" element={<AdminBusinessDetailPage />} />
-        <Route path="settings/users" element={<AdminUsersPage />} />
-        <Route path="settings/roles" element={<AdminRolesPage />} />
-
-        {/* Settings - the summary and every category landing are one screen,
-            separated by `?cat=`, so they share a route (§6.15). */}
-        <Route path="settings" element={<AdminSettingsPage />} />
-        <Route path="settings/business-info" element={<AdminBusinessInfoPage />} />
-        <Route path="settings/sale" element={<AdminSaleSettingsPage />} />
-        <Route path="settings/shipping" element={<AdminShippingSettingsPage />} />
-        <Route path="settings/payment-methods" element={<AdminPaymentMethodsPage />} />
-        <Route path="settings/inventory" element={<AdminInventorySettingsPage />} />
-        <Route path="settings/agreements" element={<AdminAgreementsPage />} />
-        <Route path="settings/activity-log" element={<AdminActivityLogPage />} />
-        {/* The tenant's line to the platform. No feature gate: reaching us is
-            not a capability a tenant buys (SAAS_PLATFORM §4.5). */}
-        <Route path="support" element={<AdminSupportPage />} />
-        <Route path="settings/security-log" element={<AdminSecurityLogPage />} />
-        <Route path="settings/api-keys" element={<AdminApiKeysPage />} />
-        <Route path="settings/third-party" element={<AdminThirdPartyPage />} />
-        {/* Reference data a staff member sets up once, so it sits beside the parts
-            taxonomy in Settings rather than in the daily Sales list. */}
-        <Route path="settings/devices" element={<AdminDevicesPage />} />
-        <Route path="settings/kiosk" element={<AdminKioskSettingsPage />} />
-        <Route path="settings/taxonomy" element={<AdminTaxonomyPage />} />
-        <Route path="settings/taxonomy/add" element={<AdminTaxonomyAddPage />} />
-        <Route path="settings/taxonomy/import" element={<AdminTaxonomyImportPage />} />
-        <Route path="settings/invoice-labels" element={<AdminInvoiceLabelsPage />} />
-        <Route path="settings/email" element={<AdminEmailSettingsPage />} />
-        <Route path="settings/templates" element={<AdminTemplatesPage />} />
-        <Route path="settings/calendar" element={<AdminCalendarPage />} />
-        <Route path="settings/appointments" element={<AdminAppointmentsPage />} />
-        <Route path="profile" element={<AdminProfilePage />} />
-        <Route path="orders/:orderNumber" element={<AdminOrderDetailPage />} />
-        {/* Declared before ":number" so "create" is matched as a literal
-            rather than read as an invoice number. */}
-        <Route path="invoices/create" element={<AdminServiceInvoiceFormPage />} />
-        {/* The same form as "create", with the record loaded - see the note on
-            the component. A distinct path rather than a flag, so the edit
-            screen is linkable and Back behaves. */}
-        <Route path="invoices/:number/edit" element={<AdminServiceInvoiceFormPage />} />
-        <Route path="invoices/:number" element={<AdminInvoiceDetailPage />} />
-
-        {/* Approvals is the Clients screen filtered, and keeps its own screen
-            until phase 2 folds it in as a status filter. */}
-        <Route path="approvals" element={<AdminApprovalsPage />} />
-
-
-        {/* Old flat-admin URLs stay alive as redirects rather than 404s (§4). */}
-        <Route path="products" element={<Navigate to="/admin/inventory" replace />} />
-        <Route path="customers" element={<Navigate to="/admin/clients" replace />} />
-        <Route path="offers" element={<Navigate to="/admin/marketing/offers" replace />} />
-        <Route path="blog" element={<Navigate to="/admin/marketing/blog" replace />} />
-        <Route path="faqs" element={<Navigate to="/admin/marketing/faq" replace />} />
-        <Route
-          path="expenses/categories"
-          element={<Navigate to="/admin/settings/expense-categories" replace />}
-        />
-        {/* Invoice messages became a tab on Invoice statuses (2026-09-21). */}
-        <Route
-          path="settings/invoice-status"
-          element={<Navigate to="/admin/settings/invoice-labels" replace />}
-        />
-
-        <Route path="*" element={<Navigate to="/admin" replace />} />
-      </Route>
+      {/* The ERP panel - see `adminRoutes`. On a storefront host it lives on
+          the admin host instead, so the path forwards there. */}
+      {surface === 'storefront' && panelHost ? (
+        <Route path="admin/*" element={<GoToPanel />} />
+      ) : (
+        adminRoutes
+      )}
 
       {/* Outside RootLayout on purpose (§6.13): a person following the
           unsubscribe link from an email is opting out, and meeting them with
@@ -394,53 +475,22 @@ export function App() {
         }
       />
 
-      {/* The platform console (SAAS_PLATFORM §4.5). A third application on a
-          third session - outside RootLayout and outside AdminShell, because a
-          super admin belongs to neither population and must not carry either
-          one's chrome.
+      {/* The super admin panel - see `superAdminRoutes`. Once it has a host of
+          its own, the path forwards there from every other named host. */}
+      {surface === 'storefront' && superAdminHost ? (
+        <Route path="superadmin/*" element={<GoToHost to="superadmin" />} />
+      ) : (
+        superAdminRoutes
+      )}
 
-          `/superadmin` is the path form. `admin.<domain>` is the intended
-          production host and resolves to the same routes; the path stays so the
-          console is reachable in development without a DNS entry or an
-          `/etc/hosts` edit. */}
-      <Route
-        path="superadmin"
-        element={
-          <Suspense fallback={<RouteFallback />}>
-            <SuperAdminLayout />
-          </Suspense>
-        }
-      >
-        <Route index element={<SuperAdminTenantsPage />} />
-        <Route path="plans" element={<SuperAdminPlansPage />} />
-        <Route path="support" element={<SuperAdminSupportPage />} />
-        <Route path="*" element={<Navigate to="/superadmin" replace />} />
-      </Route>
-
-      {/* The supplier portal (§6.8a). Outside RootLayout for the same reason
-          the admin panel is: a supplier is not a customer, and the shop header,
-          mega menu, cart and price gate all belong to a buyer's session. Its
-          own layout handles the signed-out case by rendering sign-in in place,
-          so an emailed request link survives the login. */}
-      <Route
-        path="supplier"
-        element={
-          <Suspense fallback={<RouteFallback />}>
-            <SupplierPortalLayout />
-          </Suspense>
-        }
-      >
-        <Route index element={<SupplierDashboardPage />} />
-        {/* `orders` before `orders/:id`, or the dynamic route matches the list
-            path as an id and the page renders "order not found". */}
-        <Route path="orders" element={<SupplierOrdersPage />} />
-        <Route path="orders/:id" element={<SupplierPurchaseOrderPage />} />
-        <Route path="proformas" element={<SupplierProformasPage />} />
-        <Route path="deliveries" element={<SupplierDeliveriesPage />} />
-        <Route path="agreement" element={<SupplierAgreementPage />} />
-        <Route path="profile" element={<SupplierProfilePage />} />
-        <Route path="*" element={<Navigate to="/supplier" replace />} />
-      </Route>
+      {/* The supplier portal - see `supplierRoutes`. It belongs to the admin
+          host once there is one, so the path forwards there. */}
+      {surface === 'storefront' && panelHost ? (
+        <Route path="supplier/*" element={<GoToPanel />} />
+      ) : (
+        supplierRoutes
+      )}
+      {surface === 'storefront' && panelHost ? null : supplierResetRoute}
 
       <Route element={<RootLayout />}>
         {/* '/' is the homepage, EXCEPT when it carries catalogue parameters -
@@ -605,6 +655,131 @@ export function App() {
         />
       </Route>
     </Routes>
+  );
+}
+
+/**
+ * The admin host (`PANEL_HOST`): the panel and the door in. The super admin is here
+ * only until it has a host of its own (`SUPERADMIN_HOST`).
+ *
+ * Nothing of a storefront is here. The shop, the account area, the supplier
+ * portal and the kiosk all belong to a business, and this host belongs to none -
+ * a path meant for one of them is sent to the sign-in page rather than served
+ * against whichever business happened to be the default.
+ */
+function PanelRoutes() {
+  return (
+    <Routes>
+      {adminRoutes}
+      {supplierRoutes}
+      {supplierResetRoute}
+      {/* The super admin lives on its own host once it has one - never here, on
+          the host every tenant's staff sign in on. */}
+      {superAdminHost ? (
+        <Route path="superadmin/*" element={<GoToHost to="superadmin" />} />
+      ) : (
+        superAdminRoutes
+      )}
+
+      {/* The link in a staff password-reset email lands here. */}
+      <Route
+        path="reset-password"
+        element={
+          <Suspense fallback={<RouteFallback />}>
+            <ResetPasswordPage />
+          </Suspense>
+        }
+      />
+
+      <Route
+        index
+        element={
+          <Suspense fallback={<RouteFallback />}>
+            <PanelSignInPage />
+          </Suspense>
+        }
+      />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
+/**
+ * The super admin host (`SUPERADMIN_HOST`): the super admin panel and nothing else.
+ *
+ * Kelinto's own operations live apart from every tenant's - no panel, no
+ * storefront, no sign-in for anybody but an operator - so anything else asked
+ * of this host lands on the super admin, which signs its own people in.
+ */
+function SuperAdminRoutes() {
+  return (
+    <Routes>
+      {superAdminRoutes}
+      <Route path="*" element={<Navigate to="/superadmin" replace />} />
+    </Routes>
+  );
+}
+
+/**
+ * The bare platform domain: Kelinto's front page.
+ *
+ * The panel and the supplier portal live on the admin host and the super admin on
+ * its own, so their paths forward there rather than 404ing - an old bookmark to
+ * `kelinto.com/admin` still reaches the panel. Anything else is the front page.
+ */
+function PlatformRoutes() {
+  return (
+    <Routes>
+      <Route
+        index
+        element={
+          <Suspense fallback={<RouteFallback />}>
+            <PlatformLandingPage />
+          </Suspense>
+        }
+      />
+      {panelHost && <Route path="admin/*" element={<GoToPanel />} />}
+      {panelHost && <Route path="supplier/*" element={<GoToPanel />} />}
+      {superAdminHost && <Route path="superadmin/*" element={<GoToHost to="superadmin" />} />}
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
+export function App() {
+  /**
+   * The panel's accent, from the moment the app starts.
+   *
+   * `RouteProgress` below is mounted outside `<Routes>`, so on a reload it
+   * draws before `AdminShell` exists to declare which business is on screen.
+   * Without this it fell back to the Cellvix ramp baked into the gradient
+   * utility, and a CellShoppe admin saw a red bar on every page load. See
+   * `hooks/useEarlyBusinessTheme.js`.
+   */
+  useEarlyBusinessTheme();
+
+  return (
+    <>
+      {/* Mounted once, outside the routes: a toast outlives the screen that
+          raised it - an email sent from an invoice should still confirm after
+          the staff member has navigated on. */}
+      <Toaster />
+
+      {/* Same reasoning, and the same place: one bar for the whole app rather
+          than one per shell. It reports every in-flight request, so a route
+          change, a filter and a background refetch all say so the same way. */}
+      <RouteProgress />
+
+      {/* Which set is decided by the host, once (`lib/surface.js`). */}
+      {surface === 'platform' ? (
+        <PlatformRoutes />
+      ) : surface === 'superadmin' ? (
+        <SuperAdminRoutes />
+      ) : surface === 'panel' ? (
+        <PanelRoutes />
+      ) : (
+        <SiteRoutes />
+      )}
     </>
   );
 }

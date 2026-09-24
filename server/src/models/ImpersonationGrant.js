@@ -88,6 +88,17 @@ const impersonationGrantSchema = new mongoose.Schema(
 
     ip: { type: String, default: '' },
     userAgent: { type: String, default: '' },
+
+    /**
+     * The one handoff this grant may still be claimed with, when the console
+     * and the panel are on different hosts.
+     *
+     * A cookie set on the console's host is never sent to the panel's, so
+     * stepping in mints a short-lived token and the panel host claims it. The
+     * id is stored here and cleared atomically on the claim, which is what
+     * makes the link single-use: replaying it finds nothing to match.
+     */
+    handoffJti: { type: String, default: null },
   },
   { timestamps: true },
 );

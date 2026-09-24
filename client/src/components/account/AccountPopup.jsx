@@ -230,6 +230,15 @@ function SignInTab({ onDone }) {
   const [pendingNotice, setPendingNotice] = useState(false);
   const [forgot, setForgot] = useState(false);
 
+  /**
+   * One address, panel accounts at several businesses, and the password opened
+   * more than one of them. The server answers with the businesses it opened -
+   * only those - and the person picks. Held with the credentials that produced
+   * it, so picking re-sends exactly what was typed rather than asking again.
+   */
+  const [choice, setChoice] = useState(null);
+  const [choosing, setChoosing] = useState(null);
+
   const {
     register,
     handleSubmit,
@@ -248,14 +257,78 @@ function SignInTab({ onDone }) {
         return;
       }
       onDone?.();
-      // Staff belong in the admin console, not the shop's buyer dashboard.
-      if (user.role === 'admin') navigate('/admin');
+      // Staff belong in the admin console, not the shop's buyer dashboard -
+      // and a staff member found through the login directory has just signed
+      // in to a different business from the storefront they are standing on.
+      if (['admin', 'staff'].includes(user.role)) navigate('/admin');
     } catch (error) {
+      if (error.code === 'BUSINESS_CHOICE_REQUIRED' && error.fields?.choices?.length) {
+        setChoice({ values, choices: error.fields.choices });
+        return;
+      }
       setFormError(error.message);
     }
   }
 
+  async function pick(business) {
+    setChoosing(business.id);
+    try {
+      await onSubmit({ ...choice.values, business: business.id });
+    } finally {
+      setChoosing(null);
+    }
+  }
+
   if (forgot) return <ForgotPasswordView onBack={() => setForgot(false)} />;
+
+  if (choice) {
+    return (
+      <div className="space-y-4">
+        <div>
+          <h3 className="text-xl">Which business are you signing in to?</h3>
+          <p className="mt-2 text-md leading-relaxed text-ink-500">
+            {choice.values.email} has an account at each of these. Pick one - you can sign out and
+            choose the other later.
+          </p>
+        </div>
+
+        {formError && (
+          <p className="flex items-start gap-2 rounded-md bg-danger-50 px-3 py-2.5 text-sm text-danger">
+            <AlertCircle className="mt-0.5 size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+            {formError}
+          </p>
+        )}
+
+        <ul className="space-y-2">
+          {choice.choices.map((business) => (
+            <li key={business.id}>
+              <Button
+                variant="outline"
+                size="lg"
+                fullWidth
+                loading={choosing === business.id}
+                disabled={Boolean(choosing) && choosing !== business.id}
+                onClick={() => pick(business)}
+              >
+                {business.name}
+              </Button>
+            </li>
+          ))}
+        </ul>
+
+        <button
+          type="button"
+          onClick={() => {
+            setChoice(null);
+            setFormError(null);
+          }}
+          className={cn(pressable, 'rounded text-sm font-medium text-brand hover:text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-900/15')}
+        >
+          Use a different email
+        </button>
+      </div>
+    );
+  }
 
   if (pendingNotice) {
     return (
@@ -1106,5 +1179,9 @@ export function AccountPopup() {
     </Modal>
   );
 }
+
+// The sign-in form alone, for the admin host's own sign-in page - one form, so
+// the business chooser and the pending-account answer cannot drift apart.
+export { SignInTab };
 
 export default AccountPopup;

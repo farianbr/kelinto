@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Link } from 'react-router';
 import { Eye, EyeOff, ExternalLink, Search, Star } from 'lucide-react';
 import cn from '@/lib/cn';
 import { pressable } from '@/lib/motion';
@@ -15,6 +14,7 @@ import Skeleton from '@/components/ui/Skeleton';
 import useTablePage from '@/hooks/useTablePage';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { useAdminReviews, useAdminMutations } from '@/hooks/useAdmin';
+import { useStorefrontUrl } from '@/hooks/useStorefrontUrl';
 
 const PAGE_ICON = adminIcon('Star');
 
@@ -43,6 +43,7 @@ const FILTERS = [
  * let the text be the row.
  */
 export function AdminReviewsPage() {
+  const storefrontUrl = useStorefrontUrl();
   const [q, setQ] = useState('');
   const [hidden, setHidden] = useState('');
   const [acting, setActing] = useState(null);
@@ -147,15 +148,15 @@ export function AdminReviewsPage() {
 
                       <p className="mt-1 text-sm text-ink-400">
                         {review.productSlug ? (
-                          <Link
-                            to={`/product/${review.productSlug}`}
+                          <a
+                            href={storefrontUrl(`/product/${review.productSlug}`)}
                             target="_blank"
                             rel="noreferrer"
                             className={cn(pressable, 'inline-flex items-center gap-1 hover:text-brand')}
                           >
                             {review.productName}
                             <ExternalLink className="size-3" strokeWidth={2} aria-hidden="true" />
-                          </Link>
+                          </a>
                         ) : (
                           review.productName
                         )}

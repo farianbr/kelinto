@@ -3,6 +3,7 @@ import { asyncHandler } from '../utils/ApiError.js';
 import * as supplierPortalService from '../services/supplierPortalService.js';
 import * as purchaseBidService from '../services/purchaseBidService.js';
 import Business from '../models/Business.js';
+import { surfaceFor } from '../utils/surface.js';
 import { DEFAULT_BUSINESS_COLOR, migrateColorToken } from '../../../shared/businessPalette.js';
 
 /**
@@ -39,16 +40,52 @@ const logout = asyncHandler(async (req, res) => {
  * or out, which is what lets the sign-in page carry it.
  */
 const me = asyncHandler(async (req, res) => {
-  const business = req.businessScope
+  // Signed in: the account, the business it is working in, and the rest of
+  // its businesses and invitations - everything the shell and its switcher show.
+  if (req.supplierAccount) {
+    res.json(
+      await supplierPortalService.portalState(req.supplierAccount, req.supplier, req.businessScope),
+    );
+    return;
+  }
+
+  /**
+   * Signed out. On a business's own host the sign-in page names that business,
+   * as it always has. On the shared admin host there is no business to name -
+   * every business's suppliers sign in there - and naming the default one would
+   * be the wrong company asking for a password.
+   */
+  const named = surfaceFor(req.get('host')) !== 'panel' && req.businessScope;
+  const business = named
     ? await Business.findById(req.businessScope).select('name colorToken').lean()
     : null;
 
   res.json({
-    supplier: req.supplier ? supplierPortalService.shapePortalSupplier(req.supplier) : null,
+    account: null,
+    supplier: null,
     business: business
-      ? { name: business.name, colorToken: migrateColorToken(business.colorToken) }
-      : { name: null, colorToken: DEFAULT_BUSINESS_COLOR },
+      ? { id: null, name: business.name, colorToken: migrateColorToken(business.colorToken) }
+      : { id: null, name: null, colorToken: DEFAULT_BUSINESS_COLOR },
+    businesses: [],
+    invitations: [],
   });
+});
+
+/** Work inside another business the account is active with. */
+const switchBusiness = asyncHandler(async (req, res) => {
+  res.json(await supplierPortalService.switchBusiness(req.supplierAccount, req.body.business, res));
+});
+
+const acceptInvitation = asyncHandler(async (req, res) => {
+  res.json(
+    await supplierPortalService.respondToInvitation(req.supplierAccount, req.params.business, true, res),
+  );
+});
+
+const declineInvitation = asyncHandler(async (req, res) => {
+  res.json(
+    await supplierPortalService.respondToInvitation(req.supplierAccount, req.params.business, false, res),
+  );
 });
 
 const forgotPassword = asyncHandler(async (req, res) => {
@@ -60,7 +97,8 @@ const resetPassword = asyncHandler(async (req, res) => {
 });
 
 const changePassword = asyncHandler(async (req, res) => {
-  res.json(await supplierPortalService.changePassword(req.supplier._id, req.body));
+  // The account's password - one login across every business it supplies.
+  res.json(await supplierPortalService.changePassword(req.supplierAccount._id, req.body));
 });
 
 // ---- purchase orders this supplier was asked to price ----------------------
@@ -116,7 +154,10 @@ const proformaDocument = asyncHandler(async (req, res) => {
 });
 
 export {
+  acceptInvitation,
   changePassword,
+  declineInvitation,
+  switchBusiness,
   declineQuote,
   forgotPassword,
   getOrder,

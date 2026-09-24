@@ -4,6 +4,7 @@ import { ShieldAlert } from 'lucide-react';
 import cn from '@/lib/cn';
 import { pressable } from '@/lib/motion';
 import { useSuperAdminMutations } from '@/hooks/useSuperAdmin';
+import { superAdminUrl } from '@/lib/surface';
 
 /**
  * "You are inside somebody else's business" (SAAS_PLATFORM §4.5).
@@ -61,8 +62,9 @@ export function ImpersonationBanner({ impersonation }) {
       // A full reload rather than a route change: leaving invalidates the
       // session every open query was fetched under, and the cleanest way to be
       // certain nothing cached under the grant survives is to start again.
+      // Back to the super admin panel, on its own host when it has one.
       onSuccess: () => {
-        window.location.assign('/superadmin');
+        window.location.assign(superAdminUrl('/superadmin'));
       },
     });
 

@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,6 +20,7 @@ import { resolveBusiness } from './middleware/resolveBusiness.js';
 import { enforceTenantStatus } from './middleware/tenantStatus.js';
 import { openBusinessDb } from './middleware/businessDb.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
+import { superAdminHostOnly, injectSurface, surfaceInfo } from './utils/surface.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST = path.resolve(here, '..', '..', 'client', 'dist');
@@ -96,6 +98,12 @@ function createApp() {
    * further down and remains the one place that decides a staff member cannot
    * widen their own scope.
    */
+  // Development only: which app this host is, for the page Vite serves (see
+  // utils/surface.js). Ahead of business resolution because it needs none.
+  if (!env.isProd) {
+    app.get('/api/dev/surface', (req, res) => res.json(surfaceInfo(req.get('host'))));
+  }
+
   app.use(resolveBusiness);
 
   /**
@@ -187,6 +195,8 @@ function createApp() {
    */
   app.use(enforceTenantStatus);
 
+  // The super admin API answers on its own host only, once one is set.
+  app.use('/api/superadmin', superAdminHostOnly);
   app.use('/api', routes);
 
   /**
@@ -204,11 +214,27 @@ function createApp() {
     // cached, it would pin browsers to the previous deploy's asset names.
     app.use(express.static(CLIENT_DIST, { maxAge: '1y', index: false }));
 
+    /**
+     * The shell, read once. It changes only on a deploy, and a deploy restarts
+     * the process - so reading it per request would be a disk read per page
+     * load to learn nothing new.
+     */
+    const shell = fs.readFileSync(path.join(CLIENT_DIST, 'index.html'), 'utf8');
+
     app.get('*', (req, res, next) => {
       // An unknown /api path is a client error, not a page. Let it fall through
       // to notFoundHandler and answer JSON rather than the SPA shell.
       if (req.path.startsWith('/api/')) return next();
-      res.sendFile(path.join(CLIENT_DIST, 'index.html'));
+
+      /**
+       * The same file on every host, told which application to be
+       * (`utils/surface.js`). It now differs by host, so it must never be
+       * stored by anything between us and the browser under a key that
+       * ignores the host - `no-cache` plus `Vary: Host` says both.
+       */
+      res.set('Cache-Control', 'no-cache');
+      res.vary('Host');
+      res.type('html').send(injectSurface(shell, req.get('host')));
     });
   }
 

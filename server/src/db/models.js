@@ -41,6 +41,12 @@ const CONTROL_MODELS = new Set([
   // must stay readable while the tenant is suspended - which is exactly when
   // they most need to reach us.
   'SupportThread',
+  // Which business database holds each panel account, so the shared admin
+  // login can find staff whose business the host no longer names.
+  'LoginEntry',
+  // A supplier's one login across every business it supplies; each business
+  // keeps its own `Supplier` record for the relationship.
+  'SupplierAccount',
 ]);
 
 /** `connection -> { modelName: Model }`, so a schema is compiled once per database. */

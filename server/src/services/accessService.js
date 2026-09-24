@@ -35,6 +35,9 @@ import {
 } from '../../../shared/businessPalette.js';
 import { forgetBusinessConfig } from '../middleware/businessConfigCache.js';
 import { resetBusinessResolution } from '../middleware/resolveBusiness.js';
+import { forgetAccount, recordAccount } from './loginDirectory.js';
+import env from '../config/env.js';
+import { businessSlugProblem } from '../../../shared/hosts.js';
 
 /**
  * Businesses, roles and staff accounts (ERP rework §6.14, §6.15/3, §7.6 - phase 8).
@@ -246,7 +249,21 @@ async function nextBusinessCode() {
   return `#${String(current + 1).padStart(6, '0')}`;
 }
 
-async function listBusinesses({ search, status } = {}) {
+/**
+ * The businesses one account may see.
+ *
+ * **Scoped to the caller's tenant**, which is the same boundary
+ * `middleware/businessScope.js` enforces on `?business=`. The two have to
+ * agree: a switcher offering a business that the scope gate then refuses with a
+ * 404 is a control that produces an error, which reads as a broken panel rather
+ * than as a permission.
+ *
+ * `tenant` is `null` for an account that predates the control plane, and
+ * every business with no tenant is tenant #1's by the same history - so the
+ * pairing is exact rather than permissive, and an existing single-tenant
+ * installation lists exactly what it always did.
+ */
+async function listBusinesses({ search, status } = {}, { tenant = null } = {}) {
   /**
    * A deleted business is gone from the tenant's point of view.
    *
@@ -257,7 +274,7 @@ async function listBusinesses({ search, status } = {}) {
    * super-admin console reads `Business` directly and still sees it, which is
    * where a restore is performed.
    */
-  const filter = { deletedAt: null };
+  const filter = { deletedAt: null, tenant: tenant ? tenant : null };
   if (status && status !== 'all') filter.status = status;
   if (search) {
     const rx = likeRegex(search);
@@ -266,9 +283,21 @@ async function listBusinesses({ search, status } = {}) {
 
   const businesses = await Business.find(filter).sort({ isDefault: -1, name: 1 }).lean();
 
-  // The summary strip. Counted across every business, not the filtered set - a
-  // total that moves when you type in the search box is not a total.
-  const all = await Business.find().select('status').lean();
+  /**
+   * The summary strip.
+   *
+   * Counted across the tenant's businesses rather than the filtered set - a
+   * total that moves when you type in the search box is not a total - but
+   * within the tenant, because a count including businesses the account cannot
+   * open does not describe anything it can act on.
+   *
+   * `deletedAt: null` matches the list for the same reason the list carries
+   * it: a soft-deleted business is gone from the tenant's point of view, so
+   * counting it would make the strip disagree with the rows beneath it.
+   */
+  const all = await Business.find({ deletedAt: null, tenant: tenant ? tenant : null })
+    .select('status')
+    .lean();
   const summary = {
     total: all.length,
     active: all.filter((o) => o.status === 'active').length,
@@ -293,10 +322,20 @@ async function listBusinesses({ search, status } = {}) {
   };
 }
 
-async function getBusiness(id) {
+/**
+ * One business, if the caller's tenant owns it.
+ *
+ * **The same 404 for "no such business" and "not yours."** Distinguishing them
+ * would confirm that another tenant's business exists, which is the oracle
+ * `businessScope` refuses to be for exactly the same reason.
+ */
+async function getBusiness(id, { tenant = null } = {}) {
   if (!mongoose.isValidObjectId(id)) throw ApiError.notFound('Business not found.');
   const business = await Business.findById(id).lean();
   if (!business) throw ApiError.notFound('Business not found.');
+
+  const owner = business.tenant ? String(business.tenant) : null;
+  if (owner !== (tenant ? String(tenant) : null)) throw ApiError.notFound('Business not found.');
 
   const staff = await db().User.find({ business: id, role: 'staff' })
     .select('contactName email staffRole lockedAt')
@@ -308,7 +347,81 @@ async function getBusiness(id) {
     id: String(business._id),
     colorToken: migrateColorToken(business.colorToken),
     staff,
+    // What a slug becomes, for showing `cellshoppe.kelinto.com` rather than a
+    // bare label. Null when the server has no wildcard domain configured.
+    storefrontDomain: env.storefrontDomain,
   };
+}
+
+/**
+ * Ask for a web address. The platform approves it (`superAdminService`).
+ *
+ * **A request, never the address itself.** Where a business answers is printed
+ * on receipts and decides which catalogue a stranger's browser opens, so it is
+ * the platform's to grant - the tenant proposes, a super admin decides.
+ *
+ * Refused up front for everything the approval would refuse anyway: a reserved
+ * or malformed label, one that is already some business's live address, and
+ * one another business is already waiting on. First to ask is first in line;
+ * a second business asking for the same word would only ever be rejected.
+ */
+async function requestAddress(id, { slug }, { tenant = null, actor = '' } = {}) {
+  const business = await ownedBusiness(id, tenant);
+  const wanted = String(slug ?? '').trim().toLowerCase();
+
+  const problem = businessSlugProblem(wanted);
+  if (problem) throw ApiError.badRequest(problem, 'BUSINESS_SLUG_INVALID', { slug: problem });
+
+  if (business.slug === wanted) {
+    throw ApiError.badRequest(`${wanted} is already this business's address.`, 'BUSINESS_SLUG_CURRENT');
+  }
+
+  const clash = await Business.findOne({
+    _id: { $ne: business._id },
+    $or: [{ slug: wanted }, { 'addressRequest.slug': wanted, 'addressRequest.status': 'pending' }],
+  })
+    .select('_id')
+    .lean();
+  if (clash) {
+    // Deliberately not naming the other business: it may belong to another
+    // tenant, and this is a tenant's screen.
+    throw ApiError.conflict(`"${wanted}" is taken. Choose another.`, 'BUSINESS_SLUG_TAKEN');
+  }
+
+  await Business.updateOne(
+    { _id: business._id },
+    {
+      $set: {
+        addressRequest: {
+          slug: wanted,
+          status: 'pending',
+          requestedAt: new Date(),
+          requestedBy: actor,
+          decidedAt: null,
+          note: '',
+        },
+      },
+    },
+  );
+  return getBusiness(business._id, { tenant });
+}
+
+/** Withdraw a request, pending or rejected. The live address is untouched. */
+async function cancelAddressRequest(id, { tenant = null } = {}) {
+  const business = await ownedBusiness(id, tenant);
+  await Business.updateOne({ _id: business._id }, { $set: { addressRequest: null } });
+  return getBusiness(business._id, { tenant });
+}
+
+/** The business, if the caller's tenant owns it; the same 404 as `getBusiness` otherwise. */
+async function ownedBusiness(id, tenant) {
+  if (!mongoose.isValidObjectId(id)) throw ApiError.notFound('Business not found.');
+  const business = await Business.findById(id).select('slug tenant deletedAt').lean();
+  const owner = business?.tenant ? String(business.tenant) : null;
+  if (!business || business.deletedAt || owner !== (tenant ? String(tenant) : null)) {
+    throw ApiError.notFound('Business not found.');
+  }
+  return business;
 }
 
 async function createBusiness(payload) {
@@ -651,6 +764,9 @@ async function createStaff(payload) {
 
   if (business) await Business.updateOne({ _id: business }, { $addToSet: { staff: user._id } });
 
+  // So the shared admin login can find them - see `services/loginDirectory.js`.
+  await recordAccount(user);
+
   return staffRow(
     await db().User.findById(user._id)
       .populate('staffRole', 'name slug')
@@ -709,6 +825,11 @@ async function updateStaff(id, payload, actorId) {
 
   await user.save();
 
+  // The account type may have changed, which decides whether it signs in to the
+  // panel at all. Locking does not remove the entry: a locked account is still
+  // found, and refused at the door with the message that says why.
+  await recordAccount(user);
+
   // Keep `Business.staff` - the reverse index the business card reads - honest.
   const nextBusiness = user.business ? String(user.business) : null;
   if (previousBusiness !== nextBusiness) {
@@ -752,6 +873,7 @@ async function deleteStaff(id, actorId) {
 
   if (user.business) await Business.updateOne({ _id: user.business }, { $pull: { staff: user._id } });
   await user.deleteOne();
+  await forgetAccount(user);
   return { deleted: true };
 }
 
@@ -800,6 +922,8 @@ export default {
   getStaffSnapshot,
   nextBusinessCode,
   listBusinesses,
+  requestAddress,
+  cancelAddressRequest,
   getBusiness,
   createBusiness,
   updateBusiness,
@@ -815,4 +939,4 @@ export default {
   deleteStaff,
 };
 
-export { ensureBuiltInRoles, ensureDefaultBusiness, nextBusinessCode, listBusinesses, getBusiness, createBusiness, updateBusiness, setDefaultBusiness, deleteBusiness, listRoles, createRole, updateRole, deleteRole, listStaff, createStaff, updateStaff, deleteStaff, getRoleSnapshot, getStaffSnapshot };
+export { ensureBuiltInRoles, ensureDefaultBusiness, nextBusinessCode, listBusinesses, getBusiness, requestAddress, cancelAddressRequest, createBusiness, updateBusiness, setDefaultBusiness, deleteBusiness, listRoles, createRole, updateRole, deleteRole, listStaff, createStaff, updateStaff, deleteStaff, getRoleSnapshot, getStaffSnapshot };

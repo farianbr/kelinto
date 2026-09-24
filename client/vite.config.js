@@ -37,9 +37,14 @@ export default defineConfig({
     port: 5173,
     proxy: {
       // Same-origin in dev so the httpOnly auth cookie is sent without CORS credentials games.
+      //
+      // `changeOrigin: false` passes the browser's Host through untouched. The
+      // server decides which business a request is for FROM that header, so
+      // rewriting it to localhost:4000 made `cellshoppe.localhost:5173` look like
+      // plain localhost and every local subdomain resolve to the default business.
       '/api': {
         target: 'http://localhost:4000',
-        changeOrigin: true,
+        changeOrigin: false,
       },
     },
   },
@@ -57,7 +62,8 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://localhost:4000',
-        changeOrigin: true,
+        // The same as dev above: the server reads the business from the Host.
+        changeOrigin: false,
       },
     },
   },

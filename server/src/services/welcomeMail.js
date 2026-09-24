@@ -3,6 +3,7 @@ import env from '../config/env.js';
 import { sendMail } from './mailer.js';
 import { sendingBusiness } from './sendingBusiness.js';
 import { displayNameOf } from '../utils/displayName.js';
+import { storefrontOrigin } from './linkOrigins.js';
 
 /**
  * The welcome email, for both ways an account comes into being.
@@ -316,7 +317,8 @@ async function sendWelcomeEmail({ user, password = null }) {
   if (!user?.email) return { delivered: false, via: null, error: 'No email address on file.' };
 
   try {
-    const origin = env.publicOrigin;
+    // A customer's welcome: their business's storefront (see `linkOrigins`).
+    const origin = await storefrontOrigin();
     const approved = user.status === 'approved';
     /**
      * The business the account was opened with, not the house brand.
@@ -359,14 +361,19 @@ async function sendWelcomeEmail({ user, password = null }) {
  * reset link that arrived unrequested is how somebody learns an attacker has
  * their address.
  */
-async function sendPasswordResetEmail({ user, token, origin, expiresMinutes = 60 }) {
+async function sendPasswordResetEmail({ user, token, origin, business = null, expiresMinutes = 60 }) {
   if (!user?.email || !token) {
     return { delivered: false, via: null, error: 'No email address or token.' };
   }
 
   try {
     const base = origin || env.publicOrigin;
-    const link = `${base}/reset-password?token=${encodeURIComponent(token)}`;
+    // `business` names the database holding the account. The reset page sends
+    // it back so the token is looked up where its hash actually lives - on the
+    // shared admin host that is rarely the business the host resolves to.
+    const link =
+      `${base}/reset-password?token=${encodeURIComponent(token)}` +
+      (business ? `&business=${encodeURIComponent(business)}` : '');
     // The business whose account this password opens - see `sendWelcomeEmail`.
     const business = await sendingBusiness();
 

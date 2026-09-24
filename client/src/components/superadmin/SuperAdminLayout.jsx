@@ -134,11 +134,10 @@ export function SuperAdminLayout() {
           </span>
           <span className="min-w-0">
             <span className="block text-sm font-semibold leading-tight tracking-[-0.01em]">
-              Platform
+              Kelinto
             </span>
-            {/* The platform has no name yet (§0.1). Saying "console" rather than
-                inventing one keeps the placeholder honest. */}
-            <span className="block text-xs leading-tight text-plat-dim">Operator console</span>
+            {/* The platform is Kelinto; this is the panel that runs it. */}
+            <span className="block text-xs leading-tight text-plat-dim">Super admin</span>
           </span>
         </div>
 
@@ -226,7 +225,7 @@ export function SuperAdminLayout() {
               than no strip: it reads as a component that failed to load. */}
           <span className="hidden min-w-0 flex-1 md:block">
             <span className="block text-sm font-medium leading-tight text-plat-text">
-              {current?.label ?? 'Platform'}
+              {current?.label ?? 'Super admin'}
             </span>
             <span className="block truncate text-xs leading-tight text-plat-dim">
               {current?.hint ?? 'Every tenant on the platform'}

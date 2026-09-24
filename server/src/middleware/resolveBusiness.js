@@ -1,4 +1,8 @@
+import jwt from 'jsonwebtoken';
 import Business from '../models/Business.js';
+import env from '../config/env.js';
+import { isReservedSubdomain } from '../../../shared/hosts.js';
+import { businessConfig } from './businessConfigCache.js';
 
 /**
  * Which business this request is for, decided before anybody signs in
@@ -19,6 +23,9 @@ import Business from '../models/Business.js';
  * 2. **`X-Business` header.** Development and internal tooling. Trusted because
  *    it is *not* an authorisation - it selects which business to serve, and
  *    every permission check still runs inside it.
+ * 2b. **The session's own business** - the `biz` claim a business-database
+ *    account is signed with. On the shared admin host it is the only thing
+ *    that names a staff member's business.
  * 3. **`?business=` query** - the admin panel's switcher. Above the host
  *    because a selection somebody made outranks one inferred from where the
  *    request arrived, and because `openBusinessDb` runs before the query string
@@ -53,11 +60,19 @@ function subdomainOf(host) {
   if (/^\d+\.\d+\.\d+\.\d+$/.test(name)) return null;
 
   const parts = name.split('.');
-  if (parts.length < 3) return null;
+  /**
+   * `cellshoppe.localhost` is a subdomain too. Browsers resolve every
+   * `*.localhost` name to this machine without any setup (RFC 6761), which is
+   * what lets the whole subdomain arrangement be exercised in development
+   * exactly as it runs in production - only with `localhost` for the domain.
+   */
+  const local = parts.length === 2 && parts[1] === 'localhost';
+  if (parts.length < 3 && !local) return null;
 
   const label = parts[0];
-  // `www` is the site, not a tenant.
-  if (label === 'www') return null;
+  // `www`, `app` and the rest are the platform's own surfaces, not a tenant.
+  // See `shared/hosts.js` for why a business may never answer on one.
+  if (isReservedSubdomain(label)) return null;
   return label;
 }
 
@@ -137,13 +152,59 @@ async function businessForHost(host) {
 async function resolveBusiness(req, _res, next) {
   try {
     // 1. An impersonation grant already decided, and it is not negotiable.
-    if (req.businessScopePinned && req.businessScope) return next();
+    if (req.businessScopePinned && req.businessScope) {
+      req.businessScopeSource = 'pinned';
+      return next();
+    }
 
     // 2. An explicit header - development, tooling, and the smoke suite.
     const header = req.get('x-business');
     if (header) {
       req.businessScope = header;
+      req.businessScopeSource = 'header';
       return next();
+    }
+
+    /**
+     * 2b. The business the session was signed into (`authService.issueSession`).
+     *
+     * An account in a business database exists in that database and nowhere
+     * else, so for its session this is the only answer that can work: on the
+     * shared admin host the host names nothing, and a `?business=` naming
+     * another business could only ever produce "not signed in". A tenant admin's
+     * token carries no claim and falls through to the switcher below.
+     *
+     * The signature is checked here, not just decoded - the claim chooses which
+     * database opens, and an unsigned claim would let a cookie pick one. A bad,
+     * expired or foreign token is simply not an answer; `authenticate` deals
+     * with the cookie itself. A claim naming a deleted business is ignored the
+     * same way, so a retired business's staff land signed out rather than
+     * inside it.
+     */
+    /**
+     * Which session speaks for this request.
+     *
+     * The supplier portal's own paths take the SUPPLIER cookie's business: one
+     * browser can hold a staff session and a supplier session at once on the
+     * shared host, for different businesses, and each has to open its own.
+     */
+    const portalPath = req.path.startsWith('/api/supplier-portal');
+    const token = req.cookies?.[portalPath ? `${env.COOKIE_NAME}_supplier` : env.COOKIE_NAME];
+    if (token) {
+      let claim = null;
+      try {
+        claim = jwt.verify(token, env.JWT_SECRET)?.biz ?? null;
+      } catch {
+        claim = null;
+      }
+      if (claim) {
+        const business = await businessConfig(claim);
+        if (business && !business.deletedAt) {
+          req.businessScope = claim;
+          req.businessScopeSource = 'session';
+          return next();
+        }
+      }
     }
 
     /**
@@ -173,6 +234,7 @@ async function resolveBusiness(req, _res, next) {
     const requested = String(req.query.business ?? '').trim();
     if (requested && requested !== 'all') {
       req.businessScope = requested;
+      req.businessScopeSource = 'query';
       return next();
     }
 
@@ -180,6 +242,7 @@ async function resolveBusiness(req, _res, next) {
     const fromHost = await businessForHost(req.get('host'));
     if (fromHost) {
       req.businessScope = fromHost;
+      req.businessScopeSource = 'host';
       return next();
     }
 
@@ -195,6 +258,7 @@ async function resolveBusiness(req, _res, next) {
     if ((await countBusinesses()) === 1) {
       const only = await Business.findOne({ deletedAt: null }).select('_id').lean();
       req.businessScope = only ? String(only._id) : null;
+      req.businessScopeSource = 'single';
       return next();
     }
 
@@ -219,6 +283,7 @@ async function resolveBusiness(req, _res, next) {
      * what keeps development and a single-domain deployment working.
      */
     req.businessScope = req.businessScope ?? (await defaultBusinessId());
+    req.businessScopeSource = 'default';
     return next();
   } catch (error) {
     // Resolution failing must not take the site down: the request continues

@@ -8,6 +8,8 @@ import { backfillLineage } from './backfill-lineage.js';
 import { backfillReferralCodes } from './backfill-referral-codes.js';
 import { backfillCellvixFeatures } from './backfill-cellvix-features.js';
 import { backfillCompetitors } from './backfill-competitors.js';
+import { backfillLoginDirectory } from '../services/loginDirectory.js';
+import { backfillSupplierAccounts } from '../services/supplierPortalService.js';
 
 /**
  * One door onto the seven one-off migrations.
@@ -70,6 +72,16 @@ const TASKS = [
     name: 'competitors',
     run: backfillCompetitors,
     summary: 'Add competitor benchmark prices to products that predate the field.',
+  },
+  {
+    name: 'login-directory',
+    run: backfillLoginDirectory,
+    summary: 'Index every panel account by email so the shared admin login can find its business.',
+  },
+  {
+    name: 'supplier-accounts',
+    run: backfillSupplierAccounts,
+    summary: 'Lift every supplier portal login into one platform-wide account per email.',
   },
 ];
 

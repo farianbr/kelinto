@@ -12,6 +12,9 @@ const loginSchema = z.object({
   email: z.string().trim().toLowerCase().email('Enter a valid email address.'),
   password: z.string().min(1, 'Enter your password.'),
   remember: z.boolean().optional().default(false),
+  // Sent only after the server answered BUSINESS_CHOICE_REQUIRED: one address
+  // with panel accounts at several businesses, and the person picked one.
+  business: z.string().trim().regex(/^[a-f\d]{24}$/i, 'Choose a business.').optional(),
 });
 
 const registerSchema = z.object({

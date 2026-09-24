@@ -3,6 +3,10 @@ import * as authService from '../services/authService.js';
 import auditService from '../services/auditService.js';
 import { PERMISSION_AREAS } from '../models/Role.js';
 import { db } from '../db/models.js';
+import { currentBusinessId } from '../db/context.js';
+import { inBusinessDb } from '../services/loginDirectory.js';
+import { businessConfig } from '../middleware/businessConfigCache.js';
+import env from '../config/env.js';
 
 /**
  * The session shape, plus the resolved permission map for Cellvix staff.
@@ -82,8 +86,9 @@ const register = asyncHandler(async (req, res) => {
  */
 const login = asyncHandler(async (req, res) => {
   let user;
+  let business;
   try {
-    user = await authService.login(req.body);
+    ({ user, business } = await authService.login(req.body));
   } catch (error) {
     await auditService.recordSecurity({
       req,
@@ -100,17 +105,33 @@ const login = asyncHandler(async (req, res) => {
     throw error;
   }
 
-  authService.issueSession(res, user, req.body.remember);
+  authService.issueSession(res, user, req.body.remember, business?._id ?? null);
 
-  await auditService.recordSecurity({
-    req,
-    action: 'auth.login',
-    entity: { kind: 'session', id: user._id.toString(), label: user.email },
-    description: `${user.email} signed in.`,
-    subject: user,
-  });
+  /**
+   * Everything after this reads and writes the account's OWN business.
+   *
+   * On the shared admin host the request resolved to the default business,
+   * but a staff member found through the login directory lives in another
+   * one. Their role is read from there (`sessionUser`), and the sign-in is
+   * audited there - the business whose security log should show it. A tenant
+   * admin has no business, and a storefront sign-in is already in the right
+   * one, so both run as they always did.
+   */
+  const finish = async () => {
+    await auditService.recordSecurity({
+      req,
+      action: 'auth.login',
+      entity: { kind: 'session', id: user._id.toString(), label: user.email },
+      description: `${user.email} signed in.`,
+      subject: user,
+    });
+    return sessionUser(user);
+  };
 
-  res.json({ user: await sessionUser(user), features: staffFeatures(req) });
+  const elsewhere = business && String(business._id) !== String(currentBusinessId());
+  const shape = elsewhere ? await inBusinessDb(business, finish) : await finish();
+
+  res.json({ user: shape, features: staffFeatures(req) });
 });
 
 const logout = asyncHandler(async (req, res) => {
@@ -135,10 +156,29 @@ const logout = asyncHandler(async (req, res) => {
  * first paint - answering with an error meant a red entry in the browser console
  * on every anonymous page load, which no client-side catch can suppress.
  */
+/**
+ * The origin the active business's storefront answers on, or null.
+ *
+ * The panel host (`app.<platform>`) serves no storefront, so a panel link to a
+ * product page, a blog post or the kiosk has to leave the host - and only the
+ * server knows the address. A custom domain wins over the platform subdomain,
+ * as it does in `resolveBusiness`. Null when neither exists, and the client
+ * then keeps the link on its own host, which is right whenever no split is on.
+ */
+async function storefrontOrigin(req) {
+  if (!req.user || !req.businessScope) return null;
+  const business = await businessConfig(req.businessScope);
+  if (!business || business.deletedAt) return null;
+  if (business.domain) return env.originFor(business.domain);
+  if (business.slug && env.storefrontDomain) return env.originFor(`${business.slug}.${env.storefrontDomain}`);
+  return null;
+}
+
 const me = asyncHandler(async (req, res) => {
   res.json({
     user: await sessionUser(req.user),
     features: staffFeatures(req),
+    storefrontOrigin: await storefrontOrigin(req),
     /**
      * An active support session, when there is one (SAAS_PLATFORM §4.5).
      *
@@ -195,7 +235,8 @@ const forgotPassword = asyncHandler(async (req, res) => {
  */
 const resetPassword = asyncHandler(async (req, res) => {
   const user = await authService.resetPassword(req.body);
-  authService.issueSession(res, user, false);
+  // Reset reads this business's accounts only, so this business holds it.
+  authService.issueSession(res, user, false, currentBusinessId());
   res.json({ user: user.toPublic() });
 });
 

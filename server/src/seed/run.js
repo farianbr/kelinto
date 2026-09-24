@@ -28,6 +28,7 @@ import {
   costFor,
 } from './purchase.data.js';
 import { seedPurchaseBids } from './purchase-bids.js';
+import { backfillSupplierAccounts } from '../services/supplierPortalService.js';
 import '../models/Settings.js';
 import '../models/Quote.js';
 import '../models/Rma.js';
@@ -54,7 +55,7 @@ import Business from '../models/Business.js';
 // Registers the schema so `controlModels()` can bind it - the seed writes a
 // tenant, which is a control-plane record.
 import '../models/Tenant.js';
-import { ensureBuiltInRoles, ensureDefaultBusiness, nextBusinessCode } from '../services/accessService.js';
+import { ensureBuiltInRoles, nextBusinessCode } from '../services/accessService.js';
 import { dbFor } from '../db/connections.js';
 import { runInBusiness } from '../db/context.js';
 
@@ -349,23 +350,20 @@ async function seedDatabase({ quiet = false } = {}) {
     db().Appointment.deleteMany({}),
   ]);
 
-  // ---- roles & businesses ----------------------------------------------------
+  // ---- the business --------------------------------------------------------
   // The business first: roles are per-business and cannot be written until
   // there is a business database to write them into. `ensureBuiltInRoles` is
-  // therefore called inside each business's own context further down, not here
-  // - called here it wrote Cellvix's four roles into the control database and
-  // left every seeded staff account pointing at a role its own business did not
+  // therefore called inside the business's own context further down, not here
+  // - called here it wrote the four roles into the control database and left
+  // every seeded staff account pointing at a role its own business did not
   // have.
-  const defaultBusiness = await ensureDefaultBusiness();
 
   /**
-   * The tenant that owns both businesses (SAAS_PLATFORM §1).
+   * The tenant that owns the business (SAAS_PLATFORM §1).
    *
-   * **A tenant is an account, not a business.** Cellvix and CellShoppe are two
-   * businesses under one subscription, which is the case the whole slot model
-   * exists for - and the case the seed used to leave unbuilt: both businesses
-   * were created with no tenant at all, so the console's slot arithmetic read
-   * zero of three used and the tenant-status gate had nothing to act on.
+   * **A tenant is an account, not a business.** It owns one business today and
+   * holds free slots for more, which is what the super admin's slot arithmetic
+   * and the tenant-status gate act on.
    *
    * Upserted by slug so a re-seed keeps whatever a super admin has since
    * changed about the account - its plan, its slot grant, its status.
@@ -379,46 +377,36 @@ async function seedDatabase({ quiet = false } = {}) {
         status: 'active',
         contactName: 'Cellvix Admin',
         contactEmail: 'admin@cellvix.ca',
-        // Three, so there is a free slot to demonstrate adding a business with.
+        // Three, so there are free slots to demonstrate adding a business with.
         slots: 3,
       },
     },
     { upsert: true, new: true },
   );
 
-  // `ensureDefaultBusiness` predates tenancy and creates Cellvix with no owner,
-  // so the link is made here rather than there - that function also runs on a
-  // bare boot, where no tenant exists to point at.
-  if (!defaultBusiness.tenant) {
-    defaultBusiness.tenant = tenant._id;
-    defaultBusiness.slotGrantedAt = defaultBusiness.slotGrantedAt ?? new Date();
-    await defaultBusiness.save();
-  }
-
   /**
-   * The second business, and the whole reason business *type* exists.
+   * **One business, CellShoppe, typed `both`** (client ruling, 2026-09-24).
    *
-   * **CellShoppe is service-based**, so its panel renders Tickets and Quotes
-   * where Cellvix renders Orders and Returns, and it has no storefront at all
-   * (SAAS_PLATFORM §1.1). Seeding both is what makes the switcher demonstrate
-   * something rather than list one row - and what proves the feature resolver
-   * actually reads the type rather than always answering with Cellvix's set.
+   * It runs the parts storefront and the repair shop together, so its panel
+   * renders the union of both section sets (SAAS_PLATFORM §1.1): Orders and
+   * Returns beside Tickets and Quotes. This seed used to build two businesses,
+   * Cellvix (`product`) and CellShoppe (`service`); the live data was merged
+   * into CellShoppe by `merge-into-cellshoppe.js` and this is the same shape
+   * from scratch.
+   *
+   * Created here rather than through `ensureDefaultBusiness`, whose fallback
+   * still creates a bare product business for an empty install.
    */
-  const serviceBusiness = await Business.create({
+  const business = await Business.create({
     name: 'CellShoppe Phone & Laptop Fix',
     code: await nextBusinessCode(),
-    // The subdomain this business answers on (SAAS_PLATFORM §4.2). Without it
-    // a host can never resolve to this business and it is reachable only
-    // through the admin switcher.
+    // The subdomain this business answers on (SAAS_PLATFORM §4.2).
     slug: 'cellshoppe',
-    businessType: 'service',
+    businessType: 'both',
     status: 'active',
-    // Indigo, not the old 'info' blue it carried: identity colours are kept
-    // clear of the semantic ones so an accent is never read as a status
-    // (shared/businessPalette.js).
+    // Indigo: identity colours are kept clear of the semantic ones so an accent
+    // is never read as a status (shared/businessPalette.js).
     colorToken: 'indigo',
-    // Owned by the same tenant as Cellvix - one account, two businesses, which
-    // is what the switcher and the slot model exist for.
     tenant: tenant._id,
     slotGrantedAt: new Date(),
     address: {
@@ -431,32 +419,24 @@ async function seedDatabase({ quiet = false } = {}) {
     phone: '+1 (604) 555-0175',
     email: 'shop@cellshoppe.ca',
     manager: 'Priya Raman',
-    isDefault: false,
+    isDefault: true,
   });
-
-  const rolesBySlug = new Map((await db().Role.find().lean()).map((r) => [r.slug, r]));
-  log(
-    `  roles: ${rolesBySlug.size} · businesses: ${defaultBusiness.code} (${defaultBusiness.businessType})` +
-      ` · ${serviceBusiness.code} (${serviceBusiness.businessType})`,
-  );
+  log(`  business: ${business.name} (${business.code}, ${business.businessType})`);
 
   /**
-   * **Everything from here runs inside Cellvix's own database.**
+   * **Everything from here runs inside the business's own database.**
    *
    * The wrap is deliberately not re-indented. Several hundred lines moving one
    * level would show as a wholly rewritten file in a diff, burying the handful
-   * of lines that carry the actual change - and this restructure is exactly the
-   * kind that needs to stay readable afterwards.
-   *
-   * The CellShoppe block further down opens its own context and closes it
-   * again, so the two businesses' records never land in the same database even
-   * though they are seeded from one function.
+   * of lines that carry the actual change.
    */
-  return inBusiness(defaultBusiness, async () => {
+  return inBusiness(business, async () => {
 
   // Roles are per-business and live in this database. Before the users, because
   // a staff account cannot be created without a role to hold.
   await ensureBuiltInRoles();
+  const rolesBySlug = new Map((await db().Role.find().lean()).map((r) => [r.slug, r]));
+  log(`  roles: ${rolesBySlug.size}`);
 
   // ---- taxonomy -----------------------------------------------------------
   const taxonomyDocs = buildTaxonomyDocs();
@@ -553,7 +533,7 @@ async function seedDatabase({ quiet = false } = {}) {
     // admin holds neither - it bypasses the role system by design (§7.6).
     if (staffRoleSlug) {
       user.staffRole = rolesBySlug.get(staffRoleSlug)?._id ?? null;
-      user.business = defaultBusiness._id;
+      user.business = business._id;
     }
 
     // Referral code, minted on approval exactly as `approveUser` does it
@@ -579,7 +559,7 @@ async function seedDatabase({ quiet = false } = {}) {
 
   const staffIds = users.filter((u) => u.role === 'staff').map((u) => u._id);
   if (staffIds.length) {
-    await Business.updateOne({ _id: defaultBusiness._id }, { $set: { staff: staffIds } });
+    await Business.updateOne({ _id: business._id }, { $set: { staff: staffIds } });
   }
   log(`  users: ${users.length} (staff: ${staffIds.length})`);
 
@@ -1060,6 +1040,14 @@ async function seedDatabase({ quiet = false } = {}) {
       `${bidResult.confirmed ? `, confirmed ${bidResult.confirmed}` : ''})`,
   );
 
+  /**
+   * Those logins were written onto this business's `Supplier` records; sign-in
+   * reads the platform-wide `SupplierAccount`. The control plane survives a
+   * re-seed, so an existing account's link is also re-pointed at the record
+   * this seed just created - otherwise it names an id the wipe removed.
+   */
+  await backfillSupplierAccounts({ quiet: true });
+
   // The settings singleton, recreated from its seeded defaults - per-province
   // tax rates included, which the tax report reads (§9.5).
   const settings = await db().Settings.load();
@@ -1097,76 +1085,44 @@ async function seedDatabase({ quiet = false } = {}) {
    * turns that into references.
    */
   /**
-   * Built with the parts catalogue and the quote sequence from Cellvix, but the
-   * **people come from CellShoppe** - see where this is consumed below.
-   *
-   * The customers and staff are deliberately not passed here: this call runs in
-   * Cellvix's context, so anything it reads from `users` belongs to the wrong
-   * business. They are supplied inside the CellShoppe block, where they exist.
+   * The repair pipeline's inputs. The parts come from the catalogue above and
+   * repair quotes continue the `QT-` series the goods quotes just used, since
+   * both live in the one `quotes` collection under a unique number. The people
+   * are supplied further down, once the repair customers and technicians exist.
    */
   const repairSeed = {
     products: insertedProducts,
     taxRate: Math.round(db().Settings.rateFor(settings, 'ON') * 100),
-    // Continue the `QT-` series the goods quotes above just used.
     quoteSeq: quotes.length + 1,
   };
 
-  /**
-   * **Every repair record belongs to CellShoppe**, the service business.
-   *
-   * This is what makes the switcher mean something: tickets, their quotes and
-   * their invoices are the service pipeline, and stamping them here is why
-   * switching to CellShoppe changes the *figures* and not only which nav rows
-   * render. Cellvix's own orders, returns and invoices stay on Cellvix below.
-   */
-  const serviceBusinessId = serviceBusiness._id;
-
-  /**
-   * **Everything below runs inside CellShoppe's own database.**
-   *
-   * The block is self-contained - it builds from `repairs.*` and references no
-   * Cellvix order, product or customer - which is what makes wrapping it a
-   * matter of context rather than of untangling ids across two databases.
-   *
-   * `business: serviceBusinessId` stays on each record even though the database
-   * now implies it: the field is what the admin panel filters on today, and
-   * dropping it here would make the records invisible until the flip removes
-   * that filter everywhere at once.
-   */
-  // Declared outside the wrap so the summary below can read them: the counts
-  // are built at the end of `seedDatabase`, which is Cellvix's context, and
-  // these are the only CellShoppe figures it reports.
+  // Declared outside the block so the summary below can read them.
   let repairTicketCount = 0;
   let repairQuoteCount = 0;
   let repairInvoiceCount = 0;
 
-  await inBusiness(serviceBusiness, async () => {
   /**
-   * Roles and settings are per-business: each database holds its own.
+   * **The repair side of the business**: walk-in customers, technicians, its
+   * suppliers and running costs, the front desk, and the repair pipeline.
    *
-   * A business seeded without them has staff accounts with no role to hold and
-   * a panel whose every settings read rebuilds a document from defaults on the
-   * fly - which works, but leaves the database looking half-seeded to anybody
-   * inspecting it. `load()` is an upsert, so this is idempotent.
+   * It used to run in a second business's database. It now shares this one, so
+   * everything it numbers continues the series the product side started
+   * (expenses, tickets) and anything both sides seed is reused rather than
+   * inserted twice (roles, settings, expense categories).
    */
-  await ensureBuiltInRoles();
+  {
   const shoppeSettings = await db().Settings.load();
 
   /**
-   * CellShoppe's own population.
-   *
-   * **Its records used to reference Cellvix's people.** `buildRepairs` was
-   * handed Cellvix's buyers and staff and the resulting tickets were written
-   * into CellShoppe's database, so every `customer` id on them pointed into a
-   * database CellShoppe cannot read - twelve tickets whose customer column was
-   * structurally empty. A business owns its customers, so it seeds its own.
+   * The repair counter's people: walk-in customers and technicians, beside the
+   * wholesale buyers and staff seeded above.
    */
   const shoppeRoles = await db().Role.find().select('slug').lean();
   const shoppeRoleBySlug = new Map(shoppeRoles.map((role) => [role.slug, role._id]));
 
   const shoppeCustomers = [];
   for (const spec of SHOPPE_CUSTOMERS) {
-    const customer = new (db().User)({ ...spec, business: serviceBusiness._id });
+    const customer = new (db().User)({ ...spec, business: business._id });
     await customer.setPassword(DEMO_PASSWORD);
     customer.approvedAt = new Date(Date.now() - 60 * 86_400_000);
     // Walk-in consumers, so they carry consent like any seeded buyer - the
@@ -1196,36 +1152,59 @@ async function seedDatabase({ quiet = false } = {}) {
     const { staffRoleSlug, ...fields } = spec;
     const member = new (db().User)({
       ...fields,
-      business: serviceBusiness._id,
+      business: business._id,
       staffRole: shoppeRoleBySlug.get(staffRoleSlug) ?? null,
     });
     await member.setPassword(DEMO_PASSWORD);
     await member.save();
     shoppeStaff.push(member);
   }
-  log(`  CellShoppe people: ${shoppeCustomers.length} customers, ${shoppeStaff.length} staff`);
+  // One business, one roster: the technicians join the wholesale staff on it.
+  await Business.updateOne(
+    { _id: business._id },
+    { $addToSet: { staff: { $each: shoppeStaff.map((member) => member._id) } } },
+  );
+  log(`  repair counter: ${shoppeCustomers.length} customers, ${shoppeStaff.length} technicians`);
 
   const shoppeSuppliers = await db().Supplier.insertMany(SHOPPE_SUPPLIERS);
 
   // Categories first: an expense references one, and the model requires it.
-  const shoppeCategories = await db().ExpenseCategory.insertMany(
-    [...new Set(SHOPPE_EXPENSES.map((row) => row.category))].map((name) => ({
-      name,
-      slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-      isActive: true,
-    })),
+  // The product side already seeded most of these, and the slug is unique, so
+  // an existing category is reused and only the missing ones are created.
+  const shoppeCategoryNames = [...new Set(SHOPPE_EXPENSES.map((row) => row.category))];
+  const slugOf = (name) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  const existingCategories = await db()
+    .ExpenseCategory.find({ slug: { $in: shoppeCategoryNames.map(slugOf) } })
+    .lean();
+  const existingSlugs = new Set(existingCategories.map((row) => row.slug));
+  const addedCategories = await db().ExpenseCategory.insertMany(
+    shoppeCategoryNames
+      .filter((name) => !existingSlugs.has(slugOf(name)))
+      .map((name) => ({ name, slug: slugOf(name), isActive: true })),
   );
-  const shoppeCategoryByName = new Map(shoppeCategories.map((row) => [row.name, row._id]));
+  const categoryIdBySlug = new Map(
+    [...existingCategories, ...addedCategories].map((row) => [row.slug, row._id]),
+  );
+
+  // Numbers continue the `EXP-` series the product side started: `number` is
+  // unique, and both sides now write into the same collection.
+  const expenseYear = new Date().getFullYear();
+  const lastExpense = await db()
+    .Expense.findOne({ number: new RegExp(`^EXP-${expenseYear}-`) })
+    .sort({ number: -1 })
+    .select('number')
+    .lean();
+  const firstExpenseSeq = lastExpense ? Number(lastExpense.number.split('-')[2]) + 1 : 1;
 
   const shoppeExpenses = await db().Expense.insertMany(
     SHOPPE_EXPENSES.map((row, index) => ({
-      number: `EXP-${new Date().getFullYear()}-${String(index + 1).padStart(5, '0')}`,
+      number: `EXP-${expenseYear}-${String(firstExpenseSeq + index).padStart(5, '0')}`,
       date: new Date(Date.now() - row.daysAgo * 86_400_000),
       description: row.label,
-      category: shoppeCategoryByName.get(row.category),
+      category: categoryIdBySlug.get(slugOf(row.category)),
       amount: row.amount,
       status: 'paid',
-      business: serviceBusiness._id,
+      business: business._id,
     })),
   );
   log(`  CellShoppe purchase: ${shoppeSuppliers.length} suppliers, ${shoppeExpenses.length} expenses`);
@@ -1257,7 +1236,7 @@ async function seedDatabase({ quiet = false } = {}) {
         // still booked. A board where every row reads the same teaches nothing.
         status: row.inDays === 0 ? 'done' : 'scheduled',
         customerName: customer.contactName,
-        business: serviceBusiness._id,
+        business: business._id,
       };
     }),
   );
@@ -1270,7 +1249,7 @@ async function seedDatabase({ quiet = false } = {}) {
       message: row.message,
       status: 'new',
       createdAt: new Date(Date.now() - row.daysAgo * 86_400_000),
-      business: serviceBusiness._id,
+      business: business._id,
     })),
   );
   log(
@@ -1278,12 +1257,9 @@ async function seedDatabase({ quiet = false } = {}) {
   );
 
   /**
-   * The repair pipeline, built with **CellShoppe's own** customers and staff.
-   *
-   * This used to be built in Cellvix's block and handed Cellvix's buyers, so
-   * every ticket written here carried a `customer` id pointing into a database
-   * CellShoppe cannot read. Building it here - where its people exist - is what
-   * makes the customer column on a ticket resolve to a name.
+   * The repair pipeline, built with the repair counter's customers and
+   * technicians rather than the wholesale buyers: a walk-in repair belongs to a
+   * walk-in customer.
    */
   const repairs = buildRepairs({
     ...repairSeed,
@@ -1293,15 +1269,9 @@ async function seedDatabase({ quiet = false } = {}) {
   });
 
   /**
-   * **No admin here.** CellShoppe has staff and customers of its own, but its
-   * administrator is the *tenant's*, and lives in the control plane - one login
-   * reaching every business the tenant owns, switched between with the header
-   * control (SAAS_PLATFORM §1).
-   *
-   * This block did seed a second admin, `admin@cellshoppe.ca`, and that was
-   * wrong: it forced a tenant running two shops to hold two logins and made the
-   * business switcher unusable, because the account on the other side did not
-   * exist. Deleted rather than left as a second way in.
+   * **No admin here.** The administrator is the *tenant's*, seeded with the
+   * users above into the control plane - one login reaching every business the
+   * tenant owns (SAAS_PLATFORM §1).
    */
 
   // Tickets first: a quote points at the ticket it became, and an invoice
@@ -1310,7 +1280,7 @@ async function seedDatabase({ quiet = false } = {}) {
   const insertedRepairTickets = await db().Ticket.insertMany(
     repairs.tickets.map(({ quoteNumber, invoiceNumber, ...ticket }) => ({
       ...ticket,
-      business: serviceBusinessId,
+      business: business._id,
     })),
   );
   const ticketIdByNumber = new Map(
@@ -1322,7 +1292,7 @@ async function seedDatabase({ quiet = false } = {}) {
     repairs.quotes.map(({ convertedTicketNumber, ...quote }) => ({
       ...quote,
       source: 'admin',
-      business: serviceBusinessId,
+      business: business._id,
       convertedTicket: ticketIdByNumber.get(convertedTicketNumber) ?? null,
     })),
   );
@@ -1331,7 +1301,7 @@ async function seedDatabase({ quiet = false } = {}) {
   const repairInvoices = await db().Invoice.insertMany(
     repairs.invoices.map(({ ticketNumber, ...invoice }) => ({
       ...invoice,
-      business: serviceBusinessId,
+      business: business._id,
       ticket: ticketIdByNumber.get(ticketNumber) ?? null,
     })),
   );
@@ -1371,8 +1341,8 @@ async function seedDatabase({ quiet = false } = {}) {
   repairTicketCount = insertedRepairTickets.length;
   repairQuoteCount = repairQuotes.length;
   repairInvoiceCount = repairInvoices.length;
-  });
-  // End of CellShoppe's database. Everything after this is Cellvix's again.
+  }
+  // End of the repair side.
 
   /**
    * Web quotes - storefront enquiries, before anybody has priced them.
@@ -1386,16 +1356,12 @@ async function seedDatabase({ quiet = false } = {}) {
   log(`  web quotes: ${webQuotes.length}`);
 
   /**
-   * Cellvix's own workshop tickets and its pickup calendar.
+   * Workshop tickets on the wholesale side, and the pickup calendar.
    *
-   * **A product business with `sales.tickets` switched on** (§3.1, the one
-   * documented override): Cellvix builds and tests returned stock before it
-   * goes back on the shelf, and books collections with its wholesale accounts.
-   * Both screens render for this business and both were empty, which reads as a
-   * broken panel rather than as a business that does not do this.
-   *
-   * Deliberately small. These are a wholesaler's *internal* jobs, not a repair
-   * shop's queue - a dozen would misrepresent what Cellvix does.
+   * The wholesale side builds and tests returned stock before it goes back on
+   * the shelf, and books collections with its wholesale accounts. Deliberately
+   * small: these are internal jobs, not the repair counter's queue. Numbered
+   * after the repair tickets, since both share the unique `TKT-` series.
    */
   const cellvixTickets = await db().Ticket.insertMany(
     [
@@ -1406,7 +1372,7 @@ async function seedDatabase({ quiet = false } = {}) {
     ].map((row, index) => {
       const account = approvedBuyers[row.customer % approvedBuyers.length];
       return {
-        ticketNumber: `TKT-${new Date().getFullYear()}-${String(index + 1).padStart(5, '0')}`,
+        ticketNumber: `TKT-${new Date().getFullYear()}-${String(repairTicketCount + index + 1).padStart(5, '0')}`,
         customerName: account.contactName || account.businessName || account.email,
         customerEmail: account.email,
         customerPhone: account.phone ?? '+1 (416) 555-0100',
@@ -1416,7 +1382,7 @@ async function seedDatabase({ quiet = false } = {}) {
         priority: row.priority,
         // An internal workshop job is raised at the counter by our own staff.
         source: 'counter',
-        business: defaultBusiness._id,
+        business: business._id,
         createdAt: new Date(Date.now() - (index + 2) * 86_400_000),
       };
     }),
@@ -1440,7 +1406,7 @@ async function seedDatabase({ quiet = false } = {}) {
         startAt,
         endAt: new Date(startAt.getTime() + 30 * 60_000),
         status: row.inDays === 0 ? 'done' : 'scheduled',
-        business: defaultBusiness._id,
+        business: business._id,
       };
     }),
   );
@@ -1452,7 +1418,7 @@ async function seedDatabase({ quiet = false } = {}) {
   log(`  returns: ${rmas.length}`);
 
   /**
-   * Stamp every unassigned record onto Cellvix.
+   * Stamp every unassigned record onto the business.
    *
    * **One pass at the end rather than a `business:` on eight `insertMany`
    * calls.** The builders in `sales.data.js`, `purchase.data.js` and
@@ -1460,19 +1426,18 @@ async function seedDatabase({ quiet = false } = {}) {
    * build records, and which business owns one is a fact about this seed rather
    * than about the shape of an order.
    *
-   * `business: null` is the filter, so this cannot touch the repair records
-   * already stamped for CellShoppe above: they have a business and are skipped.
-   * That also makes it idempotent - a second run finds nothing to do.
+   * `business: null` is the filter, so records already stamped above are
+   * skipped. That also makes it idempotent - a second run finds nothing to do.
    *
    * **Every collection that carries the field is listed.** One left out is a
    * set of rows that belong to no business, and `businessFilter` matches
    * exactly - so they would be invisible under every business rather than
    * visible under all of them.
    */
-  const cellvixId = defaultBusiness._id;
+  const businessId = business._id;
   const stamped = await Promise.all(
-    // Read off the context, not imported: these have to be Cellvix's models, and
-    // a module-level import would be bound to the default connection.
+    // Read off the context, not imported: these have to be the business's
+    // models, and a module-level import would be bound to the default connection.
     [
       db().Order,
       db().Invoice,
@@ -1486,12 +1451,12 @@ async function seedDatabase({ quiet = false } = {}) {
     ].map((Model) =>
       Model.updateMany(
         { $or: [{ business: null }, { business: { $exists: false } }] },
-        { $set: { business: cellvixId } },
+        { $set: { business: businessId } },
       ),
     ),
   );
   log(
-    `  business assignment: ${stamped.reduce((sum, r) => sum + (r.modifiedCount ?? 0), 0)} records → ${defaultBusiness.name}`,
+    `  business assignment: ${stamped.reduce((sum, r) => sum + (r.modifiedCount ?? 0), 0)} records → ${business.name}`,
   );
 
   // Returned out of the business context and then out of `seedDatabase`
@@ -1555,14 +1520,15 @@ async function isDatabaseEmpty() {
 // CLI entry: `npm run seed`
 if (process.argv[1] && process.argv[1].endsWith('run.js')) {
   (async () => {
-    console.log('\n  Seeding Cellvix…\n');
+    console.log('\n  Seeding CellShoppe (parts storefront and repair shop)…\n');
     await connectDb();
     const result = await seedDatabase();
     console.log('\n  Done.', result);
     console.log(`\n  Demo logins (password: ${DEMO_PASSWORD})`);
     console.log('    buyer@cellvix.ca    approved buyer, Net 30, order history');
     console.log('    pending@cellvix.ca  pending approval');
-    console.log('    admin@cellvix.ca    admin');
+    console.log('    admin@cellvix.ca    admin (tenant owner)');
+    console.log('    nadia@cellshoppe.ca repair counter, front desk');
     // The portal is a separate session against a separate collection (§6.8a),
     // so its logins are listed apart - reading them as a fourth kind of user
     // account is exactly the confusion the split exists to prevent.

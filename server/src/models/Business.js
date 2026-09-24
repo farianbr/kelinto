@@ -132,6 +132,35 @@ const businessSchema = new mongoose.Schema(
       default: null,
     },
 
+    /**
+     * A web address the tenant has ASKED for, waiting on a super admin.
+     *
+     * `slug` above is the live address and only the platform writes it; this is
+     * the request beside it, so a tenant can propose `cellshoppe` without it
+     * answering on anything until it is approved. Approval moves the slug
+     * across and clears this; a rejection keeps it here with the reason, so the
+     * tenant reads why rather than finding their request simply gone.
+     *
+     * Null when nothing is asked for. One request at a time - asking again
+     * replaces it.
+     */
+    addressRequest: {
+      type: new mongoose.Schema(
+        {
+          slug: { type: String, required: true, lowercase: true, trim: true },
+          status: { type: String, enum: ['pending', 'rejected'], default: 'pending' },
+          requestedAt: { type: Date, default: Date.now },
+          // Who asked, as text: the account lives in a database the console
+          // does not read, and the name is what an operator needs to see.
+          requestedBy: { type: String, default: '' },
+          decidedAt: { type: Date, default: null },
+          note: { type: String, default: '', maxlength: 500 },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
+
     status: { type: String, enum: BUSINESS_STATUSES, default: 'active', index: true },
     /**
      * The identity ramp the panel paints itself in (`shared/businessPalette.js`).
@@ -263,6 +292,7 @@ businessSchema.methods.toPublic = function toPublic() {
     code: this.code,
     slug: this.slug ?? null,
     domain: this.domain ?? null,
+    addressRequest: this.addressRequest ?? null,
     businessType: this.businessType,
     status: this.status,
     // Normalised on the way out as well as on the way in: a document written

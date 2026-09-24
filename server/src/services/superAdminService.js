@@ -11,8 +11,33 @@ import User from '../models/User.js';
 import ApiError from '../utils/ApiError.js';
 import env from '../config/env.js';
 import { forgetBusinessConfig } from '../middleware/businessConfigCache.js';
+import { resetBusinessResolution } from '../middleware/resolveBusiness.js';
+import {
+  businessSlugProblem,
+  customDomainProblem,
+  normaliseDomain,
+  suggestSlug,
+} from '../../../shared/hosts.js';
 import { hashResetToken } from './authService.js';
 import { sendPasswordResetEmail } from './welcomeMail.js';
+import { panelOrigin } from './linkOrigins.js';
+
+/**
+ * Where a tenant owner's invitation link lands.
+ *
+ * The operator's request origin was used as-is, and once the super admin has a
+ * host of its own (`SUPERADMIN_HOST`) that origin is `admin.<platform>` -
+ * which serves the super admin panel and nothing else, so the owner's
+ * "set your password" link opened an operator sign-in they cannot use. The owner
+ * signs in on the panel host, so that is where the link goes once there is
+ * one; with the super admin split but no panel host, the public origin; with
+ * no split at all, the request's own origin as before.
+ */
+function inviteOrigin(origin) {
+  if (env.PANEL_HOST) return panelOrigin();
+  if (env.SUPERADMIN_HOST) return env.publicOrigin;
+  return origin || env.publicOrigin;
+}
 import { FEATURES, resolveFeatures } from '../../../shared/schemas/features.js';
 import { DEFAULT_BUSINESS_COLOR } from '../../../shared/businessPalette.js';
 
@@ -128,7 +153,7 @@ async function listTenants() {
   const [tenants, businesses, plans] = await Promise.all([
     Tenant.find({}).sort({ name: 1 }).lean(),
     Business.find({})
-      .select('name code businessType status tenant isDefault deletedAt purgeAfter')
+      .select('name code slug domain addressRequest businessType status tenant isDefault deletedAt purgeAfter')
       .lean(),
     Plan.find({}).select('name slug').lean(),
   ]);
@@ -184,6 +209,11 @@ async function listTenants() {
       id: business._id.toString(),
       name: business.name,
       code: business.code,
+      // Where it answers. Null slug means no subdomain at all - a business made
+      // before the console could set one, reachable only by the switcher.
+      slug: business.slug ?? null,
+      domain: business.domain ?? null,
+      addressRequest: business.addressRequest ?? null,
       businessType: business.businessType,
       status: business.status,
       isDefault: Boolean(business.isDefault),
@@ -240,6 +270,13 @@ async function listTenants() {
      * disagree with the database.
      */
     unassigned: byTenant.get('unassigned') ?? [],
+    // What a slug becomes, so the console can show `cellshoppe.kelinto.com`
+    // rather than a bare label. Null when no wildcard domain is configured.
+    storefrontDomain: env.storefrontDomain,
+    // Every domain the platform answers on as itself, so the address editor can
+    // refuse `app.<platform>` as a custom domain while it is typed, not only
+    // after it is sent. The server re-checks either way.
+    platformDomains: env.platformDomains,
   };
 }
 
@@ -344,11 +381,25 @@ async function createBusiness(tenantId, body) {
     );
   }
 
+  /**
+   * Every business gets an address at creation. Before this the console made
+   * businesses with no slug and nothing could set one afterwards, so only the
+   * two seeded businesses were reachable on a subdomain at all.
+   *
+   * Derived from the name when the form leaves it blank - but a derived slug is
+   * still checked, and a name like "App" or one another business already
+   * answers on is refused with a message asking for one, never silently
+   * suffixed into `app-2`: a storefront address is printed on receipts, and
+   * the business should choose it, not discover it.
+   */
+  const slug = await availableSlug(body.slug || suggestSlug(body.name), { derived: !body.slug });
+
   const { nextBusinessCode } = await import('./accessService.js');
 
   const business = await Business.create({
     name: body.name,
     code: await nextBusinessCode(),
+    slug,
     businessType: body.businessType ?? 'product',
     status: 'active',
     colorToken: body.colorToken ?? DEFAULT_BUSINESS_COLOR,
@@ -361,7 +412,162 @@ async function createBusiness(tenantId, body) {
     isDefault: false,
   });
 
+  // The count behind the single-business shortcut, and every cached host miss,
+  // are stale the moment a business exists that did not before.
+  resetBusinessResolution();
+
   return { business: business.toPublic() };
+}
+
+/**
+ * A slug that is well formed, not reserved and not already somebody's.
+ *
+ * `derived` changes only the wording: a slug the console made up from the name
+ * should not be reported as though the operator typed it.
+ */
+async function availableSlug(slug, { derived = false, exceptId = null } = {}) {
+  const problem = businessSlugProblem(slug);
+  if (problem) {
+    throw ApiError.badRequest(
+      derived ? `This name does not make a usable web address. Choose one: ${problem}` : problem,
+      'BUSINESS_SLUG_INVALID',
+      { slug: problem },
+    );
+  }
+
+  const clash = await Business.findOne({
+    slug,
+    ...(exceptId ? { _id: { $ne: exceptId } } : {}),
+  })
+    .select('name deletedAt')
+    .lean();
+
+  if (clash) {
+    /**
+     * A soft-deleted business still holds its address. Releasing it on delete
+     * would let a new business take the address a customer still has
+     * bookmarked for the old one - inside the window in which the old one can
+     * be restored, and would then have nowhere to go.
+     */
+    const message = clash.deletedAt
+      ? `"${slug}" belongs to a deleted business that can still be restored. Choose another.`
+      : `"${slug}" is already the address of ${clash.name}.`;
+    throw ApiError.conflict(message, 'BUSINESS_SLUG_TAKEN');
+  }
+
+  return slug;
+}
+
+/**
+ * Approve the web address a tenant asked for - and with it, make it live.
+ *
+ * **Approval is the whole of the automation.** DNS and the certificate are a
+ * wildcard over the platform's domain (see docs/SUBDOMAIN_SETUP.md),
+ * so there is nothing to provision per business: the moment the slug is on the
+ * record, `resolveBusiness` sends `<slug>.<platform>` to this business's
+ * database, which is its catalogue. The host caches are cleared here so that
+ * happens on the next request rather than after a restart.
+ *
+ * Re-checked at approval time, not trusted from the request: the address may
+ * have been taken, or the reserved list grown, while it waited.
+ */
+async function approveAddressRequest(businessId) {
+  const business = await Business.findById(businessId);
+  if (!business) throw ApiError.notFound('Business not found.', 'BUSINESS_NOT_FOUND');
+
+  const request = business.addressRequest;
+  if (!request || request.status !== 'pending') {
+    throw ApiError.badRequest('There is no pending address request for this business.', 'NO_ADDRESS_REQUEST');
+  }
+
+  const slug = await availableSlug(request.slug, { exceptId: business._id });
+  const previous = business.slug ?? null;
+
+  await Business.updateOne({ _id: business._id }, { $set: { slug, addressRequest: null } });
+  resetBusinessResolution();
+  forgetBusinessConfig(business._id);
+
+  const fresh = await Business.findById(business._id);
+  return {
+    business: fresh.toPublic(),
+    previous,
+    liveUrl: env.storefrontDomain ? env.originFor(`${slug}.${env.storefrontDomain}`) : null,
+  };
+}
+
+/** Turn a request down, with the reason the tenant will read. */
+async function rejectAddressRequest(businessId, { note }) {
+  const business = await Business.findById(businessId);
+  if (!business) throw ApiError.notFound('Business not found.', 'BUSINESS_NOT_FOUND');
+  if (!business.addressRequest || business.addressRequest.status !== 'pending') {
+    throw ApiError.badRequest('There is no pending address request for this business.', 'NO_ADDRESS_REQUEST');
+  }
+
+  await Business.updateOne(
+    { _id: business._id },
+    {
+      $set: {
+        'addressRequest.status': 'rejected',
+        'addressRequest.decidedAt': new Date(),
+        'addressRequest.note': String(note ?? '').trim(),
+      },
+    },
+  );
+  const fresh = await Business.findById(business._id);
+  return { business: fresh.toPublic() };
+}
+
+/**
+ * Set where a business answers: its slug, and optionally a domain it owns.
+ *
+ * Super-admin only, deliberately. A web address is printed on receipts and
+ * shared in links, and a custom domain additionally needs an origin entry on
+ * the server to work at all - so changing either is an operation on the
+ * platform, not a preference in the business's own settings.
+ *
+ * **Changing a slug breaks every link to the old one.** The console says so
+ * before it sends this; nothing here redirects the old address.
+ */
+async function setBusinessAddress(businessId, body) {
+  const business = await Business.findById(businessId);
+  if (!business) throw ApiError.notFound('Business not found.', 'BUSINESS_NOT_FOUND');
+
+  const slug = await availableSlug(body.slug, { exceptId: business._id });
+
+  const domain = normaliseDomain(body.domain) || null;
+  if (domain) {
+    const problem = customDomainProblem(domain, env.platformDomains);
+    if (problem) throw ApiError.badRequest(problem, 'BUSINESS_DOMAIN_INVALID', { domain: problem });
+
+    const clash = await Business.findOne({ domain, _id: { $ne: business._id } })
+      .select('name')
+      .lean();
+    if (clash) {
+      throw ApiError.conflict(`${domain} already points at ${clash.name}.`, 'BUSINESS_DOMAIN_TAKEN');
+    }
+  }
+
+  const previous = { slug: business.slug ?? null, domain: business.domain ?? null };
+
+  // `updateOne`, not `save()`: the same reason `ensureDefaultBusiness` gives.
+  // A stale field elsewhere on an old document must not refuse an edit that
+  // does not touch it.
+  await Business.updateOne({ _id: business._id }, { $set: { slug, domain } });
+
+  // `resolveBusiness` caches host -> business, including misses. Without this
+  // the old address keeps answering and the new one keeps failing until the
+  // process restarts.
+  resetBusinessResolution();
+  forgetBusinessConfig(business._id);
+
+  const fresh = await Business.findById(business._id);
+  return {
+    business: fresh.toPublic(),
+    previous,
+    // A custom domain works only once the server accepts it as an origin. Said
+    // in the response so the console can say it to the person who just set one.
+    domainNeedsOrigin: Boolean(domain && !env.origins.includes(`https://${domain}`)),
+  };
 }
 
 /** Assign an existing business to a tenant, or move it between tenants. */
@@ -637,7 +843,7 @@ async function createOwner(tenantId, body, { origin } = {}) {
     await sendPasswordResetEmail({
       user,
       token,
-      origin: origin || env.publicOrigin,
+      origin: inviteOrigin(origin),
       expiresMinutes: Math.round(INVITE_TTL_MS / 60000),
     });
   } catch (error) {
@@ -669,7 +875,7 @@ async function resendOwnerInvite(userId, { origin } = {}) {
   await sendPasswordResetEmail({
     user,
     token,
-    origin: origin || env.publicOrigin,
+    origin: inviteOrigin(origin),
     expiresMinutes: Math.round(INVITE_TTL_MS / 60000),
   });
 
@@ -921,6 +1127,9 @@ export {
   logout,
   resendOwnerInvite,
   restoreBusiness,
+  approveAddressRequest,
+  rejectAddressRequest,
+  setBusinessAddress,
   setBusinessStatus,
   setPlanFeature,
   updatePlan,

@@ -174,7 +174,7 @@ if (process.argv[1] && process.argv[1].endsWith('articles.js')) {
     console.log('\n  Seeding product articles…\n');
     await connectDb();
 
-    const businesses = await db().Business.find({}).select('name code').lean();
+    const businesses = await db().Business.find({ deletedAt: null }).select('name code').lean();
     if (!businesses.length) {
       throw new Error('No businesses found. Run `npm run seed` first.');
     }

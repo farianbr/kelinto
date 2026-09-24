@@ -33,7 +33,9 @@ const stockMovementSchema = new mongoose.Schema(
 
     // What caused it, in a form the UI can link back to without a lookup table.
     reference: {
-      kind: { type: String, enum: ['purchase_order', 'order', 'rma', 'manual'] },
+      // `ticket` and `invoice`: parts fitted on a repair, taken off when the job
+      // is billed (services/repairPartsService.js).
+      kind: { type: String, enum: ['purchase_order', 'order', 'rma', 'manual', 'ticket', 'invoice'] },
       id: mongoose.Schema.Types.ObjectId,
       label: String, // 'PO-2026-00001' - human-readable, denormalised
     },

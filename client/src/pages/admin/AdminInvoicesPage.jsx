@@ -647,7 +647,12 @@ export function AdminInvoicesPage() {
   // On a service business the create screen is a full page, so the flag is
   // forwarded to it instead of opening a modal this branch does not use.
   const redirecting = useCreateRedirect(isService ? '/admin/invoices/create' : null);
-  const [rawCreating, setCreating, createSeed] = useCreateParam(true, false, ['client']);
+  // The flag stays in the URL until we know this is a wholesale business (which
+  // uses the modal). On a service business the redirect above consumes it;
+  // stripping it too raced that redirect and sent the staff member back here.
+  const [rawCreating, setCreating, createSeed] = useCreateParam(true, false, ['client'], {
+    strip: features !== null && !isService,
+  });
 
   /**
    * Whether we yet know which kind of business this is.

@@ -15,7 +15,7 @@ import { ADMIN_ROUTES } from '@/lib/adminRoutes';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { pressable } from '@/lib/motion';
 import { useAdminSettings, useAdminMutations } from '@/hooks/useAdmin';
-import { businessUrl } from '@/store/businessStore';
+import { useStorefrontUrl } from '@/hooks/useStorefrontUrl';
 
 /**
  * Kiosk settings (Sales § Kiosk) - the screen that gets a tablet onto a counter.
@@ -176,6 +176,7 @@ function PinForm({ hasPin, onSave, saving }) {
 }
 
 export function AdminKioskSettingsPage() {
+  const storefrontUrl = useStorefrontUrl();
   const { data, isLoading } = useAdminSettings();
   const { saveKioskSettings, setKioskPin } = useAdminMutations();
   const [saved, setSaved] = useState(false);
@@ -239,12 +240,12 @@ export function AdminKioskSettingsPage() {
         // tab rather than a navigation: opening it in place would leave a staff
         // member inside a full-screen customer flow with no way back to Settings.
         //
-        // `businessUrl` because a new tab inherits no `sessionStorage`, so a
+        // `storefrontUrl` because a new tab inherits no `sessionStorage`, so a
         // bare `/kiosk` resolved to the DEFAULT business - this screen would
         // report the kiosk live and the tab it opened would say it was off,
         // because they were two different businesses' kiosks.
         action={
-          <a href={businessUrl('/kiosk')} target="_blank" rel="noreferrer">
+          <a href={storefrontUrl('/kiosk')} target="_blank" rel="noreferrer">
             <Button size="sm" variant="outline" icon={ExternalLink}>
               Open the kiosk
             </Button>

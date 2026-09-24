@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import useAdminForm from '@/hooks/useAdminForm';
-import { Link } from 'react-router';
 import {
   AlertCircle,
   ExternalLink,
@@ -40,6 +39,7 @@ import PageHeader from '@/components/admin/PageHeader';
 import { ADMIN_ROUTES } from '@/lib/adminRoutes';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { useAdminBlog, useAdminBlogPost, useAdminMutations } from '@/hooks/useAdmin';
+import { useStorefrontUrl } from '@/hooks/useStorefrontUrl';
 
 const STATUS_FILTERS = [
   { value: 'all', label: 'All posts' },
@@ -312,6 +312,7 @@ function PostEditor({ editingId, onSubmit, onCancel, isPending, error }) {
 const ADMIN_PAGE = { ...ADMIN_ROUTES['/admin/marketing/blog'], icon: adminIcon('Newspaper') };
 
 export function AdminBlogPage() {
+  const storefrontUrl = useStorefrontUrl();
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('all');
   const [editingId, setEditingId] = useState(null); // post id, or 'new'
@@ -430,8 +431,8 @@ export function AdminBlogPage() {
       render: (post) => (
         <div className="flex justify-end gap-1">
           {post.status === 'published' && (
-            <Link
-              to={`/blog/${post.slug}`}
+            <a
+              href={storefrontUrl(`/blog/${post.slug}`)}
               target="_blank"
               rel="noreferrer"
               onClick={(event) => event.stopPropagation()}
@@ -442,7 +443,7 @@ export function AdminBlogPage() {
               )}
             >
               <ExternalLink className="size-4" strokeWidth={2} />
-            </Link>
+            </a>
           )}
           <button
             type="button"

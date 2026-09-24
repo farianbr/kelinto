@@ -1663,6 +1663,15 @@ export function useAdminMutations() {
       mutationFn: (id) => api.delete(`/admin/businesses/${id}`),
       onSuccess: invalidate,
     }),
+    /** Ask the platform for a web address. It goes live only once approved. */
+    requestAddress: useMutation({
+      mutationFn: ({ id, slug }) => api.post(`/admin/businesses/${id}/address-request`, { slug }),
+      onSuccess: invalidate,
+    }),
+    cancelAddressRequest: useMutation({
+      mutationFn: (id) => api.delete(`/admin/businesses/${id}/address-request`),
+      onSuccess: invalidate,
+    }),
 
     createRole: useMutation({
       mutationFn: (body) => api.post('/admin/roles', body),

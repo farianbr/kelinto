@@ -42,6 +42,13 @@ export function AuthProvider({ children }) {
    */
   const impersonation = data?.impersonation ?? null;
 
+  /**
+   * Where the active business's storefront answers (`https://cellshoppe.kelinto.com`),
+   * or null. The panel host serves no storefront, so a panel link to a product,
+   * a blog post or the kiosk goes there instead - see `lib/storefrontUrl.js`.
+   */
+  const storefrontOrigin = data?.storefrontOrigin ?? null;
+
   const refresh = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['auth', 'me'] });
     // Pricing is embedded in every product response, so the catalogue has to be
@@ -61,6 +68,10 @@ export function AuthProvider({ children }) {
         user: result.user,
         features: result.features ?? null,
       });
+      // The login reply carries the user and features; `/auth/me` also knows
+      // the business's storefront address, so it is fetched once more behind
+      // the render rather than left missing until it goes stale.
+      queryClient.invalidateQueries({ queryKey: ['auth', 'me'] });
       queryClient.invalidateQueries({ queryKey: ['products'] });
       queryClient.invalidateQueries({ queryKey: ['search'] });
       // Combo bundle prices are gated exactly like the catalogue.
@@ -125,12 +136,13 @@ export function AuthProvider({ children }) {
       // Null for everybody but a platform operator inside a support session.
       impersonation,
       isImpersonating: Boolean(impersonation),
+      storefrontOrigin,
       signIn,
       signUp,
       signOut,
       refresh,
     }),
-    [user, features, impersonation, isLoading, signIn, signUp, signOut, refresh],
+    [user, features, impersonation, storefrontOrigin, isLoading, signIn, signUp, signOut, refresh],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

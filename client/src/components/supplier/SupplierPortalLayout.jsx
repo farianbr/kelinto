@@ -1,6 +1,8 @@
 import { Suspense, useState } from 'react';
 import useDocumentTitle from '@/hooks/useDocumentTitle';
-import { Outlet, useNavigate } from 'react-router';
+import { Link, Outlet, useNavigate } from 'react-router';
+import Button from '@/components/ui/Button';
+import SupplierBusinessesPage from '@/pages/supplier/SupplierBusinessesPage';
 import { Menu } from 'lucide-react';
 import cn from '@/lib/cn';
 import Skeleton from '@/components/ui/Skeleton';
@@ -40,7 +42,7 @@ export function SupplierPortalLayout() {
   // page: the titles live in the route table beside the breadcrumbs.
   useDocumentTitle();
   const navigate = useNavigate();
-  const { supplier, business, isLoading } = useSupplierSession();
+  const { account, supplier, business, businesses, invitations, isLoading } = useSupplierSession();
 
   /**
    * The buying business's accent (SAAS_PLATFORM §1.1).
@@ -75,26 +77,13 @@ export function SupplierPortalLayout() {
 
   // Themed here rather than inside the page: the sign-in screen is a branch of
   // this shell, not a route of its own, and the business is already resolved.
-  if (!supplier) {
+  if (!account) {
     return (
       <div style={theme} data-business-theme="supplier" className="contents">
         <SupplierLoginPage businessName={business?.name ?? null} />
       </div>
     );
   }
-
-  const badges = {
-    // What actually needs them: an order they have not priced, or one we have
-    // queried. Anything else is history and should not carry a number.
-    orders: orders.filter(
-      (order) =>
-        order.state === 'open' &&
-        ['invited', 'viewed', 'negotiating'].includes(order.myBid.status),
-    ).length,
-    deliveries: orders.filter(
-      (order) => order.state === 'won' && order.myBid.delivery?.status !== 'delivered',
-    ).length,
-  };
 
   // Ordinary rather than critical: signing out is undone by signing back in.
   // It still asks, because losing a half-typed price to a misplaced click is a
@@ -111,6 +100,56 @@ export function SupplierPortalLayout() {
       },
     });
   }
+
+  const signOutDialog = (
+    <ConfirmDialog
+      open={confirmingSignOut}
+      onClose={() => setConfirmingSignOut(false)}
+      onConfirm={signOutNow}
+      tone="warn"
+      title="Sign out of the supplier portal?"
+      confirmLabel="Sign out"
+      loading={signOut.isPending}
+    />
+  );
+
+  /**
+   * Signed in, working nowhere yet: a new account whose business is still an
+   * invitation, or one whose businesses have all paused them. No sidebar - every
+   * item in it is a business's orders or agreements, and there is no business.
+   */
+  if (!supplier) {
+    return (
+      <div style={theme} data-business-theme="supplier" className="min-h-dvh bg-surface-2">
+        <header className="flex h-14 items-center gap-3 border-b border-line bg-surface px-4">
+          <span className="min-w-0 flex-1 truncate text-sm text-ink-600">{account.email}</span>
+          <Button variant="ghost" size="sm" onClick={handleSignOut}>
+            Sign out
+          </Button>
+        </header>
+        <main className="px-3 py-5 sm:px-4 lg:py-7">
+          <SupplierBusinessesPage />
+        </main>
+        {signOutDialog}
+      </div>
+    );
+  }
+
+  const badges = {
+    // Invitations waiting for an answer - the one thing on that screen that is
+    // somebody else waiting on this supplier.
+    businesses: invitations.length,
+    // What actually needs them: an order they have not priced, or one we have
+    // queried. Anything else is history and should not carry a number.
+    orders: orders.filter(
+      (order) =>
+        order.state === 'open' &&
+        ['invited', 'viewed', 'negotiating'].includes(order.myBid.status),
+    ).length,
+    deliveries: orders.filter(
+      (order) => order.state === 'won' && order.myBid.delivery?.status !== 'delivered',
+    ).length,
+  };
 
   return (
     <div style={theme} data-business-theme="supplier" className="flex h-dvh overflow-hidden bg-surface-2">
@@ -137,9 +176,22 @@ export function SupplierPortalLayout() {
             <span className="block truncate font-display text-md font-semibold text-ink-900">
               {supplier.name}
             </span>
-            {supplier.email && (
-              <span className="block truncate text-xs text-ink-400">{supplier.email}</span>
-            )}
+            {/* Which business every screen below belongs to. With one login
+                across several, "whose order is this" has to be answered on
+                every page, not only on the one where it was chosen. */}
+            <span className="block truncate text-xs text-ink-400">
+              Supplying {business?.name}
+              {(businesses.length > 1 || invitations.length > 0) && (
+                <>
+                  {' · '}
+                  <Link to="/supplier/businesses" className="font-medium text-brand">
+                    {invitations.length
+                      ? `${invitations.length} invitation${invitations.length === 1 ? '' : 's'}`
+                      : 'Switch'}
+                  </Link>
+                </>
+              )}
+            </span>
           </span>
         </header>
 
@@ -157,15 +209,7 @@ export function SupplierPortalLayout() {
         </footer>
       </div>
 
-      <ConfirmDialog
-        open={confirmingSignOut}
-        onClose={() => setConfirmingSignOut(false)}
-        onConfirm={signOutNow}
-        tone="warn"
-        title="Sign out of the supplier portal?"
-        confirmLabel="Sign out"
-        loading={signOut.isPending}
-      />
+      {signOutDialog}
     </div>
   );
 }

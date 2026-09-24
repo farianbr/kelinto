@@ -14,6 +14,7 @@ import credentialService from './credentialService.js';
 import env from '../config/env.js';
 import { BUSINESS_INFO } from '../../../shared/business.js';
 import { sendingBusiness } from './sendingBusiness.js';
+import { storefrontOrigin } from './linkOrigins.js';
 
 /**
  * Marketing - the four communication channels (ERP rework §6.13, phase 9).
@@ -339,11 +340,12 @@ async function sendMessage(
      * slip - the recipient consented to hear from the business they deal with.
      */
     const business = await sendingBusiness();
+    const origin = await storefrontOrigin();
 
     const result = await sendMail({
       to: account.email,
       subject: subject || `A message from ${business.name}`,
-      html: decorate(text, account, business),
+      html: decorate(text, account, business, origin),
       text,
     });
     row.status = result.delivered ? 'sent' : 'failed';
@@ -478,12 +480,12 @@ function unsubscribeToken(userId) {
     .slice(0, 32);
 }
 
-function unsubscribeUrl(account) {
+function unsubscribeUrl(account, origin = env.publicOrigin) {
   const id = String(account._id);
-  // `publicOrigin`, not `CLIENT_ORIGIN` - the latter is a comma-separated CORS
-  // list, and a link in an email needs the one real address (see config/env.js,
-  // and `notifications.js` which builds invoice links the same way).
-  return `${env.publicOrigin}/unsubscribe?u=${id}&t=${unsubscribeToken(id)}`;
+  // The business's own storefront (`linkOrigins.storefrontOrigin`), passed in
+  // by the async sender: `/unsubscribe` is a storefront page, and on a split
+  // installation the platform apex no longer serves one.
+  return `${origin}/unsubscribe?u=${id}&t=${unsubscribeToken(id)}`;
 }
 
 /**
@@ -494,7 +496,7 @@ function unsubscribeUrl(account) {
  * The body is escaped on the way in - admin-authored copy is never trusted as
  * markup, on the server any more than on the client (Instructions §9).
  */
-function decorate(body, account, business = BUSINESS_INFO) {
+function decorate(body, account, business = BUSINESS_INFO, origin = env.publicOrigin) {
   const escape = (value) =>
     String(value ?? '').replace(
       /[&<>]/g,
@@ -519,7 +521,7 @@ function decorate(body, account, business = BUSINESS_INFO) {
     // commercial message. Not optional, and not the author's job to remember.
     `<p style="font-size:12px;color:#6B6B6B;margin:0 0 8px">${escape(business.name)}${address ? ` - ${escape(address)}` : ''}</p>`,
     '<p style="font-size:12px;color:#6B6B6B;margin:0">You are receiving this because you hold a wholesale account with us. ',
-    `<a href="${unsubscribeUrl(account)}" style="color:#CF3429">Unsubscribe</a>.</p>`,
+    `<a href="${unsubscribeUrl(account, origin)}" style="color:#CF3429">Unsubscribe</a>.</p>`,
     '</div>',
   ].join('');
 }
@@ -689,6 +691,7 @@ async function sendCampaign(id, staff) {
   // for every message in a campaign, and a lookup inside the loop would be one
   // query per account for an answer that cannot change mid-send.
   const business = await sendingBusiness();
+  const origin = await storefrontOrigin();
 
   let sent = 0;
   let queued = 0;
@@ -707,7 +710,7 @@ async function sendCampaign(id, staff) {
         subject: db().MessageTemplate.render(row.subject, account, {
           shopName: business.name,
         }),
-        html: decorate(body, account, business),
+        html: decorate(body, account, business, origin),
         text: body,
       });
       status = result.delivered ? 'sent' : 'failed';

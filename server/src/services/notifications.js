@@ -1,6 +1,7 @@
 import env from '../config/env.js';
 import { sendMail } from './mailer.js';
 import { renderInvoiceHtml, renderInvoiceText, resolveInvoiceBrand } from './invoiceDocument.js';
+import { storefrontOrigin } from './linkOrigins.js';
 
 /**
  * Transactional mail the buyer gets without asking for it.
@@ -15,7 +16,7 @@ async function sendInvoiceEmail({ invoice, order, user }) {
 
   try {
     const brand = await resolveInvoiceBrand(invoice.business);
-    const html = renderInvoiceHtml({ invoice, order, user, origin: env.publicOrigin, ...brand });
+    const html = renderInvoiceHtml({ invoice, order, user, origin: await storefrontOrigin(), ...brand });
     const text = renderInvoiceText({ invoice, order, shop: brand.shop });
 
     return await sendMail({

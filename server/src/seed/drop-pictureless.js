@@ -154,7 +154,7 @@ if (process.argv[1] && process.argv[1].endsWith('drop-pictureless.js')) {
     );
     await connectDb();
 
-    const businesses = await db().Business.find({}).select('name code').lean();
+    const businesses = await db().Business.find({ deletedAt: null }).select('name code').lean();
     if (!businesses.length) throw new Error('No businesses found.');
 
     for (const business of businesses) {

@@ -43,7 +43,7 @@ async function backfillInvoiceBusiness({ quiet = false, dryRun = false } = {}) {
     if (!quiet) console.log(...args);
   };
 
-  const businesses = await controlModels().Business.find({}).select('code name').lean();
+  const businesses = await controlModels().Business.find({ deletedAt: null }).select('code name').lean();
   if (businesses.length === 0) {
     log('No businesses exist - nothing to do.');
     return { assigned: 0 };

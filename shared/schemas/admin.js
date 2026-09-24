@@ -5,6 +5,7 @@ import { passwordSchema } from './auth.js';
 import { DEFAULT_COUNTRY } from '../countries.js';
 import { PROVINCES } from './checkout.js';
 import { isValidPostal, postalExampleFor } from '../regions.js';
+import { businessSlugProblem, customDomainProblem, normaliseDomain } from '../hosts.js';
 // Identity colours, and the mapping that accepts the semantic tokens this
 // field used to hold. See shared/businessPalette.js for why the two lists are
 // separate now.
@@ -1213,6 +1214,11 @@ const supplierLoginSchema = z.object({
   password: z.string().min(1, 'Enter your password.'),
 });
 
+/** Which of its businesses a supplier account works in next. */
+const supplierSwitchSchema = z.object({
+  business: z.string().trim().regex(/^[a-f\d]{24}$/i, 'Choose a business.'),
+});
+
 // ---- the super-admin console (SAAS_PLATFORM §4.5) ---------------------------
 
 const superAdminLoginSchema = z.object({
@@ -1238,10 +1244,57 @@ const tenantSlotsSchema = z.object({
   slots: z.coerce.number().int().min(0, 'Slots cannot be negative.').max(500),
 });
 
+/**
+ * A business's web address: the `<slug>.<platform>` label. Shared by create
+ * and by the address editor so both refuse the same things for the same reason
+ * (`shared/hosts.js`). The server re-checks, and adds the one test this cannot
+ * make: whether another business already holds it.
+ */
+const businessSlugSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .superRefine((value, ctx) => {
+    const problem = businessSlugProblem(value);
+    if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem });
+  });
+
 const superAdminBusinessSchema = z.object({
   name: z.string().trim().min(1, 'Give the business a name.').max(120),
   businessType: z.enum(['product', 'service', 'both']),
   colorToken: colorTokenSchema.optional(),
+  // Optional: derived from the name when left blank, so a quick create still
+  // gives the business somewhere to be reached.
+  slug: businessSlugSchema.optional().or(z.literal('')),
+});
+
+/**
+ * Where a business answers: its slug, and optionally a domain it owns.
+ *
+ * The domain is checked for shape here and against the platform's own domains
+ * on the server, which is the only side that knows them. Empty clears it.
+ */
+/** A tenant asking for a web address. The platform approves it. */
+const addressRequestSchema = z.object({
+  slug: businessSlugSchema,
+});
+
+/** Turning a request down. The reason is shown to the tenant, so it is required. */
+const addressRejectSchema = z.object({
+  note: z.string().trim().min(1, 'Say why, so the business can ask for something else.').max(500),
+});
+
+const businessAddressSchema = z.object({
+  slug: businessSlugSchema,
+  domain: z
+    .string()
+    .transform(normaliseDomain)
+    .superRefine((value, ctx) => {
+      const problem = customDomainProblem(value);
+      if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem });
+    })
+    .optional()
+    .or(z.literal('')),
 });
 
 const businessAssignSchema = z.object({
@@ -3377,4 +3430,4 @@ const serviceQuoteConvertSchema = z.object({
   priority: z.enum(TICKET_PRIORITIES).default('normal'),
 });
 
-export { quoteToTicketSchema, ticketDepositSchema, ticketConvertSchema, TAX_RATES, TAX_LABELS, provinceTaxOptions, INVOICE_SERVICE_TYPES, SERVICE_INVOICE_TYPES, ORDER_OPEN_STATUSES, ORDER_UNFULFILLED_STATUSES, approveUserSchema, rejectUserSchema, creditSchema, clientSchema, clientFormSchema, clientCreateFormSchema, clientUpdateSchema, CONSENT_CHANNELS, PREFERRED_CONTACT_OPTIONS, CUSTOMER_SOURCE_OPTIONS, contactConsentSchema, MEMBERSHIP_TIERS, tierSchema, internalNoteSchema, storeCreditSchema, refundSchema, userStatusSchema, productSchema, ORDER_STATUS_FLOW, orderStatusSchema, CARRIERS, ADMIN_NAV, ADMIN_LEGACY_REDIRECTS, invoicePaymentSchema, invoiceTipSchema, invoiceVoidSchema, webQuoteStatusSchema, creditPaymentSchema, invoiceUpdateSchema, bulkOrderStatusSchema, supplierSchema, purchaseOrderSchema, purchaseOrderStatusSchema, purchaseReceiveSchema, purchasePaymentSchema, purchaseInviteSchema, purchaseSendSchema, purchaseNegotiateSchema, purchaseConfirmSchema, proformaRevisionSchema, supplierQuoteSchema, supplierDeclineSchema, supplierProformaSchema, supplierDeliverySchema, superAdminLoginSchema, tenantSchema, tenantSlotsSchema, superAdminBusinessSchema, businessAssignSchema, businessFeatureSchema, impersonationSchema, tenantOwnerSchema, supportMessageSchema, planSchema, planFeatureSchema, businessStatusSchema, supplierLoginSchema, supplierForgotSchema, supplierResetSchema, supplierPasswordSchema, expenseSchema, expenseCategorySchema, stockAdjustSchema, productOpsSchema, quoteSchema, quoteStatusSchema, quoteConvertSchema, adminOrderSchema, adminInvoiceSchema, RMA_ITEM_DISPOSITIONS, rmaSchema, TICKET_STATUSES, TICKET_PRIORITIES, TICKET_SOURCES, TICKET_STATUS_LABELS, CONDITION_GRADES, CONDITION_PARTS, ticketSchema, ticketDeviceSchema, ticketLineSchema, ticketUpdateSchema, ticketStatusSchema, rmaStatusSchema, rmaInspectSchema, rmaResolveSchema, PERMISSION_AREAS, PERMISSION_LEVELS, PERMISSION_LEVEL_LABELS, SETTINGS_SUBAREAS, SUBAREA_LEVELS, SUBAREA_LEVEL_LABELS, settingsAreaKey, BUSINESS_STATUSES, BUSINESS_COLOR_TOKENS, businessSchema, roleSchema, staffUserSchema, staffUserUpdateSchema, MESSAGE_CHANNELS, TEMPLATE_DOCUMENTS, CAMPAIGN_AUDIENCES, CAMPAIGN_AUDIENCE_LABELS, messageSchema, callLogSchema, messageTemplateSchema, campaignSchema, unsubscribeSchema, referralRateSchema, businessInfoSchema, saleSettingsSchema, shippingSettingsSchema, paymentMethodsSettingsSchema, inventorySettingsSchema, agreementTemplateSchema, agreementSignSchema, providerCredentialSchema, taxonomyNodeSchema, taxonomyCreateSchema, taxonomyImportSchema, invoiceStatusRuleSchema, LABEL_COLOR_TOKENS, LABEL_COLOR_OPTIONS, invoiceLabelSchema, invoiceLabelSetSchema, invoiceRefundSchema, invoiceRemindSchema, communicationsSettingsSchema, messageLimitSchema, SUPPLIER_RETURN_REASON_VALUES, supplierReturnSchema, supplierReturnStatusSchema, supplierCreditSchema, SUPPLIER_BILLING_CYCLES, supplierServiceSchema, supplierServiceUpdateSchema, supplierChargeSchema, SERVICE_CATEGORIES, SERVICE_CATEGORY_LABELS, serviceCatalogSchema, serviceCatalogUpdateSchema, serviceImportSchema, DEVICE_KINDS, DEVICE_KIND_LABELS, deviceCatalogSchema, deviceCatalogUpdateSchema, kioskCheckInSchema, kioskUnlockSchema, kioskPinSchema, kioskSettingsSchema, SERVICE_QUOTE_STATUSES, SERVICE_QUOTE_SOURCES, SERVICE_QUOTE_STATUS_LABELS, serviceQuoteLineSchema, serviceQuoteDeviceSchema, serviceQuoteSchema, serviceQuoteUpdateSchema, serviceQuoteStatusSchema, serviceQuoteConvertSchema };
+export { quoteToTicketSchema, ticketDepositSchema, ticketConvertSchema, TAX_RATES, TAX_LABELS, provinceTaxOptions, INVOICE_SERVICE_TYPES, SERVICE_INVOICE_TYPES, ORDER_OPEN_STATUSES, ORDER_UNFULFILLED_STATUSES, approveUserSchema, rejectUserSchema, creditSchema, clientSchema, clientFormSchema, clientCreateFormSchema, clientUpdateSchema, CONSENT_CHANNELS, PREFERRED_CONTACT_OPTIONS, CUSTOMER_SOURCE_OPTIONS, contactConsentSchema, MEMBERSHIP_TIERS, tierSchema, internalNoteSchema, storeCreditSchema, refundSchema, userStatusSchema, productSchema, ORDER_STATUS_FLOW, orderStatusSchema, CARRIERS, ADMIN_NAV, ADMIN_LEGACY_REDIRECTS, invoicePaymentSchema, invoiceTipSchema, invoiceVoidSchema, webQuoteStatusSchema, creditPaymentSchema, invoiceUpdateSchema, bulkOrderStatusSchema, supplierSchema, purchaseOrderSchema, purchaseOrderStatusSchema, purchaseReceiveSchema, purchasePaymentSchema, purchaseInviteSchema, purchaseSendSchema, purchaseNegotiateSchema, purchaseConfirmSchema, proformaRevisionSchema, supplierQuoteSchema, supplierDeclineSchema, supplierProformaSchema, supplierDeliverySchema, superAdminLoginSchema, tenantSchema, tenantSlotsSchema, superAdminBusinessSchema, businessAddressSchema, addressRequestSchema, addressRejectSchema, businessAssignSchema, businessFeatureSchema, impersonationSchema, tenantOwnerSchema, supportMessageSchema, planSchema, planFeatureSchema, businessStatusSchema, supplierLoginSchema, supplierSwitchSchema, supplierForgotSchema, supplierResetSchema, supplierPasswordSchema, expenseSchema, expenseCategorySchema, stockAdjustSchema, productOpsSchema, quoteSchema, quoteStatusSchema, quoteConvertSchema, adminOrderSchema, adminInvoiceSchema, RMA_ITEM_DISPOSITIONS, rmaSchema, TICKET_STATUSES, TICKET_PRIORITIES, TICKET_SOURCES, TICKET_STATUS_LABELS, CONDITION_GRADES, CONDITION_PARTS, ticketSchema, ticketDeviceSchema, ticketLineSchema, ticketUpdateSchema, ticketStatusSchema, rmaStatusSchema, rmaInspectSchema, rmaResolveSchema, PERMISSION_AREAS, PERMISSION_LEVELS, PERMISSION_LEVEL_LABELS, SETTINGS_SUBAREAS, SUBAREA_LEVELS, SUBAREA_LEVEL_LABELS, settingsAreaKey, BUSINESS_STATUSES, BUSINESS_COLOR_TOKENS, businessSchema, roleSchema, staffUserSchema, staffUserUpdateSchema, MESSAGE_CHANNELS, TEMPLATE_DOCUMENTS, CAMPAIGN_AUDIENCES, CAMPAIGN_AUDIENCE_LABELS, messageSchema, callLogSchema, messageTemplateSchema, campaignSchema, unsubscribeSchema, referralRateSchema, businessInfoSchema, saleSettingsSchema, shippingSettingsSchema, paymentMethodsSettingsSchema, inventorySettingsSchema, agreementTemplateSchema, agreementSignSchema, providerCredentialSchema, taxonomyNodeSchema, taxonomyCreateSchema, taxonomyImportSchema, invoiceStatusRuleSchema, LABEL_COLOR_TOKENS, LABEL_COLOR_OPTIONS, invoiceLabelSchema, invoiceLabelSetSchema, invoiceRefundSchema, invoiceRemindSchema, communicationsSettingsSchema, messageLimitSchema, SUPPLIER_RETURN_REASON_VALUES, supplierReturnSchema, supplierReturnStatusSchema, supplierCreditSchema, SUPPLIER_BILLING_CYCLES, supplierServiceSchema, supplierServiceUpdateSchema, supplierChargeSchema, SERVICE_CATEGORIES, SERVICE_CATEGORY_LABELS, serviceCatalogSchema, serviceCatalogUpdateSchema, serviceImportSchema, DEVICE_KINDS, DEVICE_KIND_LABELS, deviceCatalogSchema, deviceCatalogUpdateSchema, kioskCheckInSchema, kioskUnlockSchema, kioskPinSchema, kioskSettingsSchema, SERVICE_QUOTE_STATUSES, SERVICE_QUOTE_SOURCES, SERVICE_QUOTE_STATUS_LABELS, serviceQuoteLineSchema, serviceQuoteDeviceSchema, serviceQuoteSchema, serviceQuoteUpdateSchema, serviceQuoteStatusSchema, serviceQuoteConvertSchema };

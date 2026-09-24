@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 
 import ImpersonationGrant, {
@@ -102,10 +103,7 @@ async function enter(superAdmin, businessId, { reason, minutes } = {}, req, res)
     expiresAt: { $gt: new Date() },
   });
 
-  if (existing) {
-    issueToken(res, existing);
-    return { grant: existing.toPublic(), resumed: true };
-  }
+  if (existing) return deliver(res, existing, { resumed: true });
 
   const grant = await ImpersonationGrant.create({
     superAdmin: superAdmin._id,
@@ -132,8 +130,77 @@ async function enter(superAdmin, businessId, { reason, minutes } = {}, req, res)
     description: `Platform support entered ${business.name}: ${text}`,
   });
 
+  return deliver(res, grant, { resumed: false });
+}
+
+/** Are the super admin and the panel on different hosts? Then no cookie can cross. */
+function hostsAreSplit() {
+  return Boolean(env.SUPERADMIN_HOST && env.PANEL_HOST && env.SUPERADMIN_HOST !== env.PANEL_HOST);
+}
+
+/** How long a handoff link lives. Long enough to follow, short enough to be spent. */
+const HANDOFF_SECONDS = 60;
+
+/**
+ * Hand the operator the session, wherever the panel is.
+ *
+ * On one host the cookie is simply set, as it always was. On two, a cookie set
+ * here would stay on the super admin host and the panel would never see it - so
+ * the grant gets a single-use handoff instead, and the super admin sends the
+ * browser to the panel host to claim it (`claim` below).
+ */
+async function deliver(res, grant, { resumed }) {
+  if (!hostsAreSplit()) {
+    issueToken(res, grant);
+    return { grant: grant.toPublic(), resumed };
+  }
+
+  const jti = crypto.randomUUID();
+  grant.handoffJti = jti;
+  await grant.save();
+
+  const token = jwt.sign(
+    { kind: 'impersonation-handoff', grant: grant._id.toString(), jti },
+    env.JWT_SECRET,
+    { expiresIn: HANDOFF_SECONDS },
+  );
+
+  return {
+    grant: grant.toPublic(),
+    resumed,
+    handoffUrl: `${env.originFor(env.PANEL_HOST)}/api/impersonation/claim?t=${encodeURIComponent(token)}`,
+  };
+}
+
+/**
+ * Turn a handoff link into the support session, on the panel's host.
+ *
+ * **Single use.** The grant's `handoffJti` is cleared in the same update that
+ * matches it, so two claims of one link cannot both succeed, and a link read
+ * out of a browser history later finds nothing to match. A grant that has
+ * ended or expired since the link was minted is refused the same way.
+ *
+ * Returns whether a session was issued; the caller decides where to send the
+ * browser either way.
+ */
+async function claim(token, res) {
+  let payload;
+  try {
+    payload = jwt.verify(String(token ?? ''), env.JWT_SECRET);
+  } catch {
+    return false;
+  }
+  if (payload?.kind !== 'impersonation-handoff' || !payload.jti) return false;
+
+  const grant = await ImpersonationGrant.findOneAndUpdate(
+    { _id: payload.grant, handoffJti: payload.jti },
+    { $set: { handoffJti: null } },
+    { new: true },
+  );
+  if (!grant || !grant.isLive()) return false;
+
   issueToken(res, grant);
-  return { grant: grant.toPublic(), resumed: false };
+  return true;
 }
 
 /**
@@ -232,6 +299,7 @@ async function revoke(grantId, req) {
 
 export {
   IMPERSONATION_COOKIE,
+  claim,
   clearImpersonationSession,
   enter,
   leave,

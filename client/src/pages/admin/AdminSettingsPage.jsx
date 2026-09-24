@@ -89,6 +89,10 @@ function PageCard({ page, built }) {
   return (
     <Link
       to={page.path}
+      // Tells a page lent from another section (Services, Discount Codes) that
+      // it was opened from Settings, so it shows the settings tab row. Opened
+      // from its own nav it does not. See `SettingsTabs`.
+      state={{ fromSettings: page.settingsTab ?? null }}
       className={cn(
         'group flex gap-3 rounded-lg border border-line bg-surface p-4 transition-[border-color,background]',
         'hover:border-ink-300 hover:bg-surface-2',

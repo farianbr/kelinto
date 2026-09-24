@@ -92,6 +92,91 @@ function costOfGoods(orders) {
   return { cost, revenue, costedLines, uncostedLines, uncostedRevenue };
 }
 
+/**
+ * Service income for invoices in the range: repairs and every other charge
+ * raised without an order.
+ *
+ * **The P&L used to read orders only**, so a business that repairs devices
+ * reported none of that work as revenue: a ticket's invoice, or an itemised
+ * charge raised at the counter, was invoiced and collected but never earned.
+ * Those are the invoices with no `order` - an order's own invoice is already
+ * counted through the order, and a store-credit receipt is a movement of money
+ * rather than a sale. A voided invoice is left out, as a cancelled order is.
+ *
+ * Split the way the work was priced:
+ *   - `labour`: service lines.
+ *   - `parts`: part lines, costed from the `unitCost` snapshotted when the
+ *     invoice was raised. A line without one (typed by hand, or raised before
+ *     2026-09-24) is reported as uncosted rather than as pure margin.
+ *   - `other`: whatever the total holds beyond its lines - an out-of-area fee,
+ *     or the whole of a flat charge with no lines at all.
+ * Revenue is always net of tax: `amount - taxCents` is what the business keeps.
+ */
+async function serviceIncomeIn(start, end) {
+  const invoices = await db()
+    .Invoice.find({
+      issuedAt: { $gte: start, $lte: end },
+      order: null,
+      kind: { $ne: 'receipt' },
+      'payments.method': { $ne: 'void' },
+    })
+    .select('amount taxCents discountCents devices')
+    .lean();
+
+  const out = {
+    invoices: invoices.length,
+    labour: 0,
+    parts: 0,
+    other: 0,
+    discounts: 0,
+    net: 0,
+    cost: 0,
+    tax: 0,
+    labourLines: 0,
+    partLines: 0,
+    costedLines: 0,
+    uncostedLines: 0,
+    uncostedRevenue: 0,
+  };
+
+  const lineTotal = (line) => (line.priceCents ?? 0) * (line.qty ?? 1);
+
+  for (const invoice of invoices) {
+    let labour = 0;
+    let parts = 0;
+    for (const device of invoice.devices ?? []) {
+      for (const line of device.services ?? []) {
+        labour += lineTotal(line);
+        out.labourLines += 1;
+      }
+      for (const line of device.parts ?? []) {
+        parts += lineTotal(line);
+        out.partLines += 1;
+        if (line.unitCost > 0) {
+          out.cost += line.unitCost * (line.qty ?? 1);
+          out.costedLines += 1;
+        } else {
+          out.uncostedLines += 1;
+          out.uncostedRevenue += lineTotal(line);
+        }
+      }
+    }
+
+    const tax = invoice.taxCents ?? 0;
+    const discount = invoice.discountCents ?? 0;
+    const net = (invoice.amount ?? 0) - tax;
+
+    out.labour += labour;
+    out.parts += parts;
+    out.discounts += discount;
+    out.other += net - (labour + parts - discount);
+    out.net += net;
+    out.tax += tax;
+  }
+
+  return out;
+}
+
 /** Orders that count as sales. Cancelled orders are not revenue. */
 function salesQuery(start, end) {
   return { createdAt: { $gte: start, $lte: end }, status: { $ne: 'cancelled' } };
@@ -280,7 +365,7 @@ async function receivables() {
  * `?tab=summary` - the seven headline figures plus the four panels.
  */
 async function summary(start, end, settings) {
-  const [invoiced, collected, expenseData, orders, inventory, ar, refunds] = await Promise.all([
+  const [invoiced, collected, expenseData, orders, inventory, ar, refunds, service] = await Promise.all([
     invoicedIn(start, end),
     collectedIn(start, end),
     expensesIn(start, end),
@@ -288,17 +373,25 @@ async function summary(start, end, settings) {
     inventoryPosition(settings),
     receivables(),
     refundsIn(start, end),
+    serviceIncomeIn(start, end),
   ]);
 
   const cogs = costOfGoods(orders);
-  const taxCollected = orders.reduce((sum, order) => sum + (order.tax ?? 0), 0);
+  const taxCollected =
+    orders.reduce((sum, order) => sum + (order.tax ?? 0), 0) + service.tax;
+
+  // Goods sold through orders plus the work billed without one (repairs and
+  // counter charges), so a business that does both reports both.
+  const revenue = cogs.revenue + service.net;
+  const costOfGoodsSold = cogs.cost + service.cost;
+  const grossProfit = revenue - costOfGoodsSold;
 
   return {
     kpis: {
       invoiced: invoiced.total,
       collected: collected.total,
-      grossProfit: cogs.revenue - cogs.cost,
-      costOfGoods: cogs.cost,
+      grossProfit,
+      costOfGoods: costOfGoodsSold,
       expenses: expenseData.total,
       taxCollected,
       outstanding: ar.outstanding,
@@ -306,9 +399,9 @@ async function summary(start, end, settings) {
     // Travels with every margin figure so a screen can qualify it rather than
     // reporting uncosted lines as pure profit.
     costCoverage: {
-      costedLines: cogs.costedLines,
-      uncostedLines: cogs.uncostedLines,
-      uncostedRevenue: cogs.uncostedRevenue,
+      costedLines: cogs.costedLines + service.costedLines,
+      uncostedLines: cogs.uncostedLines + service.uncostedLines,
+      uncostedRevenue: cogs.uncostedRevenue + service.uncostedRevenue,
     },
     refunds,
     // Staff attribution arrives in phase 8 - there is no staff concept to
@@ -316,11 +409,11 @@ async function summary(start, end, settings) {
     staff: { available: false, rows: [] },
     receivables: ar,
     profitAndLoss: {
-      revenue: cogs.revenue,
-      costOfGoods: cogs.cost,
-      grossProfit: cogs.revenue - cogs.cost,
+      revenue,
+      costOfGoods: costOfGoodsSold,
+      grossProfit,
       expenses: expenseData.total,
-      netProfit: cogs.revenue - cogs.cost - expenseData.total,
+      netProfit: grossProfit - expenseData.total,
     },
     inventory: {
       items: inventory.items,
@@ -336,22 +429,27 @@ async function summary(start, end, settings) {
  * `?tab=pl` - the P&L statement, in accounting order.
  */
 async function profitAndLoss(start, end) {
-  const [orders, expenseData, collected] = await Promise.all([
+  const [orders, expenseData, collected, service] = await Promise.all([
     db().Order.find(salesQuery(start, end)).select('items tax shipping discount total').lean(),
     expensesIn(start, end),
     collectedIn(start, end),
+    serviceIncomeIn(start, end),
   ]);
 
   const cogs = costOfGoods(orders);
   const shippingRevenue = orders.reduce((sum, order) => sum + (order.shipping ?? 0), 0);
-  const discounts = orders.reduce((sum, order) => sum + (order.discount ?? 0), 0);
-  const taxCollected = orders.reduce((sum, order) => sum + (order.tax ?? 0), 0);
+  // Discounts from both sides: an order's, and a repair invoice's.
+  const discounts = orders.reduce((sum, order) => sum + (order.discount ?? 0), 0) + service.discounts;
+  const taxCollected = orders.reduce((sum, order) => sum + (order.tax ?? 0), 0) + service.tax;
 
-  // Net revenue is what was actually charged for goods: list value less what
-  // came off it. Discounts are reported on their own line as well, because a
-  // margin that quietly absorbs them hides why it moved.
-  const netRevenue = cogs.revenue - discounts + shippingRevenue;
-  const grossProfit = netRevenue - cogs.cost;
+  // Net revenue is what was actually charged: list value of goods and of
+  // repair work, less what came off it, plus shipping and service fees.
+  // Discounts are reported on their own line as well, because a margin that
+  // quietly absorbs them hides why it moved.
+  const serviceRevenue = service.labour + service.parts + service.other;
+  const netRevenue = cogs.revenue + serviceRevenue - discounts + shippingRevenue;
+  const costOfGoodsSold = cogs.cost + service.cost;
+  const grossProfit = netRevenue - costOfGoodsSold;
 
   // Per-category margin. `partTypeLabel` is the wholesale read of a category
   // it is what the storefront filters on and what a staff member thinks in.
@@ -374,12 +472,34 @@ async function profitAndLoss(start, end) {
     }
   }
 
+  // Repair work as two category rows beside the part types, so the table says
+  // how the margin on labour compares with the margin on goods.
+  if (service.labourLines) {
+    byCategory.set('Repair labour', {
+      label: 'Repair labour',
+      orders: service.labourLines,
+      revenue: service.labour,
+      cost: 0,
+      uncostedLines: 0,
+    });
+  }
+  if (service.partLines) {
+    byCategory.set('Repair parts', {
+      label: 'Repair parts',
+      orders: service.partLines,
+      revenue: service.parts,
+      cost: service.cost,
+      uncostedLines: service.uncostedLines,
+    });
+  }
+
   return {
     kpis: {
       productRevenue: cogs.revenue,
+      serviceRevenue,
       shippingRevenue,
       netRevenue,
-      costOfGoods: cogs.cost,
+      costOfGoods: costOfGoodsSold,
       grossProfit,
       expenses: expenseData.total,
       // Signed once. A loss is a negative net profit, not a positive "net loss".
@@ -387,16 +507,19 @@ async function profitAndLoss(start, end) {
       collected: collected.total,
     },
     costCoverage: {
-      costedLines: cogs.costedLines,
-      uncostedLines: cogs.uncostedLines,
-      uncostedRevenue: cogs.uncostedRevenue,
+      costedLines: cogs.costedLines + service.costedLines,
+      uncostedLines: cogs.uncostedLines + service.uncostedLines,
+      uncostedRevenue: cogs.uncostedRevenue + service.uncostedRevenue,
     },
     statement: {
       productRevenue: cogs.revenue,
+      repairLabour: service.labour,
+      repairParts: service.parts,
+      otherServiceIncome: service.other,
       shippingRevenue,
       discounts,
       netRevenue,
-      costOfGoods: cogs.cost,
+      costOfGoods: costOfGoodsSold,
       grossProfit,
       operatingExpenses: expenseData.byCategory,
       totalExpenses: expenseData.total,

@@ -2,6 +2,7 @@ import { NavLink, useLocation } from 'react-router';
 import {
   FileSignature,
   FileText,
+  Building2,
   LayoutDashboard,
   LogOut,
   Package,
@@ -11,6 +12,7 @@ import {
 } from 'lucide-react';
 import cn from '@/lib/cn';
 import useBusinessInfo from '@/hooks/useBusinessInfo';
+import { useSupplierSession } from '@/hooks/useSupplierPortal';
 import { pressable } from '@/lib/motion';
 
 /**
@@ -34,6 +36,8 @@ const NAV = [
   { key: 'deliveries', label: 'Deliveries', to: '/supplier/deliveries', icon: Truck },
   { key: 'agreement', label: 'Agreement', to: '/supplier/agreement', icon: FileSignature },
   { key: 'profile', label: 'Profile & Access', to: '/supplier/profile', icon: UserRound },
+  // Every business this login supplies, and the invitations waiting on it.
+  { key: 'businesses', label: 'Businesses', to: '/supplier/businesses', icon: Building2 },
 ];
 
 function BrandBlock({ compact, supplier }) {
@@ -41,6 +45,10 @@ function BrandBlock({ compact, supplier }) {
   // host like every other public read. It printed the hardcoded name before, so
   // a CellShoppe supplier signed in to a panel badged Cellvix.
   const info = useBusinessInfo();
+  // The business being worked in, from the session - on the shared admin host
+  // the host names no business, and the one it falls back to is not this one.
+  const { business } = useSupplierSession();
+  const name = business?.name ?? info.name;
 
   return (
     <div
@@ -52,12 +60,12 @@ function BrandBlock({ compact, supplier }) {
       {/* The compact ramp on a small glyph - the full ramp's near-black opening
           reads as a stripe at this size (Instructions §2.2). */}
       <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-brand-gradient-compact font-display text-lg font-bold text-white">
-        {info.name.charAt(0)}
+        {name.charAt(0)}
       </span>
       {!compact && (
         <span className="min-w-0">
           <span className="block truncate font-display text-lg font-bold leading-none text-white">
-            {info.name}
+            {name}
           </span>
           {/* Says whose portal this is, because a supplier works with several
               customers and the tab alone does not tell them which. */}

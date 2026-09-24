@@ -39,3 +39,6 @@ Thumbs.db
 
 .tmp.drivedownload
 .tmp.driveupload
+
+# Database exports (password hashes, customer records). Never committed.
+backups/

@@ -46,9 +46,9 @@ export function SuperAdminLoginPage() {
           </span>
           <span>
             <span className="block text-[15px] font-semibold leading-tight tracking-[-0.01em] text-plat-text">
-              Platform
+              Kelinto
             </span>
-            <span className="block text-xs leading-tight text-plat-dim">Operator console</span>
+            <span className="block text-xs leading-tight text-plat-dim">Super admin</span>
           </span>
         </div>
 
@@ -59,7 +59,7 @@ export function SuperAdminLoginPage() {
             Sign in
           </h1>
           <p className="mt-1 text-[13px] leading-normal text-plat-muted">
-            This console reaches every tenant on the platform.
+            This panel reaches every tenant on Kelinto.
           </p>
 
           {error && (

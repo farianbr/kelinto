@@ -30,23 +30,39 @@ export function useSupplierSession() {
   });
 
   return {
+    /**
+     * The platform-wide login. Present whenever somebody is signed in, even
+     * before any business is chosen - an account holding only invitations is
+     * signed in, just not working anywhere yet.
+     */
+    account: data?.account ?? null,
+    /** That business's record of them, for the business being worked in. */
     supplier: data?.supplier ?? null,
-    // Whose portal this is - the buying business, resolved from the host. It
-    // paints the shell and names the business on the sign-in page, and it
-    // answers the same signed in or out, because a supplier needs to know who
-    // is asking for their credentials before they type them.
+    // Whose portal this is - the business being worked in, or on a business's
+    // own host the one the host names. It paints the shell and names the
+    // business on the sign-in page.
     business: data?.business ?? null,
+    /** Every business the account is active with, to switch between. */
+    businesses: data?.businesses ?? [],
+    /** Businesses that have invited this account and are waiting for an answer. */
+    invitations: data?.invitations ?? [],
     isLoading,
-    isAuthenticated: Boolean(data?.supplier),
+    isAuthenticated: Boolean(data?.account),
+    /**
+     * Signed in AND working inside a business. Every order, agreement and
+     * proforma query waits on this, not on `isAuthenticated`: an account with
+     * no business chosen has nothing of any business to ask for.
+     */
+    canWork: Boolean(data?.supplier),
   };
 }
 
 export function useSupplierOrders() {
-  const { isAuthenticated } = useSupplierSession();
+  const { canWork } = useSupplierSession();
   return useQuery({
     queryKey: ['supplier-portal', 'orders'],
     queryFn: () => api.get('/supplier-portal/orders'),
-    enabled: isAuthenticated,
+    enabled: canWork,
     staleTime: 30 * 1000,
   });
 }
@@ -75,11 +91,11 @@ export function useSupplierOrder(id) {
  * be told wherever they are, not only once they find the right page.
  */
 export function useSupplierAgreement() {
-  const { isAuthenticated } = useSupplierSession();
+  const { canWork } = useSupplierSession();
   return useQuery({
     queryKey: ['supplier-portal', 'agreement'],
     queryFn: () => api.get('/supplier-portal/agreement'),
-    enabled: isAuthenticated,
+    enabled: canWork,
     staleTime: 60 * 1000,
   });
 }
@@ -90,21 +106,55 @@ export function useSupplierPortalMutations() {
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ['supplier-portal'] });
 
+  /** Drop every per-business query, then ask for the session again. */
+  const resetBusinessData = () => {
+    queryClient.removeQueries({
+      queryKey: ['supplier-portal'],
+      predicate: (query) => query.queryKey[1] !== 'me',
+    });
+    invalidate();
+  };
+
   return {
     signIn: useMutation({
       mutationFn: (body) => api.post('/supplier-portal/login', body),
-      onSuccess: (result) => {
-        queryClient.setQueryData(ME, { supplier: result.supplier });
-        invalidate();
-      },
+      // The answer says only which business it landed in; the session query
+      // carries everything else, so it is simply asked again.
+      onSuccess: resetBusinessData,
+    }),
+
+    /**
+     * Change which business the account works in - and with it, whose orders,
+     * agreements and proformas every screen shows.
+     *
+     * Everything the portal has cached belonged to the business being left, so
+     * it is dropped rather than refetched: showing one business's purchase
+     * orders under another's name for even a frame is the one thing a switcher
+     * must never do.
+     */
+    switchBusiness: useMutation({
+      mutationFn: (business) => api.post('/supplier-portal/switch', { business }),
+      onSuccess: resetBusinessData,
+    }),
+    /** Accepting moves straight into that business, as switching does. */
+    acceptInvitation: useMutation({
+      mutationFn: (business) => api.post(`/supplier-portal/invitations/${business}/accept`, {}),
+      onSuccess: resetBusinessData,
+    }),
+    declineInvitation: useMutation({
+      mutationFn: (business) => api.post(`/supplier-portal/invitations/${business}/decline`, {}),
+      onSuccess: invalidate,
     }),
     signOut: useMutation({
       mutationFn: () => api.post('/supplier-portal/logout', {}),
       onSuccess: () => {
-        queryClient.setQueryData(ME, { supplier: null });
+        queryClient.setQueryData(ME, { account: null, supplier: null, businesses: [], invitations: [] });
         // Cleared rather than refetched: the next supplier to sign in on this
         // browser must not see the previous one's orders for even a frame.
-        queryClient.removeQueries({ queryKey: ['supplier-portal', 'orders'] });
+        queryClient.removeQueries({
+          queryKey: ['supplier-portal'],
+          predicate: (query) => query.queryKey[1] !== 'me',
+        });
       },
     }),
     forgotPassword: useMutation({

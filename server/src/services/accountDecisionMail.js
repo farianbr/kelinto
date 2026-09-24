@@ -2,6 +2,7 @@ import { sendMail } from './mailer.js';
 import env from '../config/env.js';
 import { sendingBusiness } from './sendingBusiness.js';
 import { MAIL, escapeHtml } from './welcomeMail.js';
+import { storefrontOrigin } from './linkOrigins.js';
 
 /**
  * The two emails a pending account eventually gets: approved, or not.
@@ -65,7 +66,8 @@ async function sendAccountApprovedEmail({ user }) {
   if (!user?.email) return { delivered: false, via: null, error: 'No email address on file.' };
 
   const business = await sendingBusiness();
-  const origin = env.publicOrigin;
+  // The customer's own storefront, where `/account` is (see `linkOrigins`).
+  const origin = await storefrontOrigin();
   const name = user.contactName || user.businessName || 'there';
 
   const terms = user.terms && user.terms !== 'prepaid' ? user.terms.toUpperCase() : 'Prepaid';

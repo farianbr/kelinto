@@ -113,24 +113,14 @@ const SHOPPE_STAFF = [
 ];
 
 /**
- * Who CellShoppe buys parts from.
+ * The repair counter's local distributors, beside the wholesale side's
+ * suppliers.
  *
- * A repair shop's suppliers are **distributors**, and one of them is Cellvix
- * itself - which is the relationship the whole platform is built around and
- * worth seeing in the data: tenant #1's wholesale business supplying tenant #1's
- * repair shop. They are separate businesses with separate databases, so this is
- * an ordinary supplier record rather than any kind of internal link.
+ * There used to be a "Cellvix Wholesale" row here, from when Cellvix and
+ * CellShoppe were separate businesses and one supplied the other. They are one
+ * business now (2026-09-24), and a business does not buy from itself.
  */
 const SHOPPE_SUPPLIERS = [
-  {
-    name: 'Cellvix Wholesale',
-    contactName: 'Marc Deveau',
-    email: 'wholesale@cellvix.example',
-    phone: '+1 (416) 555-0110',
-    paymentTerms: 'net30',
-    isActive: true,
-    address: { line1: '88 Wingold Ave', city: 'Toronto', region: 'ON', postal: 'M6B 1P8', country: 'CA' },
-  },
   {
     name: 'Westcoast Screen Supply',
     contactName: 'Holly Tran',
@@ -159,7 +149,7 @@ const SHOPPE_EXPENSES = [
   { label: 'Liability insurance - quarterly', amount: 122_000, category: 'Insurance', daysAgo: 21 },
   { label: 'Local ads - Kingsway corridor', amount: 30_000, category: 'Marketing', daysAgo: 17 },
   { label: 'Workshop tool replacement', amount: 54_900, category: 'Equipment', daysAgo: 34 },
-  { label: 'Courier to Cellvix Wholesale', amount: 4_250, category: 'Shipping', daysAgo: 3 },
+  { label: 'Courier - inbound parts', amount: 4_250, category: 'Shipping', daysAgo: 3 },
 ];
 
 /**

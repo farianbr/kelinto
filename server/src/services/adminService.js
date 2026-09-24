@@ -35,6 +35,7 @@ import { sendMail } from './mailer.js';
 import { BUSINESS_INFO } from '../../../shared/business.js';
 import { sendingBusiness } from './sendingBusiness.js';
 import { lowStockThreshold } from './lowStockService.js';
+import { costRepairParts, commitRepairParts, adjustRepairParts, returnRepairParts, partsDemand } from './repairPartsService.js';
 import { invalidateTree } from './taxonomyService.js';
 import {
   ORDER_STATUS_FLOW,
@@ -42,6 +43,7 @@ import {
   ORDER_UNFULFILLED_STATUSES,
 } from '../../../shared/schemas/admin.js';
 import { formatDate, formatDateShort } from '../../../shared/dates.js';
+import { storefrontOrigin } from './linkOrigins.js';
 
 /**
  * Resolve the dashboard's date range.
@@ -1934,6 +1936,23 @@ async function createInvoice(body) {
     throw ApiError.badRequest('An invoice needs an amount.', 'INVOICE_EMPTY');
   }
 
+  // Catalogue parts on the invoice: costs snapshotted now, stock moved once the
+  // invoice exists (see `repairPartsService`).
+  const { devices: costedDevices, demand: partsNeeded } = await costRepairParts(
+    (body.devices ?? []).map((device) => ({
+      category: device.category,
+      brand: device.brand,
+      series: device.series,
+      model: device.model,
+      serial: device.serial,
+      problem: device.problem,
+      solution: device.solution,
+      notes: device.notes,
+      services: (device.services ?? []).map(toInvoiceLine),
+      parts: (device.parts ?? []).map(toInvoiceLine),
+    })),
+  );
+
   const invoice = await db().Invoice.create({
     // A charge raised by hand is money owed, not money received, so it starts
     // life as a `due` record in the `CVX-` series and is renumbered into `INV-`
@@ -1957,18 +1976,8 @@ async function createInvoice(body) {
 
     // Prices are stored in cents on the line, so the document reproduces
     // itself later without re-reading a catalogue that has since moved.
-    devices: (body.devices ?? []).map((device) => ({
-      category: device.category,
-      brand: device.brand,
-      series: device.series,
-      model: device.model,
-      serial: device.serial,
-      problem: device.problem,
-      solution: device.solution,
-      notes: device.notes,
-      services: (device.services ?? []).map(toInvoiceLine),
-      parts: (device.parts ?? []).map(toInvoiceLine),
-    })),
+    devices: costedDevices,
+    partsStockMovedAt: partsNeeded.size ? new Date() : undefined,
 
     province: body.province || undefined,
     taxPercent: itemised ? (body.taxPercent ?? 0) : 0,
@@ -1987,6 +1996,11 @@ async function createInvoice(body) {
     customerNotes: body.customerNotes || undefined,
     technicianNotes: body.technicianNotes || undefined,
     internalNotes: body.internalNotes || undefined,
+  });
+
+  await commitRepairParts(partsNeeded, {
+    reference: { kind: 'invoice', id: invoice._id, label: invoice.number },
+    business: invoice.business ?? undefined,
   });
 
   // Re-derived from the invoices rather than incremented - see `creditService`.
@@ -2391,6 +2405,10 @@ async function updateInvoice(number, data) {
   if (data.poNumber !== undefined) invoice.poNumber = data.poNumber || undefined;
   if (data.note !== undefined) invoice.note = data.note || undefined;
 
+  // Set by a full edit that changes catalogue parts; run once the edit saves,
+  // so a failed save moves no stock.
+  let commitPartsMove = null;
+
   if (data.user) {
     const user = await db().User.findById(data.user).lean();
     if (!user) throw ApiError.badRequest('Pick a client.', 'USER_NOT_FOUND');
@@ -2435,7 +2453,7 @@ async function updateInvoice(number, data) {
       invoice.dueDate = derived;
     }
 
-    invoice.devices = (data.devices ?? []).map((device) => ({
+    const editedDevices = (data.devices ?? []).map((device) => ({
       category: device.category,
       brand: device.brand,
       series: device.series,
@@ -2447,6 +2465,24 @@ async function updateInvoice(number, data) {
       services: (device.services ?? []).map(toInvoiceLine),
       parts: (device.parts ?? []).map(toInvoiceLine),
     }));
+
+    /**
+     * Parts move by the difference: an added part comes off the shelf, a
+     * removed one goes back, an unchanged one stays put.
+     *
+     * An invoice raised before repair parts moved stock (`partsStockMovedAt`
+     * unset) took nothing, so a part removed from it is NOT returned - it never
+     * left. Added parts are still taken. It stays unmarked, so a later delete
+     * returns nothing either; marking it would return its original parts too.
+     */
+    const movedBefore = Boolean(invoice.partsStockMovedAt);
+    const partsMove = await adjustRepairParts(invoice.toObject().devices ?? [], editedDevices, {
+      reference: { kind: 'invoice', id: invoice._id, label: invoice.number },
+      business: invoice.business ?? undefined,
+      returnRemoved: movedBefore,
+    });
+    invoice.devices = partsMove.devices;
+    commitPartsMove = partsMove.commit;
 
     invoice.province = data.province || undefined;
     invoice.taxPercent = itemised ? (data.taxPercent ?? 0) : 0;
@@ -2472,6 +2508,7 @@ async function updateInvoice(number, data) {
   // what it said before either moved.
   recomputeInvoice(invoice);
   await invoice.save();
+  if (commitPartsMove) await commitPartsMove();
 
   // Re-derived from the invoices rather than incremented - see `creditService`.
   // An edit can change the amount owed or move the invoice to another customer,
@@ -2538,6 +2575,39 @@ async function deleteInvoice(number) {
   // on nothing, so every accrual against it is reversed (§6.13).
   await referralService.reverseForInvoice(invoice.number);
   await invoice.deleteOne();
+
+  /**
+   * An invoice that should never have existed took its parts for nothing, so
+   * they go back on the shelf - only if they came off it (`partsStockMovedAt`).
+   * And a repair it billed is unlinked, so the ticket can be invoiced again:
+   * `convertToInvoice` refuses a ticket that still points at an invoice, and
+   * this one no longer exists. Re-invoicing takes the parts off once more.
+   */
+  if (invoice.partsStockMovedAt) {
+    await returnRepairParts(partsDemand(invoice.devices ?? []), {
+      reference: { kind: 'invoice', id: invoice._id, label: invoice.number },
+      business: invoice.business ?? undefined,
+      note: `Back on the shelf: invoice ${invoice.number} was deleted.`,
+    });
+  }
+  if (invoice.ticket) {
+    const ticket = await db()
+      .Ticket.findOne({ _id: invoice.ticket, invoice: invoice._id })
+      .select('status')
+      .lean();
+    if (ticket) {
+      await db().Ticket.updateOne(
+        { _id: ticket._id },
+        {
+          $set: { invoice: null },
+          $unset: { finalCents: 1 },
+          $push: {
+            timeline: { status: ticket.status, at: new Date(), note: `Invoice ${invoice.number} was deleted.` },
+          },
+        },
+      );
+    }
+  }
 
   if (releasesCredit) await creditService.syncBalance(owner);
 
@@ -2776,10 +2846,10 @@ async function invoiceDocument(number, { nonce } = {}) {
      * them had no way to pay it. One renderer was always the point; this is the
      * argument that makes both callers produce the same page.
      *
-     * `env.publicOrigin` rather than the request host: the API serves this, and
-     * the link has to land on the storefront.
+     * The business's storefront rather than the request host: the API serves
+     * this, and the link has to land where `/account` is (`linkOrigins`).
      */
-    origin: env.publicOrigin,
+    origin: await storefrontOrigin(),
   });
 }
 

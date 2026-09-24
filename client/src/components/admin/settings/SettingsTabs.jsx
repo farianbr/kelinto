@@ -82,7 +82,7 @@ export function byTabOrder(a, b) {
 }
 
 export function SettingsTabs() {
-  const { pathname } = useLocation();
+  const { pathname, state } = useLocation();
   const { features } = useAuth();
 
   const current = matchAdminRoute(pathname);
@@ -91,6 +91,20 @@ export function SettingsTabs() {
   // The hub draws its own tab row against the `?cat=` param, so it is left
   // alone: two rows of tabs on one screen is the same fact twice.
   if (!categoryKey) return null;
+
+  /**
+   * A LENT page shows the row only when it was opened from Settings.
+   *
+   * Services lives in the Sales nav and Discount Codes in Marketing; both are
+   * lent to the Financial row with `settingsTab`. Showing the row whenever the
+   * page rendered meant a counter staff member opening Services from Sales
+   * found eleven settings tabs across the top of the price list, which reads
+   * as having landed in Settings by mistake. The settings links (this row and
+   * the hub's cards) pass `state.fromSettings`; the page's own nav does not.
+   * A page that LIVES in settings (`parent: 'settings:…'`) always shows it.
+   */
+  const lent = !current.parent?.startsWith('settings:');
+  if (lent && state?.fromSettings !== categoryKey) return null;
 
   const category = SETTINGS_CATEGORIES.find((entry) => entry.key === categoryKey);
   if (!category) return null;
@@ -153,6 +167,8 @@ export function SettingsTabs() {
               <Link
                 key={tab.path}
                 to={tab.path}
+                // Keeps the row on a lent page reached from here (see above).
+                state={{ fromSettings: categoryKey }}
                 aria-current={active ? 'page' : undefined}
                 /**
                  * Every tab carries a border, active or not.

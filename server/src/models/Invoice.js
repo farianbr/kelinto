@@ -29,6 +29,10 @@ const invoiceLineSchema = new mongoose.Schema(
     priceCents: { type: Number, default: 0 },
     qty: { type: Number, default: 1 },
     product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
+    // Integer cents, snapshotted off the product when the invoice is raised, so
+    // the P&L costs a repair part at what it cost THEN (as an order line does).
+    // Absent on typed lines and on invoices raised before 2026-09-24.
+    unitCost: Number,
   },
   { _id: false },
 );
@@ -236,6 +240,15 @@ const invoiceSchema = new mongoose.Schema(
       default: 'unpaid',
       index: true,
     },
+
+    /**
+     * When this invoice's catalogue parts came off the shelf
+     * (services/repairPartsService.js). An edit moves only the difference and
+     * a delete puts them back - but only when this is set. Invoices raised
+     * before repair parts moved stock never took anything, and returning parts
+     * they never took would inflate the count.
+     */
+    partsStockMovedAt: Date,
 
     /**
      * A gratuity, kept apart from the repair total.

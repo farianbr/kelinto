@@ -56,7 +56,7 @@ const TTL_MS = 60_000;
  */
 async function loadConfig(businessId) {
   const business = await Business.findById(businessId)
-    .select('code businessType featureOverrides tenant')
+    .select('code businessType featureOverrides tenant deletedAt slug domain')
     .lean();
 
   if (!business) return null;
@@ -69,6 +69,23 @@ async function loadConfig(businessId) {
     code: business.code ?? null,
     businessType: business.businessType ?? 'product',
     featureOverrides: business.featureOverrides ?? null,
+    /**
+     * Which tenant owns this business, as a plain string, and whether it is
+     * still live.
+     *
+     * Both are what `businessScope` checks a `?business=` claim against, and
+     * they are carried here rather than re-read because that check runs on
+     * every panel request. `tenant` below is the tenant's own *record*; this
+     * is the edge from the business to it, which survives a tenant that could
+     * not be loaded.
+     */
+    tenantId: business.tenant ? String(business.tenant) : null,
+    deletedAt: business.deletedAt ?? null,
+    // Where the business's storefront answers, for links the panel host has to
+    // send off-host (`storefrontOrigin` in authController). Cleared with the
+    // rest of the entry when the super admin changes an address.
+    slug: business.slug ?? null,
+    domain: business.domain ?? null,
     tenant: tenant ? { id: String(tenant._id), status: tenant.status, name: tenant.name } : null,
   };
 }

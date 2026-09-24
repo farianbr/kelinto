@@ -113,10 +113,10 @@ export function SupportThread({
                     >
                       {!mine && message.side === 'platform' && (
                         dark ? (
-                          <PlatformBadge tone="warn">Platform</PlatformBadge>
+                          <PlatformBadge tone="warn">Kelinto</PlatformBadge>
                         ) : (
                           <Badge tone="warn" size="sm">
-                            Platform
+                            Kelinto
                           </Badge>
                         )
                       )}

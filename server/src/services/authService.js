@@ -9,13 +9,31 @@ import referralService from './referralService.js';
 import notificationService from './notificationService.js';
 import { sendWelcomeEmail, sendPasswordResetEmail } from './welcomeMail.js';
 import { displayNameOf } from '../utils/displayName.js';
+import { currentBusinessId } from '../db/context.js';
+import { businessesFor, inBusinessDb } from './loginDirectory.js';
 
 // "Remember me" drives a long-lived cookie so the buyer is auto-signed-in on
 // return visits (brief §8.1).
 const REMEMBER_MS = 90 * 24 * 60 * 60 * 1000;
 
-function issueSession(res, user, remember = false) {
-  const token = jwt.sign({ sub: user._id.toString() }, env.JWT_SECRET, {
+/**
+ * Sign the session cookie.
+ *
+ * **`biz` names the database that holds the account**, for every account that
+ * lives in one. A tenant admin lives in the control plane and carries none.
+ *
+ * It exists for the shared admin host. There the host names no business, so
+ * without the claim every request after sign-in would open the default
+ * business's database, fail to find the staff member, and sign them straight
+ * back out. `resolveBusiness` reads it before the query string, because an
+ * account only exists in the one database it was signed into - a `?business=`
+ * naming another could only ever produce "not signed in".
+ *
+ * Signed, so a client cannot point itself at another database by editing it.
+ */
+function issueSession(res, user, remember = false, businessId = null) {
+  const claims = { sub: user._id.toString(), ...(businessId ? { biz: String(businessId) } : {}) };
+  const token = jwt.sign(claims, env.JWT_SECRET, {
     expiresIn: remember ? '90d' : env.JWT_EXPIRES_IN,
   });
 
@@ -219,31 +237,103 @@ async function findForAudit(email) {
   }
 }
 
-async function login({ email, password }) {
-  /**
-   * A tenant admin, then this business's own accounts.
-   *
-   * Admins live in the control plane so one login reaches every business the
-   * tenant owns (`User.tenant`); staff and buyers live in the business's own
-   * database. Signing in has to look in both, because the person typing an
-   * address has no way to say which they are - and being told "that email and
-   * password do not match" when the account plainly exists is the worst
-   * possible answer.
-   */
-  const user =
-    (await controlModels()
-      .User.findOne({ email, role: 'admin' })
-      .select('+passwordHash')) ??
-    (await db().User.findOne({ email }).select('+passwordHash'));
+/**
+ * Every account this address might mean, with the database each one lives in.
+ *
+ * Three places, because the person typing an address has no way to say which
+ * kind of account they hold - and "that email and password do not match" when
+ * the account plainly exists is the worst possible answer:
+ *
+ * 1. **A tenant admin**, in the control plane. One login, every business the
+ *    tenant owns. `business` is null: an admin belongs to no one database.
+ * 2. **This business's own account**, staff or buyer, in the database the
+ *    request resolved to. What a storefront login has always meant.
+ * 3. **The login directory** (`services/loginDirectory.js`): every OTHER
+ *    business where this address has a panel account. This is what makes the
+ *    shared admin host work, where the business the request resolved to is only
+ *    the default and a staff member's account is usually somewhere else.
+ */
+async function loginCandidates(email) {
+  const candidates = [];
 
-  if (!user) {
+  const admin = await controlModels().User.findOne({ email, role: 'admin' }).select('+passwordHash');
+  if (admin) candidates.push({ user: admin, business: null });
+
+  const hereId = currentBusinessId();
+  const here = await db().User.findOne({ email }).select('+passwordHash');
+  if (here) {
+    const record = hereId
+      ? await controlModels().Business.findById(hereId).select('name code').lean()
+      : null;
+    candidates.push({ user: here, business: record });
+  }
+
+  for (const business of await businessesFor(email)) {
+    // Already covered by step 2 - the same account, not a second one.
+    if (hereId && String(business._id) === String(hereId)) continue;
+    const found = await inBusinessDb(business, () =>
+      db().User.findOne({ email }).select('+passwordHash'),
+    );
+    if (found) candidates.push({ user: found, business });
+  }
+
+  return candidates;
+}
+
+/**
+ * Sign in.
+ *
+ * Returns `{ user, business }`: the account, and the business whose database
+ * holds it (null for a tenant admin). The caller signs the session for that
+ * business and writes the audit row inside it.
+ *
+ * ## One address, several accounts
+ *
+ * The password is checked against every candidate, and only the ones it opens
+ * count. A tenant admin wins outright - they already reach every business the
+ * tenant owns, so there is nothing to choose between. Otherwise one match signs
+ * in, and more than one answers `BUSINESS_CHOICE_REQUIRED` with the businesses
+ * to choose from, and the client sends the choice back as `business`.
+ *
+ * **The list names only businesses the password opened.** Offering every
+ * business an address appears in would tell anybody who types a colleague's
+ * email where that colleague works, without knowing their password.
+ */
+async function login({ email, password, business: chosen = null }) {
+  const candidates = await loginCandidates(email);
+
+  const matches = [];
+  for (const candidate of candidates) {
+    if (await candidate.user.verifyPassword(password)) matches.push(candidate);
+  }
+
+  if (!matches.length) {
     throw ApiError.unauthorized('That email and password do not match.', 'INVALID_CREDENTIALS');
   }
 
-  const ok = await user.verifyPassword(password);
-  if (!ok) {
-    throw ApiError.unauthorized('That email and password do not match.', 'INVALID_CREDENTIALS');
+  let match = matches.find((candidate) => candidate.business === null);
+
+  if (!match && matches.length === 1) [match] = matches;
+
+  if (!match && chosen) {
+    match = matches.find((candidate) => String(candidate.business?._id) === String(chosen));
   }
+
+  if (!match) {
+    throw new ApiError(
+      409,
+      'BUSINESS_CHOICE_REQUIRED',
+      'This email signs in to more than one business. Choose which one to open.',
+      {
+        choices: matches.map((candidate) => ({
+          id: String(candidate.business._id),
+          name: candidate.business.name,
+        })),
+      },
+    );
+  }
+
+  const { user } = match;
 
   if (user.status === 'rejected') {
     throw ApiError.forbidden(
@@ -265,7 +355,7 @@ async function login({ email, password }) {
 
   user.lastLoginAt = new Date();
   await user.save();
-  return user;
+  return { user, business: match.business };
 }
 
 /**
@@ -293,12 +383,41 @@ function hashResetToken(token) {
  * form, and excluding them would leak which addresses are staff.
  */
 async function forgotPassword({ email }, { origin } = {}) {
-  const user = await db().User.findOne({ email });
-  // No account: return quietly, having done nothing. Deliberately not an error.
-  if (!user) return;
+  const here = await db().User.findOne({ email });
+  if (here) {
+    await issueReset(here, { origin, businessId: currentBusinessId() });
+    return;
+  }
 
+  /**
+   * Nobody here: the login directory, the same way sign-in looks.
+   *
+   * On the shared admin host "here" is only the default business, and a staff
+   * member's account is usually somewhere else. One email per business that
+   * holds a panel account for the address, each sent BY that business and
+   * resetting only that account - a person who works at two has two passwords,
+   * and a link that silently chose one would reset the wrong one half the time.
+   */
+  for (const business of await businessesFor(email)) {
+    await inBusinessDb(business, async () => {
+      const user = await db().User.findOne({ email });
+      if (user) await issueReset(user, { origin, businessId: String(business._id) });
+    });
+  }
+  // No account anywhere: return quietly, having done nothing. Deliberately not
+  // an error - the reply cannot say whether the address is known.
+}
+
+/**
+ * Mint and send one reset link for one account, in the business that holds it.
+ *
+ * The link names that business (`&business=`), because the token's hash lives
+ * in that business's database and nowhere else. The reset page sends it back,
+ * and `resolveBusiness` opens that database before the token is looked up.
+ */
+async function issueReset(user, { origin, businessId }) {
   // A suspended or rejected account must not be able to let itself back in.
-  // Silent for the same reason as above - the reply cannot say which it was.
+  // Silent, because the reply cannot say which it was.
   if (user.status === 'suspended' || user.status === 'rejected' || user.lockedAt) return;
 
   // 32 random bytes. The email carries this; only its hash is stored, and
@@ -311,6 +430,7 @@ async function forgotPassword({ email }, { origin } = {}) {
   await sendPasswordResetEmail({
     user,
     token,
+    business: businessId,
     origin: origin || env.publicOrigin,
     expiresMinutes: Math.round(RESET_TTL_MS / 60000),
   });

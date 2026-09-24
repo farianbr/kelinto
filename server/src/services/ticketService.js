@@ -10,6 +10,7 @@ import { db, controlModels } from '../db/models.js';
 import '../models/Quote.js';
 import orderBuilder from './orderBuilder.js';
 import creditService from './creditService.js';
+import { costRepairParts, commitRepairParts } from './repairPartsService.js';
 import ticketNotifyService from './ticketNotifyService.js';
 import { renderTicketHtml, renderTicketLabel } from './ticketDocument.js';
 import ApiError from '../utils/ApiError.js';
@@ -591,11 +592,12 @@ async function setTicketStatus(id, body, actor) {
   /**
    * Reaching `ready_to_pickup` raises the invoice.
    *
-   * **This status and not `ready_to_repair`**, which the flow doc named and
-   * which reads the same way in English. They are opposite ends of the job:
-   * `ready_to_repair` sits BEFORE `processing` in the list above - the parts are
-   * in and work has not started - so invoicing there would bill a customer for a
-   * repair nobody has done yet. `ready_to_pickup` is work finished and the
+   * **This status and not `ready_to_repair`**, which reads the same way in
+   * English and which the flow doc named until it was corrected to match.
+   * They are opposite ends of the job: `ready_to_repair` sits BEFORE
+   * `processing` in the list above - the parts are in and work has not
+   * started - so invoicing there would bill a customer for a repair nobody
+   * has done yet. `ready_to_pickup` is work finished and the
    * device waiting on the shelf, which is the moment the money is actually owed.
    *
    * Everything that makes conversion refuse is a legitimate reason to have no
@@ -872,18 +874,22 @@ async function convertToInvoice(id, { terms = 'prepaid' } = {}, actor) {
 
   // The devices come across whole - the invoice's own `devices` array has the
   // same shape, so the document reproduces the job rather than summarising it.
-  const devices = (ticket.devices ?? []).map((device) => ({
-    category: device.category,
-    brand: device.brand,
-    series: device.series,
-    model: device.model,
-    serial: device.serial,
-    problem: device.problem,
-    solution: device.solution,
-    notes: device.notes,
-    services: (device.services ?? []).map(toInvoiceLine),
-    parts: (device.parts ?? []).map(toInvoiceLine),
-  }));
+  // Catalogue parts get their cost snapshotted here and come off the shelf
+  // once the invoice exists (see `repairPartsService`).
+  const { devices, demand: partsDemand } = await costRepairParts(
+    (ticket.devices ?? []).map((device) => ({
+      category: device.category,
+      brand: device.brand,
+      series: device.series,
+      model: device.model,
+      serial: device.serial,
+      problem: device.problem,
+      solution: device.solution,
+      notes: device.notes,
+      services: (device.services ?? []).map(toInvoiceLine),
+      parts: (device.parts ?? []).map(toInvoiceLine),
+    })),
+  );
 
   const issuedAt = new Date();
   const dueDate = new Date(issuedAt);
@@ -936,7 +942,14 @@ async function convertToInvoice(id, { terms = 'prepaid' } = {}, actor) {
   } else if (paid > 0) {
     invoice.status = 'partial';
   }
+  if (partsDemand.size) invoice.partsStockMovedAt = new Date();
   await invoice.save();
+
+  await commitRepairParts(partsDemand, {
+    reference: { kind: 'ticket', id: ticket._id, label: ticket.ticketNumber },
+    business: ticket.business ?? undefined,
+    createdBy: actor?._id,
+  });
 
   ticket.invoice = invoice._id;
   ticket.finalCents = totals.total;

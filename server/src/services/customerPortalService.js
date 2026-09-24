@@ -10,6 +10,7 @@ import ApiError from '../utils/ApiError.js';
 import env from '../config/env.js';
 import { resolveFeatures, featureEnabled } from '../../../shared/schemas/features.js';
 import { sendCustomerPortalLink } from './customerPortalMail.js';
+import { storefrontOrigin } from './linkOrigins.js';
 
 /**
  * The customer portal (§6.13a).
@@ -170,7 +171,7 @@ async function portalLink(userId, options) {
   // `-` for a customer with no business, so the URL keeps one shape and the
   // route needs one pattern rather than two.
   const prefix = code ? codeSlug(code) : '-';
-  return { token, url: `${env.publicOrigin}/portal/${prefix}/${token}` };
+  return { token, url: `${await storefrontOrigin()}/portal/${prefix}/${token}` };
 }
 
 /**

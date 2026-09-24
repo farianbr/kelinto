@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { asyncHandler } from '../utils/ApiError.js';
 import env from '../config/env.js';
 import * as accountService from '../services/accountService.js';
+import { storefrontOrigin } from '../services/linkOrigins.js';
 
 const summary = asyncHandler(async (req, res) => {
   res.json(await accountService.summary(req.user));
@@ -69,9 +70,10 @@ const invoiceDocument = asyncHandler(async (req, res) => {
     // post somewhere would undo the point of giving this response its own
     // policy at all.
     //
-    // `env.publicOrigin` rather than this request's own host: the document is
-    // served by the API, and the link has to land on the storefront.
-    origin: env.publicOrigin,
+    // The business's storefront rather than this request's own host: the
+    // document is served by the API, and the link has to land where `/account`
+    // is (`linkOrigins.storefrontOrigin`).
+    origin: await storefrontOrigin(),
   });
 
   res.setHeader(

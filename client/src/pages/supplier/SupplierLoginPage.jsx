@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form';
 import { AlertCircle, CheckCircle2, Send } from 'lucide-react';
 import cn from '@/lib/cn';
 import { BUSINESS_INFO } from '@shared/business';
+import { surface } from '@/lib/surface';
 import Panel from '@/components/ui/Panel';
 import Input from '@/components/ui/Input';
 import Button from '@/components/ui/Button';
@@ -29,7 +30,13 @@ import { pressable } from '@/lib/motion';
  *   is what this page used to greet a CellShoppe supplier with.
  */
 export function SupplierLoginPage({ businessName = null }) {
-  const seller = businessName ?? BUSINESS_INFO.name;
+  /**
+   * Who is asking for the password. On a business's own host, that business.
+   * On the shared admin host every business's suppliers sign in at one door,
+   * so it is the platform - naming the first tenant there would be the wrong
+   * company asking for credentials.
+   */
+  const seller = businessName ?? (surface === 'panel' ? 'Kelinto' : BUSINESS_INFO.name);
   const [forgot, setForgot] = useState(false);
   const { signIn, forgotPassword } = useSupplierPortalMutations();
 

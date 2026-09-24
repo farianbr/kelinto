@@ -24,7 +24,14 @@ import { useSearchParams } from 'react-router';
  * const [creating, setCreating] = useCreateParam();
  * ```
  */
-export function useCreateParam(initial = true, closed = false, companions = []) {
+/**
+ * `strip: false` holds the flag in the URL. A page that may instead FORWARD the
+ * flag to a full-page builder (`useCreateRedirect`) passes false until it knows
+ * which: both hooks navigate with `replace` in the same tick, the strip landed
+ * second, and it sent the staff member back to the list the redirect had just
+ * left. `AdminInvoicesPage` on a service business, reached by any in-app link.
+ */
+export function useCreateParam(initial = true, closed = false, companions = [], { strip = true } = {}) {
   const [searchParams, setSearchParams] = useSearchParams();
   // Read during the initialiser rather than in the effect, so the modal is
   // already open on the first paint - arriving to a closed form that pops open
@@ -43,7 +50,7 @@ export function useCreateParam(initial = true, closed = false, companions = []) 
   );
 
   useEffect(() => {
-    if (searchParams.get('new') !== '1') return;
+    if (!strip || searchParams.get('new') !== '1') return;
     const params = new URLSearchParams(searchParams);
     params.delete('new');
     // Companions go with the flag. Left behind they would describe a form that
@@ -54,7 +61,7 @@ export function useCreateParam(initial = true, closed = false, companions = []) 
     // object would re-run this on every filter change. The guard above makes a
     // second run harmless, but not running is cheaper and clearer.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [strip]);
 
   return [creating, setCreating, seed];
 }

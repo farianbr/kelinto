@@ -52,7 +52,7 @@ import { ADMIN_ROUTES } from '@/lib/adminRoutes';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { featureEnabled } from '@shared/schemas/features';
 import { useAuth } from '@/hooks/useAuth';
-import { businessUrl } from '@/store/businessStore';
+import { useStorefrontUrl } from '@/hooks/useStorefrontUrl';
 
 import { useAdminStats, useAdminMutations, useAdminSettings } from '@/hooks/useAdmin';
 import { pressable, pressableSurface } from '@/lib/motion';
@@ -447,6 +447,7 @@ function titleCase(value) {
 }
 
 export function AdminOverviewPage() {
+  const storefrontUrl = useStorefrontUrl();
   const { user, features } = useAuth();
 
   /**
@@ -616,7 +617,7 @@ export function AdminOverviewPage() {
                 into it. A new tab rather than a navigation - the kiosk fills
                 the viewport and deliberately offers no way back. */}
             {hasKiosk && kioskLive && (
-              <a href={businessUrl('/kiosk')} target="_blank" rel="noreferrer">
+              <a href={storefrontUrl('/kiosk')} target="_blank" rel="noreferrer">
                 <Button size="sm" variant="outline" icon={Tablet}>
                   Open kiosk
                 </Button>

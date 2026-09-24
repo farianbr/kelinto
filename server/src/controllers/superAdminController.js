@@ -115,6 +115,19 @@ const leaveBusiness = asyncHandler(async (req, res) => {
   res.json(await impersonationService.leave(grantId, res, { req }));
 });
 
+/**
+ * The panel host's half of stepping in when the console is on another host.
+ *
+ * A browser navigation, not a fetch, so it answers with a redirect: into the
+ * panel with the session set, or to the panel's sign-in page when the link was
+ * spent, expired or never valid. Nothing is said about why - the operator can
+ * step in again from the console, and a link somebody else found says nothing.
+ */
+const claimImpersonation = asyncHandler(async (req, res) => {
+  const ok = await impersonationService.claim(req.query.t, res);
+  res.redirect(302, ok ? '/admin' : '/');
+});
+
 /** The support history, and who is inside something right now. */
 const listImpersonations = asyncHandler(async (req, res) => {
   res.json(await impersonationService.list(req.query));
@@ -162,6 +175,20 @@ const setPlanFeature = asyncHandler(async (req, res) => {
 
 // ---- business lifecycle -----------------------------------------------------
 
+/** A tenant's requested address: approve makes it live, reject records why. */
+const approveAddressRequest = asyncHandler(async (req, res) => {
+  res.json(await superAdminService.approveAddressRequest(req.params.id));
+});
+
+const rejectAddressRequest = asyncHandler(async (req, res) => {
+  res.json(await superAdminService.rejectAddressRequest(req.params.id, req.body));
+});
+
+/** Slug and custom domain - where the business answers. */
+const setBusinessAddress = asyncHandler(async (req, res) => {
+  res.json(await superAdminService.setBusinessAddress(req.params.id, req.body));
+});
+
 const setBusinessStatus = asyncHandler(async (req, res) => {
   res.json(await superAdminService.setBusinessStatus(req.params.id, req.body));
 });
@@ -189,6 +216,7 @@ export {
   enterBusiness,
   getBusinessFeatures,
   getThread,
+  claimImpersonation,
   leaveBusiness,
   listImpersonations,
   listPlans,
@@ -203,6 +231,9 @@ export {
   restoreBusiness,
   revokeImpersonation,
   setBusinessFeature,
+  approveAddressRequest,
+  rejectAddressRequest,
+  setBusinessAddress,
   setBusinessStatus,
   setPlanFeature,
   setSlots,

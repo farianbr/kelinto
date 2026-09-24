@@ -34,6 +34,12 @@ import {
   PlatformSelect,
 } from '@/components/superadmin/PlatformForm';
 import SupportThread from '@/components/support/SupportThread';
+import {
+  businessSlugProblem,
+  customDomainProblem,
+  normaliseDomain,
+  suggestSlug,
+} from '@shared/hosts';
 import { toast } from '@/store/toastStore';
 import { pressable } from '@/lib/motion';
 import cn from '@/lib/cn';
@@ -352,12 +358,74 @@ function TenantForm({ onSubmit, onCancel, isPending, error, plans }) {
   );
 }
 
-function BusinessForm({ tenant, onSubmit, onCancel, isPending, error }) {
-  const { register, handleSubmit, formState } = useForm({ defaultValues: { name: '' } });
+/**
+ * The address a slug becomes, as a customer would type it.
+ *
+ * `storefrontDomain` comes from the server's wildcard origin. Without one there
+ * is no domain to promise, so the slug is shown alone rather than beside a
+ * domain this installation does not actually answer on.
+ */
+function addressOf(slug, storefrontDomain) {
+  if (!slug) return '';
+  return storefrontDomain ? `${slug}.${storefrontDomain}` : slug;
+}
+
+/**
+ * The web-address field, shared by create and by the address editor so both
+ * say the same thing about the same input.
+ */
+function SlugInput({ value, onChange, storefrontDomain, error, showError }) {
+  const problem = businessSlugProblem(value);
+  return (
+    <PlatformInput
+      label="Web address"
+      required
+      value={value}
+      onChange={(event) => onChange(event.target.value.toLowerCase().trim())}
+      autoCapitalize="none"
+      autoCorrect="off"
+      spellCheck={false}
+      error={error || (showError ? problem : null)}
+      hint={
+        !value || problem
+          ? 'Lowercase letters, digits and hyphens.'
+          : storefrontDomain
+            ? `Customers reach the storefront at ${addressOf(value, storefrontDomain)}.`
+            : // No wildcard domain on this server, so there is no full address to
+              // promise - say what the label is for instead of printing half of one.
+              'Becomes the storefront subdomain once the platform domain is set on the server.'
+      }
+    />
+  );
+}
+
+function BusinessForm({ tenant, storefrontDomain, onSubmit, onCancel, isPending, error }) {
+  const { register, handleSubmit, formState, watch } = useForm({ defaultValues: { name: '' } });
   const [businessType, setBusinessType] = useState('product');
 
+  /**
+   * Follows the name until somebody edits it, then stops.
+   *
+   * Most businesses want the address their name suggests, so filling it saves a
+   * step; but once somebody has typed their own, carrying on overwriting it as
+   * they correct a typo in the name would throw their choice away.
+   */
+  const [typedSlug, setTypedSlug] = useState(null);
+  const slug = typedSlug ?? suggestSlug(watch('name'));
+  const [submitted, setSubmitted] = useState(false);
+
+  const submit = handleSubmit((values) => {
+    if (businessSlugProblem(slug)) return;
+    onSubmit({ ...values, businessType, slug });
+  });
+
   return (
-    <form onSubmit={handleSubmit((values) => onSubmit({ ...values, businessType }))}>
+    <form
+      onSubmit={(event) => {
+        setSubmitted(true);
+        return submit(event);
+      }}
+    >
       {error && (
         <p className="mb-3 flex items-start gap-2 rounded-md bg-plat-danger/10 px-3 py-2.5 text-sm text-plat-danger">
           <AlertCircle className="mt-0.5 size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
@@ -377,6 +445,17 @@ function BusinessForm({ tenant, onSubmit, onCancel, isPending, error }) {
         {...register('name', { required: 'Give the business a name.' })}
         error={formState.errors.name?.message}
       />
+
+      <div className="mt-3">
+        <SlugInput
+          value={slug}
+          onChange={setTypedSlug}
+          storefrontDomain={storefrontDomain}
+          // Only once it matters: an empty name derives an empty slug, and
+          // shouting about it before anybody has typed is noise.
+          showError={submitted || typedSlug !== null}
+        />
+      </div>
 
       <div className="mt-3">
         <PlatformSelect
@@ -402,6 +481,256 @@ function BusinessForm({ tenant, onSubmit, onCancel, isPending, error }) {
         </PlatformButton>
       </div>
     </form>
+  );
+}
+
+/**
+ * Where a business answers: its web address and an optional domain it owns.
+ *
+ * Opened from the address itself on the business row. The form is the
+ * confirmation (§3.0.1) - somebody opened it and typed - but it states the one
+ * consequence nobody can see from the fields: a changed address stops the old
+ * one working, and whatever was printed or shared with it goes dead too.
+ */
+function AddressForm({
+  business,
+  storefrontDomain,
+  platformDomains,
+  onSubmit,
+  onCancel,
+  isPending,
+  error,
+}) {
+  const [slug, setSlug] = useState(business.slug ?? suggestSlug(business.name));
+  const [domain, setDomain] = useState(business.domain ?? '');
+  const [submitted, setSubmitted] = useState(false);
+
+  const slugProblem = businessSlugProblem(slug);
+  const domainProblem = customDomainProblem(domain, platformDomains);
+  const moving = Boolean(business.slug) && slug !== business.slug;
+  const unchanged = slug === (business.slug ?? '') && normaliseDomain(domain) === (business.domain ?? '');
+
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        setSubmitted(true);
+        if (slugProblem || domainProblem) return;
+        onSubmit({ slug, domain: normaliseDomain(domain) });
+      }}
+    >
+      <PlatformError>{error}</PlatformError>
+
+      <SlugInput
+        value={slug}
+        onChange={setSlug}
+        storefrontDomain={storefrontDomain}
+        showError
+      />
+
+      {moving && (
+        <div className="mt-3">
+          <PlatformNotice icon={AlertCircle}>
+            {addressOf(business.slug, storefrontDomain)} stops working as soon as this is saved.
+            Links already shared and anything printed with it, receipts included, will not reach
+            the storefront.
+          </PlatformNotice>
+        </div>
+      )}
+
+      <div className="mt-3">
+        <PlatformInput
+          label="Custom domain"
+          placeholder="shop.example.com"
+          value={domain}
+          onChange={(event) => setDomain(event.target.value)}
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          error={submitted || domain ? domainProblem : null}
+          hint="Optional. The business points its own domain at the platform, and the server has to allow it as an origin before it loads."
+        />
+      </div>
+
+      <PlatformActions>
+        <PlatformButton variant="ghost" type="button" onClick={onCancel}>
+          Cancel
+        </PlatformButton>
+        <PlatformButton type="submit" loading={isPending} disabled={unchanged}>
+          Save address
+        </PlatformButton>
+      </PlatformActions>
+    </form>
+  );
+}
+
+/**
+ * Web addresses tenants have asked for, waiting on an operator.
+ *
+ * At the top of the page because it is the one thing here somebody else is
+ * waiting on - a business that asked for its storefront address cannot take a
+ * customer until it is answered. Absent entirely when nothing is waiting,
+ * rather than an empty panel saying so.
+ *
+ * Approve is confirmed, because it goes live the moment it is pressed and
+ * changes which catalogue a public address opens. Reject asks for the reason,
+ * which is shown to the tenant - the form is the confirmation.
+ */
+function AddressRequests({ requests, storefrontDomain }) {
+  const { approveAddressRequest, rejectAddressRequest } = useSuperAdminMutations();
+  const [approving, setApproving] = useState(null);
+  const [rejecting, setRejecting] = useState(null);
+  const [note, setNote] = useState('');
+
+  if (!requests.length) return null;
+
+  return (
+    <PlatformPanel
+      title="Address requests"
+      description="Storefront addresses tenants have asked for. Approving puts it live immediately."
+      className="mb-3"
+    >
+      <ul className="space-y-2">
+        {requests.map(({ business, tenantName }) => (
+          <li
+            key={business.id}
+            className="flex flex-wrap items-center gap-3 rounded-lg border border-plat-line-soft bg-plat-raised px-4 py-3"
+          >
+            {/* Full width on a phone, so the address is not squeezed into a
+                column beside the two buttons - the same rule as the rows below. */}
+            <span className="w-full min-w-0 sm:w-auto sm:flex-1">
+              <span className="block font-mono text-sm text-plat-text break-all">
+                {addressOf(business.addressRequest.slug, storefrontDomain)}
+              </span>
+              <span className="block text-xs text-plat-dim">
+                {business.name} · {tenantName}
+                {business.slug && ` · replaces ${addressOf(business.slug, storefrontDomain)}`}
+              </span>
+              <span className="block text-xs text-plat-dim">
+                {[business.addressRequest.requestedBy, dateTime(business.addressRequest.requestedAt)]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </span>
+            </span>
+            <div className="flex gap-2">
+              <PlatformButton variant="ghost" size="sm" onClick={() => setRejecting(business)}>
+                Reject
+              </PlatformButton>
+              <PlatformButton size="sm" icon={Check} onClick={() => setApproving(business)}>
+                Approve
+              </PlatformButton>
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      <PlatformModal
+        open={Boolean(approving)}
+        onClose={() => setApproving(null)}
+        title={`Approve ${addressOf(approving?.addressRequest?.slug ?? '', storefrontDomain)}?`}
+        size="md"
+        align="top"
+      >
+        {approving && (
+          <>
+            <PlatformError>{approveAddressRequest.error?.message}</PlatformError>
+            <p className="text-sm text-plat-muted">
+              {addressOf(approving.addressRequest.slug, storefrontDomain)} starts opening{' '}
+              {approving.name}&apos;s storefront as soon as this is approved.
+              {approving.slug &&
+                ` ${addressOf(approving.slug, storefrontDomain)} stops working at the same moment.`}
+            </p>
+            <PlatformActions>
+              <PlatformButton variant="ghost" onClick={() => setApproving(null)}>
+                Cancel
+              </PlatformButton>
+              <PlatformButton
+                variant="primary"
+                icon={Check}
+                loading={approveAddressRequest.isPending}
+                onClick={() =>
+                  approveAddressRequest.mutate(
+                    { id: approving.id },
+                    {
+                      onSuccess: (result) => {
+                        toast.ok(
+                          'Address approved',
+                          result.liveUrl
+                            ? `${approving.name} is live at ${result.liveUrl.replace(/^https?:\/\//, '')}.`
+                            : `${approving.name} has its address.`,
+                        );
+                        setApproving(null);
+                      },
+                    },
+                  )
+                }
+              >
+                Approve and go live
+              </PlatformButton>
+            </PlatformActions>
+          </>
+        )}
+      </PlatformModal>
+
+      <PlatformModal
+        open={Boolean(rejecting)}
+        onClose={() => {
+          setRejecting(null);
+          setNote('');
+        }}
+        title={`Reject ${addressOf(rejecting?.addressRequest?.slug ?? '', storefrontDomain)}`}
+        size="md"
+        align="top"
+      >
+        {rejecting && (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              rejectAddressRequest.mutate(
+                { id: rejecting.id, note },
+                {
+                  onSuccess: () => {
+                    toast.ok('Request rejected', `${rejecting.name} can see why.`);
+                    setRejecting(null);
+                    setNote('');
+                  },
+                },
+              );
+            }}
+          >
+            <PlatformError>{rejectAddressRequest.error?.message}</PlatformError>
+            <PlatformInput
+              label="Reason"
+              required
+              value={note}
+              maxLength={500}
+              onChange={(event) => setNote(event.target.value)}
+              hint={`Shown to ${rejecting.name}, so they can ask for something else.`}
+            />
+            <PlatformActions>
+              <PlatformButton
+                variant="ghost"
+                type="button"
+                onClick={() => {
+                  setRejecting(null);
+                  setNote('');
+                }}
+              >
+                Cancel
+              </PlatformButton>
+              <PlatformButton
+                variant="danger"
+                type="submit"
+                disabled={!note.trim()}
+                loading={rejectAddressRequest.isPending}
+              >
+                Reject request
+              </PlatformButton>
+            </PlatformActions>
+          </form>
+        )}
+      </PlatformModal>
+    </PlatformPanel>
   );
 }
 
@@ -734,7 +1063,9 @@ export function SuperAdminTenantsPage() {
     createOwner,
     deleteBusiness,
     restoreBusiness,
+    setBusinessAddress,
   } = useSuperAdminMutations();
+  const [addressFor, setAddressFor] = useState(null);
 
   const [creating, setCreating] = useState(false);
   const [addingTo, setAddingTo] = useState(null);
@@ -752,6 +1083,8 @@ export function SuperAdminTenantsPage() {
 
   const tenants = data?.tenants ?? [];
   const unassigned = data?.unassigned ?? [];
+  const storefrontDomain = data?.storefrontDomain ?? null;
+  const platformDomains = data?.platformDomains ?? [];
   const plans = planData?.plans ?? [];
 
   if (isLoading) {
@@ -773,6 +1106,16 @@ export function SuperAdminTenantsPage() {
             New tenant
           </PlatformButton>
         }
+      />
+
+      <AddressRequests
+        storefrontDomain={storefrontDomain}
+        requests={[
+          ...tenants.flatMap((tenant) =>
+            tenant.businesses.map((business) => ({ business, tenantName: tenant.name })),
+          ),
+          ...unassigned.map((business) => ({ business, tenantName: 'No tenant' })),
+        ].filter(({ business }) => business.addressRequest?.status === 'pending' && !business.deletedAt)}
       />
 
       {!tenants.length ? (
@@ -885,35 +1228,66 @@ export function SuperAdminTenantsPage() {
                       key={business.id}
                       className="flex flex-wrap items-center gap-3 rounded-lg border border-plat-line-soft bg-plat-raised px-4 py-3"
                     >
-                      <Building2
-                        className="size-4 shrink-0 text-plat-dim"
-                        strokeWidth={2}
-                        aria-hidden="true"
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium text-plat-text">
-                          {business.name}
-                        </span>
-                        <span className="block font-mono text-xs text-plat-dim">
-                          {business.code}
-                        </span>
-
-                        {/* A deleted business still holds its slot until the
-                            window closes, which is the fact an operator needs
-                            when the slot arithmetic looks wrong.
-
-                            There is deliberately no owner line here any more:
-                            an owner belongs to the tenant, not to one of its
-                            businesses, and it is shown on the tenant header
-                            above. */}
-                        {business.deletedAt && (
-                          <span className="mt-0.5 block text-xs text-plat-danger">
-                            {business.restorable
-                              ? `Deleted - restorable until ${dateTime(business.purgeAfter)}, slot still held`
-                              : 'Deleted - past its retention window'}
+                      {/* Identity takes the whole first line on a phone and
+                          shares it on anything wider. Sharing it at 360px left
+                          the name three letters wide beside the type badge and
+                          the Features button - the one thing on the row you
+                          need to read to know which business it is. */}
+                      <div className="flex w-full min-w-0 items-center gap-3 sm:w-auto sm:flex-1">
+                        <Building2
+                          className="size-4 shrink-0 text-plat-dim"
+                          strokeWidth={2}
+                          aria-hidden="true"
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium text-plat-text">
+                            {business.name}
                           </span>
-                        )}
-                      </span>
+                          {/* The address is the control, the way the tenant's
+                              status badge is: where a business answers is read
+                              here, so it is changed here. A business with none
+                              cannot be reached on any host, which is worth the
+                              warning colour rather than a quiet dash. */}
+                          <span className="mt-0.5 flex flex-wrap items-baseline gap-x-1.5 text-xs">
+                            <span className="font-mono text-plat-dim">{business.code}</span>
+                            <span className="text-plat-dim" aria-hidden="true">
+                              ·
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setAddressFor(business)}
+                              disabled={Boolean(business.deletedAt)}
+                              aria-label={`Change web address for ${business.name}`}
+                              className={cn(
+                                pressable,
+                                'rounded font-mono underline decoration-dotted underline-offset-2',
+                                'disabled:no-underline disabled:active:scale-100',
+                                business.slug ? 'text-plat-muted' : 'text-plat-warn',
+                              )}
+                            >
+                              {business.slug
+                                ? business.domain || addressOf(business.slug, storefrontDomain)
+                                : 'No web address'}
+                            </button>
+                          </span>
+
+                          {/* A deleted business still holds its slot until the
+                              window closes, which is the fact an operator needs
+                              when the slot arithmetic looks wrong.
+
+                              There is deliberately no owner line here any more:
+                              an owner belongs to the tenant, not to one of its
+                              businesses, and it is shown on the tenant header
+                              above. */}
+                          {business.deletedAt && (
+                            <span className="mt-0.5 block text-xs text-plat-danger">
+                              {business.restorable
+                                ? `Deleted - restorable until ${dateTime(business.purgeAfter)}, slot still held`
+                                : 'Deleted - past its retention window'}
+                            </span>
+                          )}
+                        </span>
+                      </div>
 
                       <PlatformBadge tone={TYPE_TONES[business.businessType] ?? 'neutral'}>
                         {business.businessType}
@@ -1045,6 +1419,7 @@ export function SuperAdminTenantsPage() {
         {addingTo && (
           <BusinessForm
             tenant={addingTo}
+            storefrontDomain={storefrontDomain}
             isPending={createBusiness.isPending}
             error={createBusiness.error?.message}
             onCancel={() => setAddingTo(null)}
@@ -1055,6 +1430,48 @@ export function SuperAdminTenantsPage() {
                   onSuccess: () => {
                     setAddingTo(null);
                     toast.ok('Business created', `${values.name} is ready to configure.`);
+                  },
+                },
+              )
+            }
+          />
+        )}
+      </PlatformModal>
+
+      <PlatformModal
+        open={Boolean(addressFor)}
+        onClose={() => setAddressFor(null)}
+        title={`Web address - ${addressFor?.name ?? ''}`}
+        size="md"
+        align="top"
+      >
+        {addressFor && (
+          <AddressForm
+            business={addressFor}
+            storefrontDomain={storefrontDomain}
+            platformDomains={platformDomains}
+            isPending={setBusinessAddress.isPending}
+            error={setBusinessAddress.error?.message}
+            onCancel={() => setAddressFor(null)}
+            onSubmit={(values) =>
+              setBusinessAddress.mutate(
+                { id: addressFor.id, ...values },
+                {
+                  onSuccess: (result) => {
+                    setAddressFor(null);
+                    toast.ok(
+                      'Address saved',
+                      `${addressFor.name} answers at ${addressOf(result.business.slug, storefrontDomain)}.`,
+                    );
+                    // Said now, while the person who can act on it is looking:
+                    // the domain is saved but will not load until the server
+                    // accepts it as an origin, and nothing else tells them.
+                    if (result.domainNeedsOrigin) {
+                      toast.info(
+                        'Custom domain needs a server change',
+                        `Add https://${result.business.domain} to CLIENT_ORIGIN on the server and restart it, or the domain will not load.`,
+                      );
+                    }
                   },
                 },
               )
@@ -1264,7 +1681,10 @@ export function SuperAdminTenantsPage() {
                    * boundary; reloading is the one way to be certain the panel
                    * starts as the support session and nothing else.
                    */
-                  onSuccess: () => window.location.assign('/admin'),
+                  // With the console and the panel on different hosts, the
+                  // session cannot be set from here - the server hands back a
+                  // single-use link the panel host claims instead.
+                  onSuccess: (result) => window.location.assign(result.handoffUrl ?? '/admin'),
                   onError: (err) => setError(err.message),
                 },
               );

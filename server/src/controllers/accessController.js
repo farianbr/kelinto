@@ -13,12 +13,34 @@ import auditService from '../services/auditService.js';
 
 // ---- businesses ----------------------------------------------------------------
 
+/**
+ * The tenant whose businesses this request may see.
+ *
+ * Read from the session rather than the query string, and passed down as the
+ * second argument so the service cannot be called unscoped by accident. An
+ * account with no tenant predates the control plane and pairs with the
+ * businesses that also have none - see `accessService.listBusinesses`.
+ */
+const tenantOf = (req) => (req.user?.tenant ? String(req.user.tenant) : null);
+
 const listBusinesses = asyncHandler(async (req, res) => {
-  res.json(await accessService.listBusinesses(req.query));
+  res.json(await accessService.listBusinesses(req.query, { tenant: tenantOf(req) }));
 });
 
 const getBusiness = asyncHandler(async (req, res) => {
-  res.json(await accessService.getBusiness(req.params.id));
+  res.json(await accessService.getBusiness(req.params.id, { tenant: tenantOf(req) }));
+});
+
+/** Ask the platform for a web address. Approved in the super-admin console. */
+const requestAddress = asyncHandler(async (req, res) => {
+  const actor = [req.user?.contactName, req.user?.email].filter(Boolean).join(' · ');
+  res.json(
+    await accessService.requestAddress(req.params.id, req.body, { tenant: tenantOf(req), actor }),
+  );
+});
+
+const cancelAddressRequest = asyncHandler(async (req, res) => {
+  res.json(await accessService.cancelAddressRequest(req.params.id, { tenant: tenantOf(req) }));
 });
 
 const nextBusinessCode = asyncHandler(async (_req, res) => {
@@ -184,4 +206,4 @@ const deleteStaff = asyncHandler(async (req, res) => {
   res.json(result);
 });
 
-export { listBusinesses, getBusiness, nextBusinessCode, createBusiness, updateBusiness, setDefaultBusiness, deleteBusiness, listRoles, createRole, updateRole, deleteRole, listStaff, createStaff, updateStaff, deleteStaff };
+export { listBusinesses, getBusiness, requestAddress, cancelAddressRequest, nextBusinessCode, createBusiness, updateBusiness, setDefaultBusiness, deleteBusiness, listRoles, createRole, updateRole, deleteRole, listStaff, createStaff, updateStaff, deleteStaff };

@@ -57,7 +57,7 @@ import {
   denyAdmin,
   requirePermission,
 } from '../middleware/auth.js';
-import { requireSupplier } from '../middleware/supplierAuth.js';
+import { requireSupplier, requireSupplierAccount } from '../middleware/supplierAuth.js';
 import { requireSuperAdmin } from '../middleware/superAdminAuth.js';
 import { requireFeature } from '../middleware/feature.js';
 import { resolveBusinessScope } from '../middleware/businessScope.js';
@@ -135,6 +135,9 @@ import {
   tenantSchema,
   tenantSlotsSchema,
   superAdminBusinessSchema,
+  businessAddressSchema,
+  addressRequestSchema,
+  addressRejectSchema,
   impersonationSchema,
   tenantOwnerSchema,
   supportMessageSchema,
@@ -144,6 +147,7 @@ import {
   planFeatureSchema,
   businessStatusSchema,
   supplierLoginSchema,
+  supplierSwitchSchema,
   supplierForgotSchema,
   supplierResetSchema,
   supplierPasswordSchema,
@@ -687,6 +691,9 @@ router.post('/superadmin/owners/:id/invite', requireSuperAdmin, authLimiter, sup
 // nothing open is a no-op rather than an error.
 router.post('/superadmin/businesses/:id/impersonate', requireSuperAdmin, validate(impersonationSchema), superAdminController.enterBusiness);
 router.post('/superadmin/impersonation/leave', superAdminController.leaveBusiness);
+// Not under /superadmin: it runs on the PANEL host, claiming a single-use link
+// the console minted, and the console's API does not answer there.
+router.get('/impersonation/claim', superAdminController.claimImpersonation);
 router.get('/superadmin/impersonation', requireSuperAdmin, superAdminController.listImpersonations);
 router.post('/superadmin/impersonation/:id/revoke', requireSuperAdmin, superAdminController.revokeImpersonation);
 
@@ -702,6 +709,12 @@ router.post('/superadmin/support/:id/resolve', requireSuperAdmin, superAdminCont
 // holds the tenant's slot through a retention window (`Tenant.slots` states the
 // rule; `Business.deletedAt` is what makes it true), so a tenant cannot
 // delete-and-recreate its way to a free business.
+// Where a business answers - its slug and any custom domain. Super-admin only:
+// an address is printed on receipts, and a custom domain needs a server origin.
+router.patch('/superadmin/businesses/:id/address', requireSuperAdmin, validate(businessAddressSchema), superAdminController.setBusinessAddress);
+// A tenant's requested address: approving makes it live on the spot.
+router.post('/superadmin/businesses/:id/address-request/approve', requireSuperAdmin, superAdminController.approveAddressRequest);
+router.post('/superadmin/businesses/:id/address-request/reject', requireSuperAdmin, validate(addressRejectSchema), superAdminController.rejectAddressRequest);
 router.patch('/superadmin/businesses/:id/status', requireSuperAdmin, validate(businessStatusSchema), superAdminController.setBusinessStatus);
 router.delete('/superadmin/businesses/:id', requireSuperAdmin, superAdminController.deleteBusiness);
 router.post('/superadmin/businesses/:id/restore', requireSuperAdmin, superAdminController.restoreBusiness);
@@ -725,9 +738,14 @@ router.post('/supplier-portal/login', authLimiter, validate(supplierLoginSchema)
 router.post('/supplier-portal/logout', supplierPortalController.logout);
 // Not `requireSupplier`: signed out is a valid answer, as it is for `/auth/me`.
 router.get('/supplier-portal/me', supplierPortalController.me);
+// One account, several businesses: which one to work in, and the invitations
+// other businesses have sent. Account-level, so no business is required yet.
+router.post('/supplier-portal/switch', requireSupplierAccount, validate(supplierSwitchSchema), supplierPortalController.switchBusiness);
+router.post('/supplier-portal/invitations/:business/accept', requireSupplierAccount, supplierPortalController.acceptInvitation);
+router.post('/supplier-portal/invitations/:business/decline', requireSupplierAccount, supplierPortalController.declineInvitation);
 router.post('/supplier-portal/forgot-password', authLimiter, validate(supplierForgotSchema), supplierPortalController.forgotPassword);
 router.post('/supplier-portal/reset-password', authLimiter, validate(supplierResetSchema), supplierPortalController.resetPassword);
-router.post('/supplier-portal/password', requireSupplier, validate(supplierPasswordSchema), supplierPortalController.changePassword);
+router.post('/supplier-portal/password', requireSupplierAccount, validate(supplierPasswordSchema), supplierPortalController.changePassword);
 
 // The master agreement, signed once before a supplier may price anything.
 // Reading an order is open; `submitBid` and `submitProforma` call
@@ -907,6 +925,10 @@ router.patch('/admin/businesses/:id', ...businessFull, validate(businessSchema),
 // decided in one place.
 router.patch('/admin/businesses/:id/default', ...businessFull, accessController.setDefaultBusiness);
 router.delete('/admin/businesses/:id', ...businessFull, accessController.deleteBusiness);
+// Asking the platform for a web address. The console approves it; nothing here
+// sets the live address.
+router.post('/admin/businesses/:id/address-request', ...businessFull, validate(addressRequestSchema), accessController.requestAddress);
+router.delete('/admin/businesses/:id/address-request', ...businessFull, accessController.cancelAddressRequest);
 
 router.get('/admin/roles', ...adminOnly, accessController.listRoles);
 router.post('/admin/roles', ...adminOnly, validate(roleSchema), accessController.createRole);

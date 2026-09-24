@@ -28,6 +28,9 @@ import { resetPasswordSchema } from '@shared/schemas/auth';
 export function ResetPasswordPage() {
   const [params] = useSearchParams();
   const token = params.get('token') ?? '';
+  // Which business holds the account, when the link says - the token's hash
+  // lives in that business's database, so the request has to open it.
+  const business = params.get('business') ?? '';
   const navigate = useNavigate();
   const { refresh } = useAuth();
   const [formError, setFormError] = useState(null);
@@ -45,7 +48,7 @@ export function ResetPasswordPage() {
   async function onSubmit(values) {
     setFormError(null);
     try {
-      await api.post('/auth/reset-password', values);
+      await api.post('/auth/reset-password', values, business ? { params: { business } } : undefined);
       // The cookie is set by the response; `refresh` is what makes the rest of
       // the app notice without a reload.
       await refresh?.();

@@ -91,6 +91,13 @@ async function authenticate(req, res, next) {
 
     if (user) {
       req.user = user;
+      /**
+       * Where this account lives. A control-plane admin is the only kind that
+       * authenticates in EVERY business database, so it is the only kind whose
+       * reach `businessScope` has to check against its tenant. Everybody else
+       * exists in one database and is anonymous in all the others.
+       */
+      req.accountInControlPlane = Boolean(controlAdmin);
     } else {
       // Signature is valid but the subject is gone: a deleted account, or a dev
       // database reseeded underneath a live session.

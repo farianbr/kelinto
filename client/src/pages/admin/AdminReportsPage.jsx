@@ -18,6 +18,7 @@ import {
   Truck,
   Users,
   Wallet,
+  Wrench,
 } from 'lucide-react';
 import cn from '@/lib/cn';
 import { money, date, count as formatCount } from '@/lib/format';
@@ -177,7 +178,7 @@ function SummaryTab({ data }) {
           { key: 'gross', label: 'Gross profit', value: money(kpis.grossProfit), hint: 'Revenue less cost of goods', tone: 'ok', icon: TrendingUp },
           { key: 'cogs', label: 'Cost of goods', value: money(kpis.costOfGoods), hint: 'From each line’s own cost snapshot', tone: 'warn', icon: Boxes },
           { key: 'expenses', label: 'Expenses', value: money(kpis.expenses), hint: 'Money out in range', tone: 'warn', icon: Receipt },
-          { key: 'tax', label: 'GST/HST collected', value: money(kpis.taxCollected), hint: 'On orders in range', tone: 'info', icon: Percent },
+          { key: 'tax', label: 'GST/HST collected', value: money(kpis.taxCollected), hint: 'On sales and repairs in range', tone: 'info', icon: Percent },
           { key: 'outstanding', label: 'Outstanding', value: money(kpis.outstanding), hint: `Owed to ${businessName}, as of today`, tone: (kpis.outstanding ?? 0) > 0 ? 'danger' : 'ok', icon: AlertCircle },
         ]}
       />
@@ -329,8 +330,8 @@ function ProfitAndLossTab({ data }) {
     <>
       <KpiRow
         tiles={[
-          { key: 'product', label: 'Product revenue', value: money(kpis.productRevenue), hint: 'List value of every line', tone: 'brand', icon: FileText },
-          { key: 'shipping', label: 'Shipping revenue', value: money(kpis.shippingRevenue), hint: 'Charged on orders in range', tone: 'info', icon: Truck },
+          { key: 'product', label: 'Product revenue', value: money(kpis.productRevenue), hint: 'List value of every order line', tone: 'brand', icon: FileText },
+          { key: 'service', label: 'Service revenue', value: money(kpis.serviceRevenue), hint: 'Repair labour, parts and fees', tone: 'info', icon: Wrench },
           { key: 'net', label: 'Net revenue', value: money(kpis.netRevenue), hint: 'Less discounts, plus shipping', tone: 'brand', icon: Coins },
           { key: 'cogs', label: 'Cost of goods', value: money(kpis.costOfGoods), hint: 'From each line’s cost snapshot', tone: 'warn', icon: Boxes },
           { key: 'gross', label: 'Gross profit', value: money(kpis.grossProfit), hint: 'Net revenue less cost of goods', tone: 'ok', icon: TrendingUp },
@@ -360,9 +361,17 @@ function ProfitAndLossTab({ data }) {
           <dl className="space-y-1.5 text-sm">
             {[
               ['Product revenue', statement.productRevenue],
+              ['Repair labour', statement.repairLabour],
+              ['Repair parts', statement.repairParts],
+              ['Other service income', statement.otherServiceIncome],
               ['Shipping revenue', statement.shippingRevenue],
               ['Discounts given', -(statement.discounts ?? 0)],
-            ].map(([label, value]) => (
+            ]
+              // A line that is zero for this business says nothing: a parts
+              // wholesaler with no repairs should not read three empty rows.
+              // Product revenue stays, as the anchor of the statement.
+              .filter(([label, value]) => label === 'Product revenue' || (value ?? 0) !== 0)
+              .map(([label, value]) => (
               <div key={label} className="flex justify-between gap-2">
                 <dt className="text-ink-500">{label}</dt>
                 <dd><Signed cents={value ?? 0} /></dd>

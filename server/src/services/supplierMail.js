@@ -2,6 +2,8 @@ import env from '../config/env.js';
 import { sendMail } from './mailer.js';
 import { MAIL, escapeHtml } from './welcomeMail.js';
 import { sendingBusiness } from './sendingBusiness.js';
+import { PLATFORM_IDENTITY, platformFrom } from './platformSender.js';
+import { panelOrigin } from './linkOrigins.js';
 
 /**
  * Mail to suppliers - the portal invitation, and everything a purchase order
@@ -26,6 +28,15 @@ const CAD = new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' 
 const money = (cents) => CAD.format((cents ?? 0) / 100);
 
 /** The card shell every message below fills. Kept in one place, as in the buyer mail. */
+/**
+ * "Name · City, Region", leaving out what is not known - the platform itself
+ * has no address to print, and " · , " at the foot of a mail reads as broken.
+ */
+function signOff(business) {
+  const place = [business.address?.city, business.address?.region].filter(Boolean).join(', ');
+  return [business.name, place].filter(Boolean).join(' · ');
+}
+
 function shell({ preheader, title, intro, blocks, footerNote, business }) {
   const { display, body, ink900, ink500, ink300, line, surface2 } = MAIL;
 
@@ -63,7 +74,7 @@ function shell({ preheader, title, intro, blocks, footerNote, business }) {
         <tr><td style="padding:28px 36px 36px;">
           <p style="margin:0;font:400 ${MAIL.small}/1.6 ${body};color:${ink300};border-top:1px solid ${line};padding-top:16px;">
             ${footerNote}<br />
-            ${escapeHtml(business.name)} · ${escapeHtml(business.address.city)}, ${escapeHtml(business.address.region)}
+            ${escapeHtml(signOff(business))}
           </p>
         </td></tr>
 
@@ -120,7 +131,12 @@ function detailTable(rows) {
  * one always mints a fresh password, because the old one cannot be read back
  * out of the hash to be re-sent.
  */
-async function sendSupplierPortalInvite({ supplier, password }) {
+async function sendSupplierPortalInvite({
+  supplier,
+  password,
+  portal: portalUrl = null,
+  existingAccount = false,
+}) {
   if (!supplier?.email) {
     return { delivered: false, via: null, error: 'No email address on file.' };
   }
@@ -129,10 +145,17 @@ async function sendSupplierPortalInvite({ supplier, password }) {
     // The business placing this order, not the house brand - a supplier who
     // deals with two businesses on one platform must see which one is writing.
     const business = await sendingBusiness();
-    const origin = env.publicOrigin;
-    const portal = `${origin}/supplier`;
+    const portal = portalUrl ?? `${panelOrigin()}/supplier`;
 
-    const intro = `Your supplier portal for <strong style="color:${MAIL.ink900};font-weight:600;">${escapeHtml(supplier.name)}</strong> is open. Sign in to see the requests for quote we send you and to price them.`;
+    /**
+     * A supplier who already has a platform account is being invited, not
+     * signed up: same email and password they use for every other business,
+     * and an invitation to accept once they are in. Saying so is what stops
+     * them looking for a password this message deliberately does not contain.
+     */
+    const intro = existingAccount
+      ? `<strong style="color:${MAIL.ink900};font-weight:600;">${escapeHtml(business.name)}</strong> has invited ${escapeHtml(supplier.name)} to supply them. Sign in with the supplier account you already use and accept the invitation to see the requests for quote they send you.`
+      : `Your supplier portal for <strong style="color:${MAIL.ink900};font-weight:600;">${escapeHtml(supplier.name)}</strong> is open. Sign in, accept the invitation, and you will see the requests for quote we send you.`;
 
     const rows = [
       ['Portal', portal, false],
@@ -154,7 +177,9 @@ async function sendSupplierPortalInvite({ supplier, password }) {
       button(portal, 'Open the supplier portal');
 
     const text = [
-      `Your ${business.name} supplier portal is open.`,
+      existingAccount
+        ? `${business.name} has invited you to supply them.`
+        : `Your ${business.name} supplier portal is open.`,
       '',
       `  Portal    ${portal}`,
       `  Email     ${supplier.email}`,
@@ -167,7 +192,9 @@ async function sendSupplierPortalInvite({ supplier, password }) {
             '',
           ]
         : []),
-      'Sign in to see the requests for quote we send you and to price them.',
+      existingAccount
+        ? 'Sign in with your existing supplier account and accept the invitation.'
+        : 'Sign in and accept the invitation to see the requests for quote we send you.',
       '',
       `${business.name} · ${business.address.city}, ${business.address.region}`,
       'Reply to this email and it reaches our purchasing team.',
@@ -176,11 +203,13 @@ async function sendSupplierPortalInvite({ supplier, password }) {
     return await sendMail({
       to: supplier.email,
       from: env.MAIL_FROM_ADMIN,
-      subject: `Your ${business.name} supplier portal`,
+      subject: existingAccount
+        ? `${business.name} invited you to supply them`
+        : `Your ${business.name} supplier portal`,
       html: shell({
         business,
         preheader: 'Your sign-in details for the supplier portal are inside.',
-        title: 'Your supplier portal is ready',
+        title: existingAccount ? 'You have a new invitation' : 'Your supplier portal is ready',
         intro,
         blocks,
         footerNote: 'Reply to this email and it reaches our purchasing team.',
@@ -209,29 +238,33 @@ async function sendSupplierResetEmail({ supplier, link, expiresDays = 7 }) {
   }
 
   try {
-    // The business placing this order, not the house brand - a supplier who
-    // deals with two businesses on one platform must see which one is writing.
-    const business = await sendingBusiness();
+    /**
+     * From Kelinto, not a business. The password being reset belongs to the
+     * supplier's platform-wide account and opens every business they supply,
+     * so no one of those businesses is the sender - and whichever one the
+     * request happened to resolve to would be a stranger to some of them.
+     */
+    const business = PLATFORM_IDENTITY;
     const text = [
-      `Somebody asked to reset the supplier portal password for ${supplier.email}.`,
+      `Somebody asked to reset the Kelinto supplier password for ${supplier.email}.`,
       '',
       `  Choose a new password  ${link}`,
       '',
       `The link works once and expires in ${expiresDays} days.`,
       'If this was not you, ignore this message - nothing has changed.',
       '',
-      `${business.name} · ${business.address.city}, ${business.address.region}`,
+      signOff(business),
     ].join('\n');
 
     return await sendMail({
       to: supplier.email,
-      from: env.MAIL_FROM_ADMIN,
+      from: platformFrom(),
       subject: 'Reset your supplier portal password',
       html: shell({
         business,
         preheader: `Choose a new password. The link expires in ${expiresDays} days.`,
         title: 'Reset your password',
-        intro: `Somebody asked to reset the supplier portal password for <strong style="color:${MAIL.ink900};font-weight:600;">${escapeHtml(supplier.email)}</strong>. Use the button below within ${expiresDays} days.`,
+        intro: `Somebody asked to reset the Kelinto supplier password for <strong style="color:${MAIL.ink900};font-weight:600;">${escapeHtml(supplier.email)}</strong>. Use the button below within ${expiresDays} days.`,
         blocks: button(link, 'Choose a new password'),
         footerNote:
           'If this was not you, ignore this message - nothing has changed until the link is used.',
@@ -260,7 +293,7 @@ async function sendPurchaseOrderInvitation({ supplier, po }) {
     // The business placing this order, not the house brand - a supplier who
     // deals with two businesses on one platform must see which one is writing.
     const business = await sendingBusiness();
-    const origin = env.publicOrigin;
+    const origin = panelOrigin();
     const link = `${origin}/supplier/orders/${po._id ?? po.id}`;
 
     const lineRows = (po.items ?? [])
@@ -343,7 +376,7 @@ async function sendPurchaseOrderOutcome({ supplier, po, won }) {
     // The business placing this order, not the house brand - a supplier who
     // deals with two businesses on one platform must see which one is writing.
     const business = await sendingBusiness();
-    const origin = env.publicOrigin;
+    const origin = panelOrigin();
     const link = `${origin}/supplier/orders/${po._id ?? po.id}`;
 
     const intro = won
@@ -408,7 +441,7 @@ async function sendNegotiationEmail({ supplier, po, askedTotal, note, subject })
     // The business placing this order, not the house brand - a supplier who
     // deals with two businesses on one platform must see which one is writing.
     const business = await sendingBusiness();
-    const origin = env.publicOrigin;
+    const origin = panelOrigin();
     const link = `${origin}/supplier/orders/${po._id ?? po.id}`;
 
     const blocks =
@@ -482,7 +515,7 @@ async function sendSupplierMessage({ supplier, channel, po, askedTotal, note }) 
     `${business.name}: we would like to revisit ${po.poNumber}.`,
     askedTotal != null ? `Our target is ${money(askedTotal)}.` : null,
     note,
-    `${env.publicOrigin}/supplier/orders/${po._id ?? po.id}`,
+    `${panelOrigin()}/supplier/orders/${po._id ?? po.id}`,
   ]
     .filter(Boolean)
     .join(' ');
@@ -509,7 +542,7 @@ async function sendPurchaseAdminAlert({ subject, po, supplierName, kind, status 
     // The business placing this order, not the house brand - a supplier who
     // deals with two businesses on one platform must see which one is writing.
     const business = await sendingBusiness();
-    const origin = env.publicOrigin;
+    const origin = panelOrigin();
     const link = `${origin}/admin/purchase-orders/${po._id ?? po.id}`;
 
     const intro =

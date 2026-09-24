@@ -1,4 +1,10 @@
+import { useState } from 'react';
 import { Link, useParams } from 'react-router';
+import { businessSlugProblem } from '@shared/hosts';
+import Input from '@/components/ui/Input';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import { relativeTime } from '@/lib/format';
+import { toast } from '@/store/toastStore';
 import { Building2, Mail, MapPin, Pencil, Phone, Star, UserRound } from 'lucide-react';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
@@ -143,40 +149,182 @@ export function AdminBusinessDetailPage() {
           )}
         </div>
 
-        <Panel
-          title="Staff"
-          description="Assigned from the Users screen."
-        >
-          {business.staff?.length ? (
-            <ul className="flex flex-col gap-2">
-              {business.staff.map((member) => (
-                <li
-                  key={member._id ?? member.id}
-                  className="flex items-center justify-between gap-2 rounded-md border border-line px-3 py-2"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-md text-ink-900">{member.contactName}</p>
-                    <p className="truncate text-xs text-ink-400">{member.email}</p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    {member.lockedAt && (
-                      <Badge tone="danger" size="sm">
-                        Locked
+        <div className="flex flex-col gap-4">
+          <StorefrontAddress business={business} editable={editable} />
+
+          <Panel
+            title="Staff"
+            description="Assigned from the Users screen."
+          >
+            {business.staff?.length ? (
+              <ul className="flex flex-col gap-2">
+                {business.staff.map((member) => (
+                  <li
+                    key={member._id ?? member.id}
+                    className="flex items-center justify-between gap-2 rounded-md border border-line px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-md text-ink-900">{member.contactName}</p>
+                      <p className="truncate text-xs text-ink-400">{member.email}</p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {member.lockedAt && (
+                        <Badge tone="danger" size="sm">
+                          Locked
+                        </Badge>
+                      )}
+                      <Badge tone="neutral" size="sm">
+                        {member.staffRole?.name ?? 'No role'}
                       </Badge>
-                    )}
-                    <Badge tone="neutral" size="sm">
-                      {member.staffRole?.name ?? 'No role'}
-                    </Badge>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-sm text-ink-500">Nobody is assigned to this business yet.</p>
-          )}
-        </Panel>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-ink-500">Nobody is assigned to this business yet.</p>
+            )}
+          </Panel>
+        </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Where customers reach this business's storefront, and asking for it.
+ *
+ * **The tenant asks; the platform approves.** An address decides which
+ * catalogue a stranger's browser opens and is printed on receipts, so it is
+ * granted in the platform console, never set here. This card is the request
+ * and its answer: the live address when there is one, what is waiting, and why
+ * a request was turned down - in that order, because the live address is what
+ * somebody opening this card is usually checking.
+ */
+function StorefrontAddress({ business, editable }) {
+  const { requestAddress, cancelAddressRequest } = useAdminMutations();
+  const [slug, setSlug] = useState('');
+  const [withdrawing, setWithdrawing] = useState(false);
+
+  const domain = business.storefrontDomain;
+  const full = (label) => (domain ? `${label}.${domain}` : label);
+  const request = business.addressRequest;
+  const pending = request?.status === 'pending';
+  const problem = slug ? businessSlugProblem(slug) : null;
+
+  return (
+    <Panel title="Storefront address">
+      {business.slug ? (
+        <div>
+          <p className="text-xs text-ink-400">Live</p>
+          {domain ? (
+            <a
+              href={`https://${full(business.slug)}`}
+              target="_blank"
+              rel="noreferrer"
+              className="font-mono text-md break-all text-ink-900 underline decoration-ink-300 underline-offset-2"
+            >
+              {full(business.slug)}
+            </a>
+          ) : (
+            <p className="font-mono text-md text-ink-900">{business.slug}</p>
+          )}
+        </div>
+      ) : (
+        <p className="text-sm text-ink-500">
+          No address yet. Customers cannot reach a storefront for this business until one is
+          approved.
+        </p>
+      )}
+
+      {pending && (
+        <div className="mt-3 rounded-md border border-line px-3 py-2.5">
+          <p className="text-sm text-ink-900">
+            Requested <span className="font-mono">{full(request.slug)}</span>
+          </p>
+          <p className="mt-0.5 text-xs text-ink-400">
+            Waiting for approval · {relativeTime(request.requestedAt)}
+          </p>
+          {editable && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mt-2 -ml-2"
+              onClick={() => setWithdrawing(true)}
+            >
+              Withdraw request
+            </Button>
+          )}
+        </div>
+      )}
+
+      {request?.status === 'rejected' && (
+        <div className="mt-3 rounded-md border border-line px-3 py-2.5">
+          <p className="text-sm text-ink-900">
+            <span className="font-mono">{full(request.slug)}</span> was not approved
+          </p>
+          {request.note && <p className="mt-0.5 text-sm text-ink-600">{request.note}</p>}
+        </div>
+      )}
+
+      {editable && !pending && (
+        <form
+          className="mt-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!slug || problem) return;
+            requestAddress.mutate(
+              { id: business.id, slug },
+              {
+                onSuccess: () => {
+                  setSlug('');
+                  toast.ok('Request sent', `${full(slug)} goes live once the platform approves it.`);
+                },
+              },
+            );
+          }}
+        >
+          <Input
+            label={business.slug ? 'Ask for a different address' : 'Ask for an address'}
+            value={slug}
+            onChange={(event) => setSlug(event.target.value.toLowerCase().trim())}
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            error={problem || requestAddress.error?.message}
+            hint={
+              slug && !problem
+                ? `Would open at ${full(slug)}.${business.slug ? ' The current address stops working once it is approved.' : ''}`
+                : 'Lowercase letters, digits and hyphens.'
+            }
+          />
+          <Button
+            type="submit"
+            size="sm"
+            className="mt-2"
+            disabled={!slug || Boolean(problem)}
+            loading={requestAddress.isPending}
+          >
+            Send request
+          </Button>
+        </form>
+      )}
+
+      <ConfirmDialog
+        open={withdrawing}
+        onClose={() => setWithdrawing(false)}
+        onConfirm={() =>
+          cancelAddressRequest.mutate(business.id, {
+            onSuccess: () => setWithdrawing(false),
+          })
+        }
+        tone="warn"
+        title={`Withdraw the request for ${full(request?.slug ?? '')}?`}
+        body="The platform will no longer see it, and the address is free for anybody else to ask for. The live address, if there is one, does not change."
+        confirmLabel="Withdraw request"
+        loading={cancelAddressRequest.isPending}
+        error={cancelAddressRequest.error?.message}
+      />
+    </Panel>
   );
 }
 

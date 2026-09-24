@@ -1,3 +1,10 @@
+import mongoose from 'mongoose';
+import Business from '../models/Business.js';
+import ApiError from '../utils/ApiError.js';
+import { dbFor } from '../db/connections.js';
+import { currentBusinessId, runInBusiness } from '../db/context.js';
+import { businessConfig } from './businessConfigCache.js';
+
 /**
  * Which business this request is about.
  *
@@ -23,33 +30,134 @@
  *      widen their view by sending a different `?business=`, which is the whole
  *      point of scoping them.
  *
- *   2. **An admin's `?business=` is a filter they chose.** Admins see
- *      everything by default and narrow it with the top-bar switcher. Absent or
- *      `all` means no filter, which is the honest reading of "All businesses".
+ *   2. **An admin's `?business=` is a filter they chose**, within their own
+ *      tenant. Absent or `all` means no filter inside the open business.
  *
  * The result lands on `req.businessScope` as an id or null. `null` means "do
  * not filter" and is deliberately the same value as "no business chosen" - a
  * query builder can then spread the filter unconditionally.
  *
- * **This middleware only reads.** It never rejects: a staff member asking for
- * another business is not attacking anything, they are usually just carrying a
- * stale query string from a bookmark, and the right answer is to show them
- * their own business rather than an error page.
+ * **It rejects only a tenant admin reaching outside their tenant.** A staff
+ * member carrying a stale query string from a bookmark is not attacking
+ * anything, and the right answer is to show them their own business rather
+ * than an error page. See `scopeRequest` for the one account type that can
+ * reach across databases, and what happens when it does.
  */
-function resolveBusinessScope(req, _res, next) {
+
+/**
+ * Does this business belong to the account's tenant?
+ *
+ * **The entitlement is the tenant**, which `User.tenant` already states: a
+ * tenant admin "reaches every business that tenant owns", and nothing beyond.
+ *
+ * An admin with no `tenant` predates the control plane, and every business
+ * with no `tenant` is tenant #1's by the same history - so the two pair up
+ * exactly. Reading "no tenant" as "every tenant" would make the check opt-in,
+ * and a security check nobody has opted into is decoration.
+ */
+async function tenantOwns(user, businessId) {
+  /**
+   * Rejected before the cache, not by it: `businessConfig` caches its misses,
+   * so a malformed id would otherwise take a permanent entry in a `Map` that is
+   * only cleared by an edit to a real business.
+   */
+  if (!mongoose.isValidObjectId(businessId)) return false;
+
+  // The cached read `tenantStatus` and `feature` already make, because this
+  // runs on every panel request and a business's owner changes about never.
+  const business = await businessConfig(businessId);
+
+  // Missing and deleted answer the same, so a probe cannot tell a wrong id
+  // from another tenant's id.
+  if (!business || business.deletedAt) return false;
+
+  const userTenant = user?.tenant ? String(user.tenant) : null;
+  return userTenant === business.tenantId;
+}
+
+/** The business a tenant admin lands in when nothing chose one: theirs, never another's. */
+async function homeBusinessFor(user) {
+  const tenant = user?.tenant ?? null;
+  return Business.findOne({ tenant, deletedAt: null })
+    .sort({ isDefault: -1, name: 1 })
+    .select('_id code')
+    .lean();
+}
+
+/**
+ * Which steps of `resolveBusiness` were somebody actually naming a business.
+ *
+ * `single` and `default` are fallbacks - the request named nothing and was
+ * given an answer. The rest are statements: a host somebody typed, a switcher
+ * somebody used, a header a tool set, a session signed into one database.
+ */
+const FALLBACK_SOURCES = new Set(['single', 'default']);
+
+/**
+ * ## Who needs checking, and why only them
+ *
+ * `resolveBusiness` has already opened a database by the time this runs, and
+ * it did so before anybody was authenticated - from a header, a token, a query
+ * string or a host, none of them checked. That is safe for every account that
+ * lives INSIDE a business database: staff, buyers and the older
+ * business-database admins exist in exactly one, and in any other they are
+ * simply not signed in. Naming another business cannot widen what they see.
+ *
+ * **A tenant admin is the exception.** They live in the control plane, so
+ * `authenticate` finds them in whatever database is open. On the shared admin
+ * host that means one edited query string or header away from another tenant's
+ * customers, invoices and margins. So for them - and only them - the business
+ * that was opened is checked against their tenant:
+ *
+ * - **Named explicitly** and not theirs: refused, **404 not 403**, the same as
+ *   `requireFeature`. A 403 on a real id beside a 404 on a made-up one is an
+ *   oracle that maps the installation one request at a time.
+ * - **Reached by fallback** and not theirs: moved to one of their own. That is
+ *   an admin opening the panel before choosing anything, on a host whose
+ *   default belongs to somebody else - not an attack, and an error page there
+ *   would be every first page load of every tenant but one.
+ *
+ * Checked against the OPEN database, not the filter. The filter only narrows
+ * rows; the connection decides whose rows exist at all.
+ */
+async function scopeRequest(req, next) {
   const user = req.user;
 
   /**
    * A support session is pinned to the business its grant names.
    *
-   * **This is a containment boundary, not a convenience.** A platform operator
-   * who could edit `?business=` would reach every business on the installation
-   * from a grant issued for one - and the audit trail would record the actions
-   * in the business they entered, not the one they actually touched. The pin is
-   * set by `authenticateImpersonation`, which runs first; honouring it here is
-   * the half that makes it stick.
+   * **A containment boundary, not a convenience.** A platform operator who
+   * could edit `?business=` would reach every business on the installation
+   * from a grant issued for one, and the audit trail would record the actions
+   * in the business they entered, not the one they touched. `impersonationAuth`
+   * sets the pin; honouring it here is the half that makes it stick.
    */
   if (req.businessScopePinned) return next();
+
+  if (req.accountInControlPlane) {
+    const opened = currentBusinessId();
+
+    if (opened && !(await tenantOwns(user, opened))) {
+      if (!FALLBACK_SOURCES.has(req.businessScopeSource)) {
+        return next(ApiError.notFound('Business not found.', 'BUSINESS_NOT_FOUND'));
+      }
+
+      const home = await homeBusinessFor(user);
+      if (!home) {
+        // A tenant with no live business has nowhere to be, and the default
+        // is somebody else's. Nothing is the honest answer.
+        return next(ApiError.notFound('Business not found.', 'BUSINESS_NOT_FOUND'));
+      }
+
+      // Re-open the request inside their own business. Everything after this -
+      // features, tenant status, the route - runs against it.
+      req.businessScope = String(home._id);
+      return runInBusiness(
+        { businessId: String(home._id), code: home.code, connection: dbFor(home.code) },
+        () => applyQuery(req, next),
+      );
+    }
+  }
 
   // Staff are pinned to their own business, whatever the query says.
   if (user?.role === 'staff' && user.business) {
@@ -57,32 +165,40 @@ function resolveBusinessScope(req, _res, next) {
     return next();
   }
 
+  return applyQuery(req, next);
+}
+
+/**
+ * The filter half: what `?business=` asks to narrow to.
+ *
+ * By here the database is settled and, for a tenant admin, checked. `all`
+ * clears the filter because that is a deliberate request for the unscoped view;
+ * absent keeps what `resolveBusiness` decided, which on the storefront is the
+ * host's business on every request that carries no query string at all.
+ */
+function applyQuery(req, next) {
   const requested = String(req.query.business ?? '').trim();
 
-  if (requested && requested !== 'all') {
-    req.businessScope = requested;
-    return next();
-  }
+  if (requested === 'all') req.businessScope = null;
+  else if (requested) req.businessScope = requested;
+  else req.businessScope = req.businessScope ?? null;
 
-  /**
-   * Nothing asked for - keep whatever `resolveBusiness` worked out.
-   *
-   * **This used to null the scope**, which was correct while `?business=` was
-   * the only source: absent meant "all businesses". Now the host resolves a
-   * business before authentication (§4.2), so overwriting here would throw away
-   * the storefront's business on every request that happens not to carry a
-   * query string - which is all of them.
-   *
-   * `all` still clears it, because that is a deliberate request for the
-   * unscoped view rather than an absent answer.
-   */
-  if (requested === 'all') {
-    req.businessScope = null;
-    return next();
-  }
-
-  req.businessScope = req.businessScope ?? null;
   return next();
+}
+
+/**
+ * The mounted middleware.
+ *
+ * **A thin synchronous shell around an async body, and it has to be.** Express
+ * 4 does not await a middleware's return value, so a promise that rejects
+ * inside one is an unhandled rejection rather than a 500 - the request hangs
+ * until it times out and the error never reaches `errorHandler`. Catching here
+ * and passing to `next` is what turns a refusal into the 404 it is meant to be.
+ *
+ * Express 5 handles this itself. This file does not assume it.
+ */
+function resolveBusinessScope(req, _res, next) {
+  scopeRequest(req, next).catch(next);
 }
 
 /**

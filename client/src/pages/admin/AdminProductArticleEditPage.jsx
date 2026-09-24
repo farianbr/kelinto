@@ -14,6 +14,7 @@ import PageHeader from '@/components/admin/PageHeader';
 import AuthorFields from '@/components/admin/AuthorFields';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { useAdminProductArticle, useAdminMutations } from '@/hooks/useAdmin';
+import { useStorefrontUrl } from '@/hooks/useStorefrontUrl';
 
 /**
  * The article editor for ONE product.
@@ -76,6 +77,7 @@ function Preview({ heading, body }) {
 }
 
 export function AdminProductArticleEditPage() {
+  const storefrontUrl = useStorefrontUrl();
   const { productId } = useParams();
   const navigate = useNavigate();
 
@@ -181,8 +183,8 @@ export function AdminProductArticleEditPage() {
                 saving is always "how does it actually look", and a published
                 article is one click from here rather than a search away. */}
             {product && (
-              <Link
-                to={`/product/${product.slug}`}
+              <a
+                href={storefrontUrl(`/product/${product.slug}`)}
                 target="_blank"
                 rel="noreferrer"
                 className={cn(
@@ -192,7 +194,7 @@ export function AdminProductArticleEditPage() {
               >
                 View part
                 <ExternalLink className="size-3.5" strokeWidth={2} aria-hidden="true" />
-              </Link>
+              </a>
             )}
           </div>
         }
