@@ -57,7 +57,7 @@ import {
   denyAdmin,
   requirePermission,
 } from '../middleware/auth.js';
-import { requireSupplier, requireSupplierAccount } from '../middleware/supplierAuth.js';
+import { requireSupplier } from '../middleware/supplierAuth.js';
 import { requireSuperAdmin } from '../middleware/superAdminAuth.js';
 import { requireFeature } from '../middleware/feature.js';
 import { resolveBusinessScope } from '../middleware/businessScope.js';
@@ -147,7 +147,6 @@ import {
   planFeatureSchema,
   businessStatusSchema,
   supplierLoginSchema,
-  supplierSwitchSchema,
   supplierForgotSchema,
   supplierResetSchema,
   supplierPasswordSchema,
@@ -242,6 +241,10 @@ router.get('/health', (req, res) =>
     business: req.businessScope ?? null,
   }),
 );
+
+// The platform's public price list, read by the kelinto.com landing page.
+// Outside `/superadmin` on purpose: that prefix answers only on the console host.
+router.get('/platform/plans', superAdminController.listPublicPlans);
 
 // --- auth ------------------------------------------------------------------
 router.post('/auth/register', authLimiter, validate(registerSchema), authController.register);
@@ -738,14 +741,11 @@ router.post('/supplier-portal/login', authLimiter, validate(supplierLoginSchema)
 router.post('/supplier-portal/logout', supplierPortalController.logout);
 // Not `requireSupplier`: signed out is a valid answer, as it is for `/auth/me`.
 router.get('/supplier-portal/me', supplierPortalController.me);
-// One account, several businesses: which one to work in, and the invitations
-// other businesses have sent. Account-level, so no business is required yet.
-router.post('/supplier-portal/switch', requireSupplierAccount, validate(supplierSwitchSchema), supplierPortalController.switchBusiness);
-router.post('/supplier-portal/invitations/:business/accept', requireSupplierAccount, supplierPortalController.acceptInvitation);
-router.post('/supplier-portal/invitations/:business/decline', requireSupplierAccount, supplierPortalController.declineInvitation);
 router.post('/supplier-portal/forgot-password', authLimiter, validate(supplierForgotSchema), supplierPortalController.forgotPassword);
+// Sets the first password from an invitation, and a new one from a reset: both
+// are a single-use emailed link.
 router.post('/supplier-portal/reset-password', authLimiter, validate(supplierResetSchema), supplierPortalController.resetPassword);
-router.post('/supplier-portal/password', requireSupplierAccount, validate(supplierPasswordSchema), supplierPortalController.changePassword);
+router.post('/supplier-portal/password', requireSupplier, validate(supplierPasswordSchema), supplierPortalController.changePassword);
 
 // The master agreement, signed once before a supplier may price anything.
 // Reading an order is open; `submitBid` and `submitProforma` call

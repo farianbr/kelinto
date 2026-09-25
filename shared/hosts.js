@@ -63,7 +63,7 @@ function businessSlugProblem(slug) {
   if (!SLUG_PATTERN.test(value)) {
     return 'Use 2 to 40 lowercase letters, digits or hyphens, not starting or ending with a hyphen.';
   }
-  if (isReservedSubdomain(value)) return `"${value}" is kept for the platform. Choose another.`;
+  if (isReservedSubdomain(value)) return `"${value}" is kept for Kelinto. Choose another.`;
   return null;
 }
 

@@ -9,7 +9,7 @@ import { backfillReferralCodes } from './backfill-referral-codes.js';
 import { backfillCellvixFeatures } from './backfill-cellvix-features.js';
 import { backfillCompetitors } from './backfill-competitors.js';
 import { backfillLoginDirectory } from '../services/loginDirectory.js';
-import { backfillSupplierAccounts } from '../services/supplierPortalService.js';
+import { backfillSupplierLogins } from '../services/supplierPortalService.js';
 
 /**
  * One door onto the seven one-off migrations.
@@ -79,9 +79,9 @@ const TASKS = [
     summary: 'Index every panel account by email so the shared admin login can find its business.',
   },
   {
-    name: 'supplier-accounts',
-    run: backfillSupplierAccounts,
-    summary: 'Lift every supplier portal login into one platform-wide account per email.',
+    name: 'supplier-logins',
+    run: backfillSupplierLogins,
+    summary: 'Move supplier portal logins from the retired platform-wide accounts onto each business’s own supplier record.',
   },
 ];
 

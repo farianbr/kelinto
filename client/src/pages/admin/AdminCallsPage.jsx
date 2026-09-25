@@ -28,7 +28,7 @@ export function AdminCallsPage() {
       submitLabel="Log call"
       bodyLabel="Notes"
       bodyPlaceholder="Asked about lead time on iPhone 14 OLED assemblies. Quoted 3 days."
-      hint="This logs a call that has already happened. Dialling from the panel, fetching recordings and call analysis all need a telephony provider and are not connected yet."
+      hint="This logs a call that has already happened. Dialling from the ERP, fetching recordings and call analysis all need a telephony provider and are not connected yet."
     />
   );
 }

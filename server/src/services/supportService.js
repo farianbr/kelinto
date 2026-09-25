@@ -204,7 +204,7 @@ async function postAsTenant(req, { body }) {
   const tenant = await tenantForRequest(req);
   if (!tenant) {
     throw ApiError.badRequest(
-      'This business is not part of a platform account, so there is nobody to message.',
+      'This business is not part of a Kelinto account, so there is nobody to message.',
       'NO_TENANT',
     );
   }

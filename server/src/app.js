@@ -20,8 +20,8 @@ import { resolveBusiness } from './middleware/resolveBusiness.js';
 import { enforceTenantStatus } from './middleware/tenantStatus.js';
 import { openBusinessDb } from './middleware/businessDb.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
-import { attachSurface, superAdminHostOnly, injectSurface, surfaceInfo } from './utils/surface.js';
-import { canonicalPageUrl, isBusinessOrigin, isServedHost } from './services/hostDirectory.js';
+import { attachSurface, superAdminHostOnly, supplierPortalHostOnly, injectSurface, surfaceInfo } from './utils/surface.js';
+import { canonicalPageUrl, isBusinessOrigin, isForeignHost, isServedHost } from './services/hostDirectory.js';
 import { businessConfig } from './middleware/businessConfigCache.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -153,6 +153,19 @@ function createApp() {
   // Ahead of `resolveBusiness`, which pins a business's own panel domain.
   app.use(attachSurface);
 
+  /**
+   * A domain no business answers on any more is refused here, before
+   * `resolveBusiness` can hand it to the default business
+   * (`hostDirectory.isForeignHost`). The health check stays reachable on any
+   * host, because a monitor may poll the server by its own hostname.
+   */
+  app.use((req, res, next) => {
+    if (req.hostLookupFailed || /^\/(api\/)?health(\/|$)/.test(req.path)) return next();
+    if (!isForeignHost(req.get('host'), req.hostEntry)) return next();
+    res.set('Cache-Control', 'no-store');
+    return res.status(404).type('text').send('This address is not connected to a site.');
+  });
+
   // Development only: which app this host is, for the page Vite serves (see
   // utils/surface.js). Ahead of business resolution because it needs none.
   if (!env.isProd) {
@@ -252,6 +265,8 @@ function createApp() {
 
   // The super admin API answers on its own host only, once one is set.
   app.use('/api/superadmin', superAdminHostOnly);
+  // The supplier portal lives at a business's website address only.
+  app.use('/api/supplier-portal', supplierPortalHostOnly);
   app.use('/api', routes);
 
   /**

@@ -341,14 +341,14 @@ function ProductForm({ product, tree, onSubmit, onCancel, isPending, error }) {
         <Input
           label="Stock on hand"
           inputMode="numeric"
-          hint="The storefront only shows in stock or out of stock."
+          hint="The website only shows in stock or out of stock."
           {...register('stock')}
         />
       </div>
 
       <Input label="Description" {...register('description')} />
 
-      <Checkbox label="Listed on the storefront" className="-ml-2" {...register('isActive')} />
+      <Checkbox label="Listed on the website" className="-ml-2" {...register('isActive')} />
 
       <div className="flex justify-end gap-2 pt-1">
         <Button type="button" variant="ghost" onClick={onCancel}>

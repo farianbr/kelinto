@@ -29,6 +29,7 @@ import { useSetRecordLabel } from '@/components/admin/shell/recordLabel';
 import { useAdminSupplier, useAdminMutations } from '@/hooks/useAdmin';
 import Skeleton from '@/components/ui/Skeleton';
 import Button from '@/components/ui/Button';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { toast } from '@/store/toastStore';
 import { pressable } from '@/lib/motion';
 import cn from '@/lib/cn';
@@ -142,19 +143,25 @@ export function AdminSupplierProfilePage() {
    * working, and the message has to say that rather than only that something
    * went wrong.
    */
+  // Mail to a third party from one click: confirmed twice (Instructions §3.0.1).
+  const [confirmingInvite, setConfirmingInvite] = useState(false);
+
   function sendPortalInvite() {
     inviteSupplierPortal.mutate(supplier.id, {
       onSuccess: (result) => {
+        setConfirmingInvite(false);
         if (result.delivered) {
-          toast.ok('Portal link sent', `${supplier.name} can sign in with the details we emailed.`);
+          toast.ok('Portal link sent', `${supplier.name} can set a password from the email. The link lasts 7 days.`);
         } else {
-          toast.error(
-            'The email did not send',
-            `${supplier.name}'s password was reset, so their old one no longer works. Check the mail settings and send it again.`,
-          );
+          // Nothing about their access changed: the email only carries a link,
+          // and an existing password keeps working until that link is used.
+          toast.error('The email did not send', `Nothing changed for ${supplier.name}. Check the mail settings and send it again.`);
         }
       },
-      onError: (mutationError) => toast.error('Nothing was sent', mutationError.message),
+      onError: (mutationError) => {
+        setConfirmingInvite(false);
+        toast.error('Nothing was sent', mutationError.message);
+      },
     });
   }
 
@@ -563,13 +570,13 @@ export function AdminSupplierProfilePage() {
                     <p className="text-sm text-ink-600">
                       {supplier.portalInviteAt ? (
                         <>
-                          Credentials sent {date(supplier.portalInviteAt)}.
+                          Portal link sent {date(supplier.portalInviteAt)}.
                           {supplier.portalLastLoginAt
                             ? ` Last signed in ${date(supplier.portalLastLoginAt)}.`
                             : ' Not signed in yet.'}
                         </>
                       ) : (
-                        'No portal access yet - they cannot answer a request for quote.'
+                        'No portal access yet: they cannot answer a request for quote.'
                       )}
                     </p>
 
@@ -578,21 +585,29 @@ export function AdminSupplierProfilePage() {
                       icon={Mail}
                       className="mt-2.5"
                       loading={inviteSupplierPortal.isPending}
-                      onClick={sendPortalInvite}
+                      onClick={() => setConfirmingInvite(true)}
                     >
                       {supplier.portalInviteAt ? 'Resend portal link' : 'Send portal link'}
                     </Button>
 
-                    {/* Said before the click, not after. Resending always mints a
-                        new password - the stored value is a hash, so the old one
-                        cannot be read back out to be sent again - and a supplier
-                        whose working password silently stopped working is a
-                        support call nobody expected. */}
-                    {supplier.portalInviteAt && (
-                      <p className="mt-1.5 text-xs leading-relaxed text-ink-400">
-                        Sends a new password and replaces the current one.
-                      </p>
-                    )}
+                    {/* Said before the click: what the email carries, and that
+                        nothing they already have stops working. */}
+                    <p className="mt-1.5 text-xs leading-relaxed text-ink-400">
+                      Emails a link to set a password for this business&apos;s supplier portal. An existing
+                      password keeps working until the link is used.
+                    </p>
+
+                    <ConfirmDialog
+                      open={confirmingInvite}
+                      onClose={() => setConfirmingInvite(false)}
+                      onConfirm={sendPortalInvite}
+                      tone="warn"
+                      title={`Email the portal link to ${supplier.email}?`}
+                      body={`${supplier.name} gets a link to set a password for your supplier portal, valid for 7 days. Any earlier link stops working.`}
+                      confirmLabel="Send link"
+                      confirmPhrase={supplier.email}
+                      loading={inviteSupplierPortal.isPending}
+                    />
                   </>
                 )}
               </div>

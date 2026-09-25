@@ -127,7 +127,7 @@ async function enter(superAdmin, businessId, { reason, minutes } = {}, req, res)
     kind: 'security',
     action: 'impersonation.enter',
     entity: { kind: 'business', id: business._id.toString(), label: business.name },
-    description: `Platform support entered ${business.name}: ${text}`,
+    description: `Kelinto support entered ${business.name}: ${text}`,
   });
 
   return deliver(res, grant, { resumed: false });
@@ -236,8 +236,8 @@ async function leave(grantId, res, { reason = 'left', req } = {}) {
     entity: { kind: 'business', id: grant.business.toString(), label: grant.businessName },
     description:
       reason === 'revoked'
-        ? `Platform support access to ${grant.businessName} was revoked.`
-        : `Platform support left ${grant.businessName}.`,
+        ? `Kelinto support access to ${grant.businessName} was revoked.`
+        : `Kelinto support left ${grant.businessName}.`,
   });
 
   return { ok: true };

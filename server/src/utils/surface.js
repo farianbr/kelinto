@@ -74,6 +74,8 @@ async function attachSurface(req, _res, next) {
     // unrecognised, which is how it behaved before this existed.
     console.error(`  Host lookup failed - ${error.message}`);
     req.hostEntry = null;
+    // Not the same as "no business has this host": nothing may be refused on it.
+    req.hostLookupFailed = true;
   }
   req.surface = surfaceFor(req.get('host'), req.hostEntry);
 
@@ -161,6 +163,23 @@ function superAdminHostOnly(req, res, next) {
 }
 
 /**
+ * The supplier portal API answers only at a business's own website address.
+ *
+ * **One business, one portal** (2026-09-25): a supplier signs in at
+ * `<website>/supplier`, and there is no shared supplier door any more. So a
+ * portal request arriving on the shared ERP host, a business's own ERP domain,
+ * Kelinto's landing domain or the console is refused with the same 404 as a
+ * path that does not exist. `any` (no host split configured, and every
+ * request in development) is let through, as it is for every other route.
+ *
+ * Mounted on `/api/supplier-portal`.
+ */
+function supplierPortalHostOnly(req, res, next) {
+  if (req.surface === 'storefront' || req.surface === 'any') return next();
+  return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Not found.' } });
+}
+
+/**
  * The same answer as the tags, as data - for development only.
  *
  * In development Vite serves the page, not this server, so nothing writes the
@@ -178,4 +197,4 @@ function surfaceInfo(req) {
   };
 }
 
-export { attachSurface, superAdminHostOnly, injectSurface, surfaceFor, surfaceInfo };
+export { attachSurface, superAdminHostOnly, supplierPortalHostOnly, injectSurface, surfaceFor, surfaceInfo };

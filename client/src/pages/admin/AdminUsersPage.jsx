@@ -357,7 +357,7 @@ export function AdminUsersPage() {
         body={
           locking?.locked
             ? 'They get their admin access back with the same role and permissions they had before.'
-            : 'They are signed out and cannot get back into the admin panel until the account is unlocked. Nothing they have done is changed.'
+            : 'They are signed out and cannot get back into the ERP until the account is unlocked. Nothing they have done is changed.'
         }
         tone={locking?.locked ? 'info' : 'danger'}
         confirmLabel={locking?.locked ? 'Unlock account' : 'Lock account'}

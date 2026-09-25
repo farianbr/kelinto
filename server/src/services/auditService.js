@@ -46,7 +46,7 @@ function actorFrom(req) {
       actor: operator._id ?? null,
       actorEmail: operator.email ?? '',
       actorName: operator.name ?? '',
-      actorRole: 'Platform support',
+      actorRole: 'Kelinto support',
       ip: req?.ip ?? '',
       userAgent: (req?.get?.('user-agent') ?? '').slice(0, 300),
     };

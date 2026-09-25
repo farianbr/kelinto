@@ -239,6 +239,29 @@ async function isBusinessOrigin(origin) {
   return Boolean(await lookupHost(url.hostname));
 }
 
+/**
+ * A named host that is neither the platform's nor any business's.
+ *
+ * **Refused outright, not served as the default business.** `resolveBusiness`
+ * falls back to the default business for a host that names none, which is
+ * right for `localhost` and a bare IP but wrong for a real domain: a custom
+ * domain removed in the console kept serving CellShoppe's storefront, because
+ * its DNS still pointed here and its certificate was still valid. So did any
+ * domain anybody pointed at this server.
+ *
+ * Only decidable once the platform's own domains are configured
+ * (`env.platformDomains`); with none, nothing is refused. Anything on or under
+ * a platform domain is left to resolution as before, and `*.localhost` is
+ * development.
+ */
+function isForeignHost(hostHeader, entry) {
+  if (entry) return false;
+  const host = hostOf(hostHeader);
+  if (isUnnamed(host) || host.endsWith('.localhost')) return false;
+  if (env.platformDomains.length === 0) return false;
+  return !env.platformDomains.some((base) => host === base || host.endsWith(`.${base}`));
+}
+
 /** Forget every cached host. After any address change, and for tests. */
 function resetHostDirectory() {
   byHost.clear();
@@ -253,6 +276,7 @@ export {
   markHostLive,
   canonicalPageUrl,
   isServedHost,
+  isForeignHost,
   isBusinessOrigin,
   resetHostDirectory,
 };

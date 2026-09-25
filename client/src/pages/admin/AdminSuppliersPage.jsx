@@ -30,6 +30,7 @@ import SelectField from '@/components/ui/SelectField';
 import SelectMenu from '@/components/ui/SelectMenu';
 import ComponentTypePicker from '@/components/admin/ComponentTypePicker';
 import Button from '@/components/ui/Button';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Badge from '@/components/ui/Badge';
 import ConsentChannels, { EMPTY_CONSENT } from '@/components/ui/ConsentChannels';
 import PhoneField from '@/components/ui/PhoneField';
@@ -498,27 +499,28 @@ export function AdminSuppliersPage() {
     useAdminMutations();
 
   /**
-   * Issue portal credentials and say honestly whether the email left.
-   *
-   * The password is reset either way - it is a fresh one every time, because
-   * the stored value is a hash and the previous password cannot be read back
-   * out. So a mail failure is not a no-op to be reported as an error and
-   * forgotten: the supplier's old password has stopped working, and the message
-   * has to say that rather than only that something went wrong.
+   * Email the supplier a link to set a password for this business's portal,
+   * and say honestly whether the email left. No password changes here: the
+   * link does that, once, when the supplier uses it.
    */
+  // Mail to a third party from one click: confirmed twice (Instructions §3.0.1).
+  const [inviteFor, setInviteFor] = useState(null);
+
   function sendPortalInvite(row) {
     inviteSupplierPortal.mutate(row.id, {
       onSuccess: (result) => {
+        setInviteFor(null);
         if (result.delivered) {
-          toast.ok('Portal link sent', `${row.name} can sign in with the details we emailed.`);
+          toast.ok('Portal link sent', `${row.name} can set a password from the email. The link lasts 7 days.`);
         } else {
-          toast.error(
-            'The email did not send',
-            `${row.name}'s password was reset, so their old one no longer works. Check the mail settings and send it again.`,
-          );
+          // Nothing about their access changed: the email only carries a link.
+          toast.error('The email did not send', `Nothing changed for ${row.name}. Check the mail settings and send it again.`);
         }
       },
-      onError: (error) => toast.error('Nothing was sent', error.message),
+      onError: (error) => {
+        setInviteFor(null);
+        toast.error('Nothing was sent', error.message);
+      },
     });
   }
 
@@ -695,24 +697,23 @@ export function AdminSuppliersPage() {
      * entirely when there is no address: there would be nowhere to send it, and
      * an action that can only fail should not be offered.
      *
-     * **The toast reports what actually happened.** The password is reset
-     * whether or not the mail leaves, so a failure has to say so rather than
-     * claim a send - otherwise a clerk waits for an answer from a supplier who
-     * never got the message, and the old password no longer works either.
+     * **The toast reports what actually happened**, so a clerk never waits for
+     * an answer from a supplier who never got the message. Each opens a
+     * confirmation first: it is mail to a third party.
      */
     {
       key: 'portal-invite',
       label: 'Send portal link',
       icon: Mail,
       hidden: (row) => !row.email || !row.isActive || Boolean(row.portalInviteAt),
-      onSelect: (row) => sendPortalInvite(row),
+      onSelect: (row) => setInviteFor(row),
     },
     {
       key: 'portal-resend',
       label: 'Resend portal link',
       icon: Mail,
       hidden: (row) => !row.email || !row.isActive || !row.portalInviteAt,
-      onSelect: (row) => sendPortalInvite(row),
+      onSelect: (row) => setInviteFor(row),
     },
     // Two entries rather than one with a computed tone: `ActionMenu` resolves
     // `hidden` per row but takes `tone` as a fixed value, and deactivating is
@@ -913,6 +914,18 @@ export function AdminSuppliersPage() {
           />
         )}
       </Modal>
+
+      <ConfirmDialog
+        open={Boolean(inviteFor)}
+        onClose={() => setInviteFor(null)}
+        onConfirm={() => inviteFor && sendPortalInvite(inviteFor)}
+        tone="warn"
+        title={`Email the portal link to ${inviteFor?.email ?? ''}?`}
+        body={`${inviteFor?.name ?? 'The supplier'} gets a link to set a password for your supplier portal, valid for 7 days. Any earlier link stops working.`}
+        confirmLabel="Send link"
+        confirmPhrase={inviteFor?.email}
+        loading={inviteSupplierPortal.isPending}
+      />
     </>
   );
 }

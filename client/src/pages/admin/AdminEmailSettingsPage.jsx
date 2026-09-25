@@ -37,7 +37,7 @@ const TOGGLES = [
     key: 'invoiceOnOrder',
     label: 'Email the invoice when an order is placed',
     detail:
-      'The buyer receives their invoice as soon as checkout completes. This is on today and has been since the storefront opened.',
+      'The buyer receives their invoice as soon as checkout completes. This is on today and has been since the website opened.',
   },
   {
     key: 'invoiceReminders',

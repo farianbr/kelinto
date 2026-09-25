@@ -27,7 +27,7 @@ export const SETTINGS_CATEGORIES = [
   {
     key: 'business',
     label: 'Business & Organization',
-    description: 'Who this business is on an invoice, an email and the storefront footer.',
+    description: 'Who this business is on an invoice, an email and the website footer.',
   },
   {
     key: 'financial',
@@ -560,7 +560,7 @@ export const ADMIN_ROUTES = {
     section: 'seo',
     phase: 1,
     title: 'Blog',
-    description: 'Posts published to the storefront.',
+    description: 'Posts published to the website.',
   },
   '/admin/marketing/faq': {
     label: 'FAQ',
@@ -569,7 +569,7 @@ export const ADMIN_ROUTES = {
     section: 'seo',
     phase: 1,
     title: 'FAQ',
-    description: 'Questions and answers published to the storefront.',
+    description: 'Questions and answers published to the website.',
   },
   '/admin/marketing/articles': {
     label: 'Articles',
@@ -855,7 +855,7 @@ export const ADMIN_ROUTES = {
     section: 'settings',
     phase: 8,
     title: 'Staff accounts',
-    description: 'Who can sign in to the panel, and as what.',
+    description: 'Who can sign in to the ERP, and as what.',
   },
   '/admin/settings/roles': {
     label: 'Roles & Access',

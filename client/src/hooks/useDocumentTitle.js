@@ -41,7 +41,7 @@ import { getBusinessName, subscribeBusiness } from '@/store/businessStore';
  * platform's name because it sits above every business rather than inside one.
  */
 const SUFFIX = {
-  superadmin: 'Platform Console',
+  superadmin: 'Kelinto Console',
   shop: 'Cellvix',
 };
 
@@ -68,11 +68,27 @@ const SUPPLIER_TITLES = {
 };
 
 const SUPERADMIN_TITLES = {
-  '/superadmin': 'Tenants',
+  '/superadmin': 'Overview',
+  '/superadmin/tenants': 'Tenants',
+  '/superadmin/businesses': 'Businesses',
+  '/superadmin/domains': 'Domains',
   '/superadmin/plans': 'Plans',
   '/superadmin/support': 'Support',
+  '/superadmin/access': 'Access log',
   '/superadmin/login': 'Sign in',
 };
+
+/**
+ * A console record page, named for its kind: `/superadmin/tenants/<id>/owners`
+ * reads "Tenant". The record's own name is on the page; an id in a browser tab
+ * helps nobody pick the right tab.
+ */
+const SUPERADMIN_RECORDS = [
+  ['/superadmin/tenants/', 'Tenant'],
+  ['/superadmin/businesses/', 'Business'],
+  ['/superadmin/plans/', 'Plan'],
+  ['/superadmin/support/', 'Conversation'],
+];
 
 /**
  * The storefront.
@@ -130,7 +146,9 @@ function labelFor(pathname, surface) {
     return match?.title ?? match?.label ?? 'Admin';
   }
 
-  if (surface === 'superadmin') return SUPERADMIN_TITLES[clean] ?? null;
+  if (surface === 'superadmin') {
+    return SUPERADMIN_TITLES[clean] ?? SUPERADMIN_RECORDS.find(([prefix]) => clean.startsWith(prefix))?.[1] ?? null;
+  }
   if (surface === 'supplier') {
     if (SUPPLIER_TITLES[clean]) return SUPPLIER_TITLES[clean];
     // `/supplier/orders/<id>` - the record's own number arrives as `title`

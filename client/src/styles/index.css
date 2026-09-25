@@ -247,39 +247,62 @@
   --transition-duration-panel: 260ms;
   --transition-duration-exit: 140ms;
 
-  /* --- the platform console ---------------------------------------------
-     A SEPARATE identity, deliberately (SAAS_PLATFORM §0.1).
+  /* --- Kelinto's own identity ---------------------------------------------
+     A SEPARATE identity, deliberately (SAAS_PLATFORM §0.1). Worn by
+     kelinto.com, the super admin console and the shared ERP sign-in.
 
-     Everything above this belongs to Cellvix - tenant #1's wholesale business.
-     The staff member console sits ABOVE every tenant and must not wear any one
-     tenant's colours: a staff member who cannot tell at a glance whether they are
-     in the platform or inside a customer's shop is one keystroke from
-     reconfiguring the wrong thing, and a console painted in Cellvix red
-     silently asserts that the platform IS Cellvix. It is not, and the platform
-     has no name yet.
+     Everything above this belongs to Cellvix, a tenant. Kelinto sits ABOVE
+     every tenant and must not wear any one tenant's colours: a console
+     painted in Cellvix red silently asserts that Kelinto IS Cellvix.
 
-     Cool graphite and a single indigo accent, on the reasoning Apple applies
-     to system chrome: structural surfaces stay quiet and near-neutral so the
-     content carries the colour, and exactly one accent hue means a highlighted
-     row is unambiguous. Nothing here is a gradient - the brand gradient is
-     Cellvix's signature and reusing it would undo the separation. */
-  --color-plat-bg: #0b0b0f;
-  --color-plat-surface: #141419;
-  --color-plat-raised: #1c1c23;
-  --color-plat-line: #2a2a33;
-  --color-plat-line-soft: #22222a;
+     **White, ink and deep teal** (client rulings 2026-09-25: graphite and
+     indigo read as a generated AI product; paper, lime and a serif were not
+     pleasing; tangerine was too loud, "use a more sober colour"). Light,
+     because Kelinto is a business suite people run their day in; teal
+     because it is calm and serious without being the blue every business
+     tool already wears.
 
-  --color-plat-text: #f5f5f7;
-  --color-plat-muted: #a1a1aa;
-  --color-plat-dim: #71717a;
+     `plat-accent` #0f5e62 fills anything with a label on it (buttons, the
+     active tab, a step number) and is also the text accent (`accent-soft`,
+     the same value): white on it is 7.5:1 and it reads 6.8:1 on grey, so one
+     teal does both jobs. `accent-dim` is its hover. `plat-bright` #2a8c91 is
+     the lighter teal for marks and chart bars only; it never carries small
+     text. `plat-mark` is the pale teal tint behind a selected row.
 
-  --color-plat-accent: #6366f1;
-  --color-plat-accent-soft: #818cf8;
-  --color-plat-accent-dim: #4338ca;
+     Warn is ochre and danger crimson so neither can be mistaken for the
+     brand. Every text colour clears 4.5:1 on white and on `plat-raised`:
+     text 18:1, muted 7.0:1, dim 4.8:1, accent 6.8:1, ok 4.6:1, warn 5.1:1,
+     danger 5.7:1 (the lower of white and raised). The token NAMES stay
+     (`plat-*`) because forty files use them; only the values changed. */
+  --color-plat-bg: #f7f7f8;
+  --color-plat-surface: #ffffff;
+  --color-plat-raised: #f4f4f5;
+  --color-plat-line: #e4e4e7;
+  --color-plat-line-soft: #ededf0;
 
-  --color-plat-ok: #34d399;
-  --color-plat-warn: #fbbf24;
-  --color-plat-danger: #f87171;
+  --color-plat-text: #111114;
+  --color-plat-muted: #52525b;
+  --color-plat-dim: #6b6b74;
+
+  --color-plat-accent: #0f5e62;
+  --color-plat-accent-soft: #0f5e62;
+  --color-plat-accent-dim: #0b4649;
+  --color-plat-bright: #2a8c91;
+  --color-plat-mark: #e8f1f1;
+
+  --color-plat-ok: #15803d;
+  --color-plat-warn: #955905;
+  --color-plat-danger: #be123c;
+
+  /* Kelinto's type: DM Sans for everything, DM Mono for codes and hosts.
+     Loaded in index.html. One family at every size, with weight and
+     tracking doing the work a second display face used to. */
+  --font-kelinto: 'DM Sans', 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-kelinto-mono: 'DM Mono', 'JetBrains Mono', ui-monospace, monospace;
+  /* Display tracking for DM Sans. Its optical sizing already tightens the
+     large cut, so the -0.025em that suits Archivo crushed the letters
+     together at 72px; this is the measured amount that reads even. */
+  --tracking-kelinto: -0.012em;
 }
 
 /* ==========================================================================
@@ -648,6 +671,34 @@
     line-height: 1;
     letter-spacing: 0.08em;
     text-transform: uppercase;
+  }
+
+  /* Kelinto's surfaces (kelinto.com, the super admin console, the shared ERP
+     sign-in) wear Kelinto's type, not Cellvix's. The base rule above sets
+     every heading in Archivo, so inside this scope headings inherit instead,
+     and the eyebrow becomes a mono label: the one typographic mark the
+     identity repeats, like a caption in a printed catalogue. */
+  /* `--font-mono` is re-pointed rather than every mono element restyled, so
+     each existing `font-mono` class picks up Geist Mono with no override
+     fighting it. Zero-specificity `:where()` below for the same reason: the
+     scope must beat the base heading rule (it does, by layer) and lose to
+     any utility a component sets (it does, by specificity). */
+  .kelinto {
+    --font-mono: var(--font-kelinto-mono);
+    font-family: var(--font-kelinto);
+    color: var(--color-plat-text);
+  }
+  :where(.kelinto) :where(h1, h2, h3, h4, h5) {
+    font-family: inherit;
+    color: inherit;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: inherit;
+  }
+  .kelinto .eyebrow {
+    font-family: var(--font-kelinto);
+    font-weight: 600;
+    letter-spacing: 0.08em;
   }
 
   /* Guest price gate: the visual half of the rule. The authoritative half is the

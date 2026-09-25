@@ -268,7 +268,7 @@ export function AdminBusinessesPage() {
       <PageHeader
         icon={ADMIN_PAGE.icon}
         title={ADMIN_PAGE.title}
-        description="Each business has its own colour, and the panel wears it while you are working in that business."
+        description="Each business has its own colour, and the ERP wears it while you are working in that business."
         badge={
           <Badge tone="ok" size="sm">
             Live

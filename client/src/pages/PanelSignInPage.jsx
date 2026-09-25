@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router';
 import { useForm } from 'react-hook-form';
-import { AlertCircle, ArrowLeft, Building2, CheckCircle2, Layers, LogIn } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Building2, CheckCircle2, LogIn } from 'lucide-react';
+import KelintoLogo from '@/components/platform/KelintoLogo';
 import { useAuth } from '@/hooks/useAuth';
 import api from '@/lib/api';
 import cn from '@/lib/cn';
@@ -81,20 +82,22 @@ export function PanelSignInPage() {
   }
 
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-plat-bg px-4 py-10">
+    <div className="kelinto flex min-h-dvh items-center justify-center bg-plat-bg px-4 py-10">
       <div className="w-full max-w-sm">
-        <div className="mb-6 flex items-center gap-3">
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-plat-accent">
-            <Layers className="size-5 text-white" strokeWidth={2.25} aria-hidden="true" />
-          </span>
-          <span>
-            <span className="block text-md font-semibold leading-tight text-plat-text">
-              {panelBusiness ?? 'Kelinto'}
+        {/* A business's own ERP domain greets its staff by the business's
+            name; the shared one is Kelinto's front door, so it wears the
+            wordmark. Either way the second word is "ERP", what they sign in to. */}
+        <div className="mb-8">
+          {panelBusiness ? (
+            <span className="inline-flex items-center gap-3">
+              <span className="text-2xl font-bold leading-none tracking-tight text-plat-text">{panelBusiness}</span>
+              <span className="border-l border-plat-line pl-3 text-xs font-semibold uppercase tracking-wider text-plat-dim">
+                ERP
+              </span>
             </span>
-            <span className="block text-xs leading-tight text-plat-dim">
-              {panelBusiness ? 'Staff panel' : 'Business panel'}
-            </span>
-          </span>
+          ) : (
+            <KelintoLogo size="md" subtitle="ERP" />
+          )}
         </div>
 
         <div className="rounded-xl border border-plat-line bg-plat-surface p-6">
@@ -241,7 +244,7 @@ function BackLink({ onClick, children }) {
 function NotForThisPanel({ user, onSignOut }) {
   return (
     <>
-      <h1 className="text-xl font-semibold leading-tight text-plat-text">No panel access</h1>
+      <h1 className="text-xl font-semibold leading-tight text-plat-text">No ERP access</h1>
       <p className="mt-2 text-sm leading-normal text-plat-muted">
         {user.role === 'staff'
           ? `${user.email} has no role yet. Ask an administrator of your business to give you one.`

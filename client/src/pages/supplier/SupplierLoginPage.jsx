@@ -3,7 +3,6 @@ import { useForm } from 'react-hook-form';
 import { AlertCircle, CheckCircle2, Send } from 'lucide-react';
 import cn from '@/lib/cn';
 import { BUSINESS_INFO } from '@shared/business';
-import { surface } from '@/lib/surface';
 import Panel from '@/components/ui/Panel';
 import Input from '@/components/ui/Input';
 import Button from '@/components/ui/Button';
@@ -31,12 +30,11 @@ import { pressable } from '@/lib/motion';
  */
 export function SupplierLoginPage({ businessName = null }) {
   /**
-   * Who is asking for the password. On a business's own host, that business.
-   * On the shared admin host every business's suppliers sign in at one door,
-   * so it is the platform - naming the first tenant there would be the wrong
-   * company asking for credentials.
+   * Who is asking for the password: the business whose address this is. Every
+   * business has its own supplier portal, so there is no shared door and no
+   * reason to name anybody else.
    */
-  const seller = businessName ?? (surface === 'panel' ? 'Kelinto' : BUSINESS_INFO.name);
+  const seller = businessName ?? BUSINESS_INFO.name;
   const [forgot, setForgot] = useState(false);
   const { signIn, forgotPassword } = useSupplierPortalMutations();
 

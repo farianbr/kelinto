@@ -105,7 +105,7 @@ function PageCard({ page, built }) {
           built ? 'bg-brand-50 text-brand' : 'bg-surface-3 text-ink-400',
         )}
       >
-        {Icon && <Icon className="size-[18px]" strokeWidth={1.75} aria-hidden="true" />}
+        {Icon && <Icon className="size-4.5" strokeWidth={1.75} aria-hidden="true" />}
       </span>
 
       <span className="min-w-0 flex-1">

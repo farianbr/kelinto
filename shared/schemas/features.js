@@ -164,7 +164,7 @@ const FEATURES = [
   {
     key: 'sales.webquotes',
     label: 'Web Quote',
-    description: 'Enquiries arriving from the storefront contact form.',
+    description: 'Enquiries arriving from the website contact form.',
     area: 'sales',
     nav: 'web-quotes',
     defaults: { product: true, service: true },
@@ -321,7 +321,7 @@ const FEATURES = [
   {
     key: 'marketing.blog',
     label: 'Blog',
-    description: 'Editorial posts on the storefront.',
+    description: 'Editorial posts on the website.',
     area: 'marketing',
     nav: 'blog',
     // **Follows the storefront.** A blog post is published TO the public site,
@@ -334,7 +334,7 @@ const FEATURES = [
   {
     key: 'marketing.faq',
     label: 'FAQ',
-    description: 'Questions and answers on the storefront.',
+    description: 'Questions and answers on the website.',
     area: 'marketing',
     nav: 'faq',
     // With the blog, and for the same reason: it is storefront content.
@@ -374,7 +374,7 @@ const FEATURES = [
   // ---- storefront ----------------------------------------------------------
   {
     key: 'storefront.public',
-    label: 'Public storefront',
+    label: 'Public website',
     description: 'The catalogue, the filters and the product pages.',
     area: 'sales',
     defaults: { product: true, service: false },

@@ -15,13 +15,14 @@ import { businessConfig } from '../middleware/businessConfigCache.js';
  * supplier's order link missed the panel host the portal lives on.
  *
  * So each link says who it is for:
- *   - `storefrontOrigin()` - a CUSTOMER: the business's own address, custom
- *     domain first, then `<slug>.<platform>`. That is where `/account`,
- *     `/portal`, `/unsubscribe` and every storefront page live for them.
+ *   - `storefrontOrigin()` - a CUSTOMER or a SUPPLIER: the business's own
+ *     website address, custom domain first, then `<slug>.<platform>`. That is
+ *     where `/account`, `/portal`, `/unsubscribe`, every website page and the
+ *     supplier portal (`/supplier`, one portal per business) live.
  *   - `staffPanelOrigin()` - STAFF: the business's own panel domain when it
  *     has one, else the shared panel host.
- *   - `panelOrigin()` - SUPPLIERS: the shared panel host, where `/supplier`
- *     lives once the split is on.
+ *   - `panelOrigin()` - the shared ERP host, for links that belong to no one
+ *     business (a support session, a tenant owner's invitation).
  * Both fall back to `env.publicOrigin` when nothing more specific is
  * configured, which is exactly the old behaviour - so an installation with no
  * split changes nothing.
@@ -50,10 +51,7 @@ async function storefrontOrigin(businessId = currentBusinessId()) {
   return originOfStorefront(await businessConfig(businessId)) ?? env.publicOrigin;
 }
 
-/**
- * Where suppliers sign in: the shared panel host once there is one. A supplier
- * account is platform-wide, so its links never belong to one business.
- */
+/** The shared ERP host, for a link that belongs to no one business. */
 function panelOrigin() {
   return env.PANEL_HOST ? env.originFor(env.PANEL_HOST) : env.publicOrigin;
 }

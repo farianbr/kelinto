@@ -2,7 +2,6 @@ import { NavLink, useLocation } from 'react-router';
 import {
   FileSignature,
   FileText,
-  Building2,
   LayoutDashboard,
   LogOut,
   Package,
@@ -36,11 +35,9 @@ const NAV = [
   { key: 'deliveries', label: 'Deliveries', to: '/supplier/deliveries', icon: Truck },
   { key: 'agreement', label: 'Agreement', to: '/supplier/agreement', icon: FileSignature },
   { key: 'profile', label: 'Profile & Access', to: '/supplier/profile', icon: UserRound },
-  // Every business this login supplies, and the invitations waiting on it.
-  { key: 'businesses', label: 'Businesses', to: '/supplier/businesses', icon: Building2 },
 ];
 
-function BrandBlock({ compact, supplier }) {
+function BrandBlock({ compact }) {
   // The portal is branded by the business whose portal it IS, resolved from the
   // host like every other public read. It printed the hardcoded name before, so
   // a CellShoppe supplier signed in to a panel badged Cellvix.
@@ -52,26 +49,28 @@ function BrandBlock({ compact, supplier }) {
 
   return (
     <div
+      // The ERP sidebar's brand block, matched exactly (`AdminSidebar`): the
+      // initial, the business's full name centred beneath it on up to two
+      // lines, and a label for what this is. The same business looks the same
+      // in both of its applications.
       className={cn(
-        'flex items-center gap-2.5 border-b border-white/10 px-4 py-4',
-        compact && 'justify-center px-0',
+        'border-b border-white/10 px-4 py-4',
+        compact ? 'flex justify-center px-0' : 'flex flex-col items-center gap-2 text-center',
       )}
     >
       {/* The compact ramp on a small glyph - the full ramp's near-black opening
           reads as a stripe at this size (Instructions §2.2). */}
-      <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-brand-gradient-compact font-display text-lg font-bold text-white">
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-brand-gradient-compact font-display text-lg font-bold text-white">
         {name.charAt(0)}
       </span>
       {!compact && (
+        // The supplier's own name is in the portal's top bar, so the rail
+        // carries only whose portal this is.
         <span className="min-w-0">
-          <span className="block truncate font-display text-lg font-bold leading-none text-white">
+          <span title={name} className="block line-clamp-2 font-display text-sm font-bold leading-tight text-white">
             {name}
           </span>
-          {/* Says whose portal this is, because a supplier works with several
-              customers and the tab alone does not tell them which. */}
-          <span className="eyebrow mt-1 block truncate text-ink-200">
-            {supplier?.name ?? 'Supplier portal'}
-          </span>
+          <span className="eyebrow mt-1 block text-ink-200">Supplier portal</span>
         </span>
       )}
     </div>
@@ -158,13 +157,13 @@ export function SupplierSidebar({ supplier, badges, onSignOut, mobileOpen, onClo
       {/* Desktop: full tree at 1024+, icon rail between 768 and 1023. */}
       <aside className="hidden shrink-0 flex-col bg-ink-deep md:flex md:w-16 lg:w-[220px] xl:w-[250px]">
         <div className="hidden lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
-          <BrandBlock supplier={supplier} />
+          <BrandBlock />
           <NavRows badges={badges} />
           <SignOutRow onSignOut={onSignOut} />
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col lg:hidden">
-          <BrandBlock compact supplier={supplier} />
+          <BrandBlock compact />
           <NavRows compact badges={badges} />
           <SignOutRow compact onSignOut={onSignOut} />
         </div>
@@ -181,7 +180,7 @@ export function SupplierSidebar({ supplier, badges, onSignOut, mobileOpen, onClo
           />
           <div className="absolute inset-y-0 left-0 flex w-[264px] flex-col bg-ink-deep">
             <div className="flex items-center justify-between border-b border-white/10 pr-2">
-              <BrandBlock supplier={supplier} />
+              <BrandBlock />
               <button
                 type="button"
                 onClick={onCloseMobile}

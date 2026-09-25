@@ -131,7 +131,7 @@ export function AdminBusinessInfoPage() {
 
       <PlaceholderNotice>
         These details ship with placeholder values and are printed on invoices, transactional email
-        and the storefront footer. Replace them with the real ones - the GST/HST number especially,
+        and the website footer. Replace them with the real ones - the GST/HST number especially,
         which is a stand-in and is not a valid registration.
       </PlaceholderNotice>
 
@@ -157,7 +157,7 @@ export function AdminBusinessInfoPage() {
             <Input
               label="Logo URL"
               containerClassName="sm:col-span-2"
-              hint="Shown in the storefront header. Leave empty to show the business name as text instead."
+              hint="Shown in the website header. Leave empty to show the business name as text instead."
               placeholder="https://…/logo.png"
               error={errors.logoUrl?.message}
               {...register('logoUrl')}
@@ -207,7 +207,7 @@ export function AdminBusinessInfoPage() {
             />
             <Input
               label="WhatsApp number"
-              hint="Shown as a contact channel in the storefront footer. Leave empty to hide it."
+              hint="Shown as a contact channel in the website footer. Leave empty to hide it."
               error={errors.whatsapp?.message}
               {...register('whatsapp')}
             />
@@ -272,7 +272,7 @@ export function AdminBusinessInfoPage() {
             <Input
               label="Map link"
               containerClassName="sm:col-span-2"
-              hint="Where the Location row in the storefront footer opens. Leave empty to hide that row."
+              hint="Where the Location row in the website footer opens. Leave empty to hide that row."
               placeholder="https://maps.google.com/?q=…"
               error={errors.mapUrl?.message}
               {...register('mapUrl')}
@@ -285,7 +285,7 @@ export function AdminBusinessInfoPage() {
             weekday grid with open and close times. */}
         <Panel
           title="Opening hours"
-          description="Shown on the contact page and in the storefront footer. Leave empty to show none."
+          description="Shown on the contact page and in the website footer. Leave empty to show none."
         >
           <div className="space-y-3">
             {hours.fields.map((row, index) => (
@@ -338,7 +338,7 @@ export function AdminBusinessInfoPage() {
             than four with three of them dead. */}
         <Panel
           title="Social profiles"
-          description="Shown in the storefront footer and the mobile menu. Leave empty to show none."
+          description="Shown in the website footer and the mobile menu. Leave empty to show none."
         >
           <div className="space-y-3">
             {social.fields.map((row, index) => (

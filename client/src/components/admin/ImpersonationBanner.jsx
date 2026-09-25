@@ -80,7 +80,7 @@ export function ImpersonationBanner({ impersonation }) {
 
       <span className="min-w-0 text-sm font-medium">
         You are inside{' '}
-        <span className="font-bold">{impersonation.businessName}</span> as platform
+        <span className="font-bold">{impersonation.businessName}</span> as Kelinto
         support. Everything you do is written into their activity log.
       </span>
 

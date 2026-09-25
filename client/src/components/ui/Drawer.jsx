@@ -50,7 +50,7 @@ export function Drawer({
             <button
               type="button"
               onClick={onClose}
-              aria-label="Close panel"
+              aria-label="Close"
               className={cn(pressable, '-mr-1 flex size-9 shrink-0 items-center justify-center rounded-md text-ink-400 hover:bg-surface-3 hover:text-ink-900')}
             >
               <X className="size-[18px]" strokeWidth={1.75} />

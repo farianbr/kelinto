@@ -28,7 +28,6 @@ import {
   costFor,
 } from './purchase.data.js';
 import { seedPurchaseBids } from './purchase-bids.js';
-import { backfillSupplierAccounts } from '../services/supplierPortalService.js';
 import '../models/Settings.js';
 import '../models/Quote.js';
 import '../models/Rma.js';
@@ -1039,14 +1038,6 @@ async function seedDatabase({ quiet = false } = {}) {
       ` (${bidResult.tagged} suppliers tagged, ${bidResult.credentialed} given portal access` +
       `${bidResult.confirmed ? `, confirmed ${bidResult.confirmed}` : ''})`,
   );
-
-  /**
-   * Those logins were written onto this business's `Supplier` records; sign-in
-   * reads the platform-wide `SupplierAccount`. The control plane survives a
-   * re-seed, so an existing account's link is also re-pointed at the record
-   * this seed just created - otherwise it names an id the wipe removed.
-   */
-  await backfillSupplierAccounts({ quiet: true });
 
   // The settings singleton, recreated from its seeded defaults - per-province
   // tax rates included, which the tax report reads (§9.5).

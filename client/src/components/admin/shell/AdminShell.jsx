@@ -177,7 +177,7 @@ export function AdminShell() {
         <h1 className="text-2xl">{unassigned ? 'No access yet' : 'Admin access only'}</h1>
         <p className="mt-3 text-md leading-relaxed text-ink-500">
           {unassigned
-            ? 'Your staff account does not have a role assigned yet. An administrator needs to grant you access before this panel opens.'
+            ? 'Your staff account does not have a role assigned yet. An administrator needs to grant you access before the ERP opens.'
             : 'This area is restricted to staff accounts.'}
         </p>
       </div>

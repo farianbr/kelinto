@@ -164,6 +164,12 @@ const listPlans = asyncHandler(async (_req, res) => {
   res.json(await superAdminService.listPlansWithUsage());
 });
 
+/** The public price list, for kelinto.com. No session: it is a price list. */
+const listPublicPlans = asyncHandler(async (_req, res) => {
+  res.set('Cache-Control', 'public, max-age=300');
+  res.json(await superAdminService.listPublicPlans());
+});
+
 const updatePlan = asyncHandler(async (req, res) => {
   res.json(await superAdminService.updatePlan(req.params.id, req.body));
 });
@@ -220,6 +226,7 @@ export {
   leaveBusiness,
   listImpersonations,
   listPlans,
+  listPublicPlans,
   listThreads,
   listTenants,
   login,

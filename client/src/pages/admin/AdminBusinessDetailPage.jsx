@@ -212,7 +212,7 @@ function StorefrontAddress({ business, editable }) {
   const problem = slug ? businessSlugProblem(slug) : null;
 
   return (
-    <Panel title="Storefront address">
+    <Panel title="Website address">
       {business.slug ? (
         <div>
           <p className="text-xs text-ink-400">Live</p>
@@ -231,7 +231,7 @@ function StorefrontAddress({ business, editable }) {
         </div>
       ) : (
         <p className="text-sm text-ink-500">
-          No address yet. Customers cannot reach a storefront for this business until one is
+          No address yet. Customers cannot reach a website for this business until one is
           approved.
         </p>
       )}
@@ -277,7 +277,7 @@ function StorefrontAddress({ business, editable }) {
               {
                 onSuccess: () => {
                   setSlug('');
-                  toast.ok('Request sent', `${full(slug)} goes live once the platform approves it.`);
+                  toast.ok('Request sent', `${full(slug)} goes live once Kelinto approves it.`);
                 },
               },
             );
@@ -319,7 +319,7 @@ function StorefrontAddress({ business, editable }) {
         }
         tone="warn"
         title={`Withdraw the request for ${full(request?.slug ?? '')}?`}
-        body="The platform will no longer see it, and the address is free for anybody else to ask for. The live address, if there is one, does not change."
+        body="Kelinto will no longer see it, and the address is free for anybody else to ask for. The live address, if there is one, does not change."
         confirmLabel="Withdraw request"
         loading={cancelAddressRequest.isPending}
         error={cancelAddressRequest.error?.message}

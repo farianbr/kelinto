@@ -7,7 +7,6 @@ import { connectDb, disconnectDb } from '../config/db.js';
 import { CONTROL_MODELS, controlModels, modelsFor } from '../db/models.js';
 import { dbFor } from '../db/connections.js';
 import { backfillLoginDirectory } from '../services/loginDirectory.js';
-import { backfillSupplierAccounts } from '../services/supplierPortalService.js';
 
 /**
  * Move every Cellvix record into CellShoppe, and retire Cellvix (2026-09-24).
@@ -331,9 +330,10 @@ async function main() {
       );
     }
 
-    console.log('\n  re-indexing logins and supplier accounts...');
+    // Supplier logins live on each business's own `Supplier` record and were
+    // copied with it; there is nothing platform-wide to re-index.
+    console.log('\n  re-indexing logins...');
     await retry('login directory', () => backfillLoginDirectory({ quiet: true }));
-    await retry('supplier accounts', () => backfillSupplierAccounts({ quiet: true }));
   }
 
   console.log(

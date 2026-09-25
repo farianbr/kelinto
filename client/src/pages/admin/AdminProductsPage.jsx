@@ -299,7 +299,7 @@ export function AdminProductsPage() {
     { key: 'adjust', label: 'Adjust stock', icon: Boxes, onSelect: setAdjusting },
     {
       key: 'toggle',
-      label: (product) => (product.isActive ? 'Hide from storefront' : 'List on storefront'),
+      label: (product) => (product.isActive ? 'Hide from website' : 'List on website'),
       icon: Eye,
       onSelect: (product) => toggleProduct.mutate(product.id),
     },

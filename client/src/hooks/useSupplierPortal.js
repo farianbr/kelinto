@@ -31,28 +31,17 @@ export function useSupplierSession() {
 
   return {
     /**
-     * The platform-wide login. Present whenever somebody is signed in, even
-     * before any business is chosen - an account holding only invitations is
-     * signed in, just not working anywhere yet.
+     * This business's record of the signed-in supplier, or null. One portal
+     * per business (2026-09-25): the login IS the business's supplier record,
+     * so there is no separate account and no business to choose.
      */
-    account: data?.account ?? null,
-    /** That business's record of them, for the business being worked in. */
     supplier: data?.supplier ?? null,
-    // Whose portal this is - the business being worked in, or on a business's
-    // own host the one the host names. It paints the shell and names the
-    // business on the sign-in page.
+    // Whose portal this is, named by the host. It paints the shell and names
+    // the business on the sign-in page, signed in or not.
     business: data?.business ?? null,
-    /** Every business the account is active with, to switch between. */
-    businesses: data?.businesses ?? [],
-    /** Businesses that have invited this account and are waiting for an answer. */
-    invitations: data?.invitations ?? [],
     isLoading,
-    isAuthenticated: Boolean(data?.account),
-    /**
-     * Signed in AND working inside a business. Every order, agreement and
-     * proforma query waits on this, not on `isAuthenticated`: an account with
-     * no business chosen has nothing of any business to ask for.
-     */
+    isAuthenticated: Boolean(data?.supplier),
+    /** Every order, agreement and proforma query waits on this. */
     canWork: Boolean(data?.supplier),
   };
 }
@@ -106,49 +95,16 @@ export function useSupplierPortalMutations() {
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ['supplier-portal'] });
 
-  /** Drop every per-business query, then ask for the session again. */
-  const resetBusinessData = () => {
-    queryClient.removeQueries({
-      queryKey: ['supplier-portal'],
-      predicate: (query) => query.queryKey[1] !== 'me',
-    });
-    invalidate();
-  };
-
   return {
     signIn: useMutation({
       mutationFn: (body) => api.post('/supplier-portal/login', body),
-      // The answer says only which business it landed in; the session query
-      // carries everything else, so it is simply asked again.
-      onSuccess: resetBusinessData,
-    }),
-
-    /**
-     * Change which business the account works in - and with it, whose orders,
-     * agreements and proformas every screen shows.
-     *
-     * Everything the portal has cached belonged to the business being left, so
-     * it is dropped rather than refetched: showing one business's purchase
-     * orders under another's name for even a frame is the one thing a switcher
-     * must never do.
-     */
-    switchBusiness: useMutation({
-      mutationFn: (business) => api.post('/supplier-portal/switch', { business }),
-      onSuccess: resetBusinessData,
-    }),
-    /** Accepting moves straight into that business, as switching does. */
-    acceptInvitation: useMutation({
-      mutationFn: (business) => api.post(`/supplier-portal/invitations/${business}/accept`, {}),
-      onSuccess: resetBusinessData,
-    }),
-    declineInvitation: useMutation({
-      mutationFn: (business) => api.post(`/supplier-portal/invitations/${business}/decline`, {}),
+      // The session query carries everything, so it is simply asked again.
       onSuccess: invalidate,
     }),
     signOut: useMutation({
       mutationFn: () => api.post('/supplier-portal/logout', {}),
       onSuccess: () => {
-        queryClient.setQueryData(ME, { account: null, supplier: null, businesses: [], invitations: [] });
+        queryClient.setQueryData(ME, (current) => ({ business: current?.business ?? null, supplier: null }));
         // Cleared rather than refetched: the next supplier to sign in on this
         // browser must not see the previous one's orders for even a frame.
         queryClient.removeQueries({

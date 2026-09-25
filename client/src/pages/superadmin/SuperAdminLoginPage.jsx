@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { AlertCircle, Layers, LogIn } from 'lucide-react';
+import { AlertCircle, LogIn } from 'lucide-react';
+import KelintoLogo from '@/components/platform/KelintoLogo';
 
 import { PlatformButton } from '@/components/superadmin/PlatformUI';
 import { PlatformError, PlatformInput } from '@/components/superadmin/PlatformForm';
@@ -38,28 +39,16 @@ export function SuperAdminLoginPage() {
   }
 
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-plat-bg px-4 py-10">
+    <div className="kelinto flex min-h-dvh items-center justify-center bg-plat-bg px-4 py-10">
       <div className="w-full max-w-sm">
-        <div className="mb-6 flex items-center gap-3">
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-[11px] bg-plat-accent">
-            <Layers className="size-5 text-white" strokeWidth={2.25} aria-hidden="true" />
-          </span>
-          <span>
-            <span className="block text-[15px] font-semibold leading-tight tracking-[-0.01em] text-plat-text">
-              Kelinto
-            </span>
-            <span className="block text-xs leading-tight text-plat-dim">Super admin</span>
-          </span>
+        <div className="mb-8">
+          <KelintoLogo size="md" subtitle="Console" />
         </div>
 
         <div className="rounded-xl border border-plat-line bg-plat-surface p-6">
-          {/* Tracking tightens as the size grows - the optical correction that
-              separates a set headline from a scaled-up paragraph. */}
-          <h1 className="text-[22px] font-semibold leading-tight tracking-[-0.02em] text-plat-text">
-            Sign in
-          </h1>
+          <h1 className="text-3xl font-semibold tracking-tight text-plat-text">Sign in</h1>
           <p className="mt-1 text-[13px] leading-normal text-plat-muted">
-            This panel reaches every tenant on Kelinto.
+            The console reaches every tenant on Kelinto.
           </p>
 
           {error && (

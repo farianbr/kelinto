@@ -63,7 +63,7 @@ export function AdminSupportPage() {
       <PageHeader
         icon={LifeBuoy}
         title="Support"
-        description="Message the team that runs the platform."
+        description="Message the Kelinto team."
       />
 
       <Panel>
@@ -74,7 +74,7 @@ export function AdminSupportPage() {
         */}
         {!thread ? (
           <p className="py-8 text-center text-sm text-ink-500">
-            This business is not part of a platform account, so there is no support channel here.
+            This business is not part of a Kelinto account, so there is no support channel here.
           </p>
         ) : (
           <div className="flex h-[60vh] flex-col">
@@ -84,7 +84,7 @@ export function AdminSupportPage() {
               isSending={send.isPending}
               error={error}
               placeholder="Describe what you need…"
-              emptyBody="Nothing here yet. Send a message and the platform team will reply."
+              emptyBody="Nothing here yet. Send a message and the Kelinto team will reply."
               onSend={(body, { onSuccess }) => {
                 setError(null);
                 send.mutate(body, { onSuccess, onError: (err) => setError(err.message) });

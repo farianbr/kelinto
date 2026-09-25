@@ -41,7 +41,7 @@ function AuthorFields({ register, formState, value, onChange, nameRequired = tru
       <legend className="px-1.5 text-sm font-semibold text-ink-900">Byline</legend>
 
       <p className="mb-4 text-sm text-ink-400">
-        Shown beside the article on the storefront. Everything except the name is optional; an
+        Shown beside the article on the website. Everything except the name is optional; an
         empty field is left off rather than printed blank.
       </p>
 

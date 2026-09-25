@@ -182,10 +182,14 @@ export function useSuperAdminMutations() {
         api.post(`/superadmin/businesses/${id}/address-request/reject`, { note }),
       onSuccess: invalidate,
     }),
-    /** Slug and custom domain. Changing the slug breaks links to the old one. */
+    /**
+     * Slug, storefront domain and panel domain. Changing the slug breaks links
+     * to the old one. All three travel every time: the server reads a missing
+     * field as "clear it", so dropping one here would wipe it on every save.
+     */
     setBusinessAddress: useMutation({
-      mutationFn: ({ id, slug, domain }) =>
-        api.patch(`/superadmin/businesses/${id}/address`, { slug, domain }),
+      mutationFn: ({ id, slug, domain, panelDomain }) =>
+        api.patch(`/superadmin/businesses/${id}/address`, { slug, domain, panelDomain }),
       onSuccess: invalidate,
     }),
     setBusinessStatus: useMutation({

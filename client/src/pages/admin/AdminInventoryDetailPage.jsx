@@ -553,7 +553,7 @@ export function AdminInventoryDetailPage() {
             : 'It returns to the catalogue and can be ordered again, at its current price and stock.'
         }
         tone="info"
-        confirmLabel={product.isActive ? 'Hide from storefront' : 'List on storefront'}
+        confirmLabel={product.isActive ? 'Hide from website' : 'List on website'}
         loading={toggleProduct.isPending}
         error={toggleProduct.error?.message}
       />

@@ -46,12 +46,18 @@ const SupplierProformasPage = lazy(() => import('@/pages/supplier/SupplierProfor
 const SupplierDeliveriesPage = lazy(() => import('@/pages/supplier/SupplierDeliveriesPage'));
 const SupplierProfilePage = lazy(() => import('@/pages/supplier/SupplierProfilePage'));
 const SupplierAgreementPage = lazy(() => import('@/pages/supplier/SupplierAgreementPage'));
-const SupplierBusinessesPage = lazy(() => import('@/pages/supplier/SupplierBusinessesPage'));
 const SupplierResetPage = lazy(() => import('@/pages/supplier/SupplierResetPage'));
 const SuperAdminLayout = lazy(() => import('@/components/superadmin/SuperAdminLayout'));
+const SuperAdminOverviewPage = lazy(() => import('@/pages/superadmin/SuperAdminOverviewPage'));
 const SuperAdminTenantsPage = lazy(() => import('@/pages/superadmin/SuperAdminTenantsPage'));
+const SuperAdminTenantPage = lazy(() => import('@/pages/superadmin/SuperAdminTenantPage'));
+const SuperAdminBusinessesPage = lazy(() => import('@/pages/superadmin/SuperAdminBusinessesPage'));
+const SuperAdminBusinessPage = lazy(() => import('@/pages/superadmin/SuperAdminBusinessPage'));
+const SuperAdminDomainsPage = lazy(() => import('@/pages/superadmin/SuperAdminDomainsPage'));
 const SuperAdminPlansPage = lazy(() => import('@/pages/superadmin/SuperAdminPlansPage'));
+const SuperAdminPlanPage = lazy(() => import('@/pages/superadmin/SuperAdminPlanPage'));
 const SuperAdminSupportPage = lazy(() => import('@/pages/superadmin/SuperAdminSupportPage'));
+const SuperAdminAccessPage = lazy(() => import('@/pages/superadmin/SuperAdminAccessPage'));
 
 const AccountLayout = lazy(() => import('@/components/account/AccountLayout'));
 const AccountOverviewPage = lazy(() => import('@/pages/account/AccountOverviewPage'));
@@ -335,9 +341,10 @@ const adminRoutes = (
 );
 
 /**
- * The supplier portal's route tree (§6.8a), shared by both route sets like
- * `adminRoutes`. On the admin host it is `app.<platform>/supplier`: one
- * supplier account signs in there and works with every business it supplies.
+ * The supplier portal's route tree (§6.8a). **One business, one portal**
+ * (2026-09-25): it lives at a business's own website address,
+ * `<website>/supplier`, and nowhere else. A supplier to two businesses signs
+ * in at each one's address separately; there is no shared supplier door.
  *
  * Outside RootLayout for the same reason the admin panel is: a supplier is not
  * a customer, and the shop header, mega menu, cart and price gate all belong to
@@ -362,7 +369,6 @@ const supplierRoutes = (
     <Route path="deliveries" element={<SupplierDeliveriesPage />} />
     <Route path="agreement" element={<SupplierAgreementPage />} />
     <Route path="profile" element={<SupplierProfilePage />} />
-    <Route path="businesses" element={<SupplierBusinessesPage />} />
     <Route path="*" element={<Navigate to="/supplier" replace />} />
   </Route>
 );
@@ -401,9 +407,27 @@ const superAdminRoutes = (
       </Suspense>
     }
   >
-    <Route index element={<SuperAdminTenantsPage />} />
+    {/* Every record has its own URL and every section of a record is a
+        child route, so a link to "Northline's owners" or "CellShoppe's
+        domains" lands exactly there and survives a reload. */}
+    <Route index element={<SuperAdminOverviewPage />} />
+    <Route path="tenants" element={<SuperAdminTenantsPage />} />
+    <Route path="tenants/:tenantId" element={<SuperAdminTenantPage section="businesses" />} />
+    <Route path="tenants/:tenantId/owners" element={<SuperAdminTenantPage section="owners" />} />
+    <Route path="tenants/:tenantId/subscription" element={<SuperAdminTenantPage section="subscription" />} />
+    <Route path="tenants/:tenantId/messages" element={<SuperAdminTenantPage section="messages" />} />
+    <Route path="tenants/:tenantId/details" element={<SuperAdminTenantPage section="details" />} />
+    <Route path="businesses" element={<SuperAdminBusinessesPage />} />
+    <Route path="businesses/:businessId" element={<SuperAdminBusinessPage section="overview" />} />
+    <Route path="businesses/:businessId/features" element={<SuperAdminBusinessPage section="features" />} />
+    <Route path="businesses/:businessId/domains" element={<SuperAdminBusinessPage section="domains" />} />
+    <Route path="businesses/:businessId/access" element={<SuperAdminBusinessPage section="access" />} />
+    <Route path="domains" element={<SuperAdminDomainsPage />} />
     <Route path="plans" element={<SuperAdminPlansPage />} />
+    <Route path="plans/:planId" element={<SuperAdminPlanPage />} />
     <Route path="support" element={<SuperAdminSupportPage />} />
+    <Route path="support/:tenantId" element={<SuperAdminSupportPage />} />
+    <Route path="access" element={<SuperAdminAccessPage />} />
     <Route path="*" element={<Navigate to="/superadmin" replace />} />
   </Route>
 );
@@ -483,14 +507,9 @@ function SiteRoutes() {
         superAdminRoutes
       )}
 
-      {/* The supplier portal - see `supplierRoutes`. It belongs to the admin
-          host once there is one, so the path forwards there. */}
-      {surface === 'storefront' && panelHost ? (
-        <Route path="supplier/*" element={<GoToPanel />} />
-      ) : (
-        supplierRoutes
-      )}
-      {surface === 'storefront' && panelHost ? null : supplierResetRoute}
+      {/* The supplier portal - see `supplierRoutes`. This business's own. */}
+      {supplierRoutes}
+      {supplierResetRoute}
 
       <Route element={<RootLayout />}>
         {/* '/' is the homepage, EXCEPT when it carries catalogue parameters -
@@ -671,8 +690,6 @@ function PanelRoutes() {
   return (
     <Routes>
       {adminRoutes}
-      {supplierRoutes}
-      {supplierResetRoute}
       {/* The super admin lives on its own host once it has one - never here, on
           the host every tenant's staff sign in on. And never on a business's
           own panel domain at all: that host belongs to the business. */}
@@ -724,8 +741,8 @@ function SuperAdminRoutes() {
 /**
  * The bare platform domain: Kelinto's front page.
  *
- * The panel and the supplier portal live on the admin host and the super admin on
- * its own, so their paths forward there rather than 404ing - an old bookmark to
+ * The ERP lives on the admin host and the super admin on its own, so their
+ * paths forward there rather than 404ing - an old bookmark to
  * `kelinto.com/admin` still reaches the panel. Anything else is the front page.
  */
 function PlatformRoutes() {
@@ -740,7 +757,6 @@ function PlatformRoutes() {
         }
       />
       {panelHost && <Route path="admin/*" element={<GoToPanel />} />}
-      {panelHost && <Route path="supplier/*" element={<GoToPanel />} />}
       {superAdminHost && <Route path="superadmin/*" element={<GoToHost to="superadmin" />} />}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

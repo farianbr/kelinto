@@ -2,8 +2,9 @@ import env from '../config/env.js';
 import { sendMail } from './mailer.js';
 import { MAIL, escapeHtml } from './welcomeMail.js';
 import { sendingBusiness } from './sendingBusiness.js';
-import { PLATFORM_IDENTITY, platformFrom } from './platformSender.js';
-import { panelOrigin } from './linkOrigins.js';
+// Supplier links go to the business's own website address, where its portal
+// lives; the purchasing alert goes to the business's staff ERP address.
+import { staffPanelOrigin, storefrontOrigin } from './linkOrigins.js';
 
 /**
  * Mail to suppliers - the portal invitation, and everything a purchase order
@@ -121,95 +122,61 @@ function detailTable(rows) {
 }
 
 /**
- * The portal invitation.
+ * The portal invitation: a link to set a password, never a password.
  *
- * **The password travels in the body**, exactly as the buyer's admin-created
- * welcome does, and for the same reason and at the same cost: a supplier has no
- * other way to receive a credential they did not choose, and the message tells
- * them to change it. `sendSupplierPortalInvite` is called both when a supplier
- * is created and from the admin's **Resend portal link** button - the second
- * one always mints a fresh password, because the old one cannot be read back
- * out of the hash to be re-sent.
+ * The supplier chooses their own password from a single-use link that expires,
+ * so no credential ever sits in a mailbox. Sent when a supplier is created and
+ * from the ERP's **Resend portal link**; each send replaces the previous link.
+ *
+ * The portal is THIS business's (`<website>/supplier`), and the email says so,
+ * because a supplier to two businesses on Kelinto has two separate logins and
+ * must be able to tell which one this is.
  */
-async function sendSupplierPortalInvite({
-  supplier,
-  password,
-  portal: portalUrl = null,
-  existingAccount = false,
-}) {
-  if (!supplier?.email) {
-    return { delivered: false, via: null, error: 'No email address on file.' };
+async function sendSupplierPortalInvite({ supplier, portal, link, expiresDays = 7 }) {
+  if (!supplier?.email || !link) {
+    return { delivered: false, via: null, error: 'No email address or link.' };
   }
 
   try {
-    // The business placing this order, not the house brand - a supplier who
-    // deals with two businesses on one platform must see which one is writing.
     const business = await sendingBusiness();
-    const portal = portalUrl ?? `${panelOrigin()}/supplier`;
+    const strong = (value) => `<strong style="color:${MAIL.ink900};font-weight:600;">${escapeHtml(value)}</strong>`;
 
-    /**
-     * A supplier who already has a platform account is being invited, not
-     * signed up: same email and password they use for every other business,
-     * and an invitation to accept once they are in. Saying so is what stops
-     * them looking for a password this message deliberately does not contain.
-     */
-    const intro = existingAccount
-      ? `<strong style="color:${MAIL.ink900};font-weight:600;">${escapeHtml(business.name)}</strong> has invited ${escapeHtml(supplier.name)} to supply them. Sign in with the supplier account you already use and accept the invitation to see the requests for quote they send you.`
-      : `Your supplier portal for <strong style="color:${MAIL.ink900};font-weight:600;">${escapeHtml(supplier.name)}</strong> is open. Sign in, accept the invitation, and you will see the requests for quote we send you.`;
-
-    const rows = [
-      ['Portal', portal, false],
-      ['Email', supplier.email, false],
-    ];
-    if (password) rows.push(['Password', password, true]);
+    const intro = `${strong(business.name)} has opened a supplier portal for ${strong(supplier.name)}. Set a password to see the requests for quote we send you, send your prices and track your orders.`;
 
     const blocks =
-      detailTable(rows) +
-      (password
-        ? `
+      detailTable([
+        ['Portal', portal, false],
+        ['Sign in with', supplier.email, false],
+      ]) +
+      button(link, 'Set your password') +
+      `
         <tr><td style="padding:14px 36px 0;">
           <p style="margin:0;font:400 ${MAIL.small}/1.6 ${MAIL.body};color:${MAIL.ink500};">
-            This password is written in this email - anyone who can read the message can sign in as you.
-            Please change it from the portal once you are in, and delete this message afterwards.
+            The button works once and expires in ${expiresDays} days. After that, sign in at the portal address above.
           </p>
-        </td></tr>`
-        : '') +
-      button(portal, 'Open the supplier portal');
+        </td></tr>`;
 
     const text = [
-      existingAccount
-        ? `${business.name} has invited you to supply them.`
-        : `Your ${business.name} supplier portal is open.`,
+      `${business.name} has opened a supplier portal for ${supplier.name}.`,
       '',
-      `  Portal    ${portal}`,
-      `  Email     ${supplier.email}`,
-      ...(password ? [`  Password  ${password}`] : []),
+      `  Set your password  ${link}`,
+      `  Portal             ${portal}`,
+      `  Sign in with       ${supplier.email}`,
       '',
-      ...(password
-        ? [
-            'This password is written in this email. Please change it once you are in',
-            'and delete this message afterwards.',
-            '',
-          ]
-        : []),
-      existingAccount
-        ? 'Sign in with your existing supplier account and accept the invitation.'
-        : 'Sign in and accept the invitation to see the requests for quote we send you.',
+      `The link works once and expires in ${expiresDays} days.`,
       '',
-      `${business.name} · ${business.address.city}, ${business.address.region}`,
+      signOff(business),
       'Reply to this email and it reaches our purchasing team.',
     ].join('\n');
 
     return await sendMail({
       to: supplier.email,
       from: env.MAIL_FROM_ADMIN,
-      subject: existingAccount
-        ? `${business.name} invited you to supply them`
-        : `Your ${business.name} supplier portal`,
+      subject: `Your ${business.name} supplier portal`,
       html: shell({
         business,
-        preheader: 'Your sign-in details for the supplier portal are inside.',
-        title: existingAccount ? 'You have a new invitation' : 'Your supplier portal is ready',
+        preheader: `Set a password for the ${business.name} supplier portal.`,
+        title: 'Your supplier portal is ready',
         intro,
         blocks,
         footerNote: 'Reply to this email and it reaches our purchasing team.',
@@ -217,20 +184,17 @@ async function sendSupplierPortalInvite({
       text,
     });
   } catch (error) {
-    console.error(
-      `  Mail: portal invite for ${supplier?.email} could not be built - ${error.message}`,
-    );
+    console.error(`  Mail: portal invite for ${supplier?.email} could not be built - ${error.message}`);
     return { delivered: false, via: null, error: error.message };
   }
 }
 
 /**
- * The portal password reset.
+ * The portal password reset, for ONE business's portal.
  *
- * **The link is the secret** - unlike the invite there is no password in the
- * body, because this one is answering a request from somebody who already has
- * an account. The token is single-use and expires, so a message left sitting in
- * a mailbox stops working on its own.
+ * From that business, because the login belongs to it: resetting it changes
+ * nothing at any other business the supplier works with. The link is the
+ * secret, single-use and expiring.
  */
 async function sendSupplierResetEmail({ supplier, link, expiresDays = 7 }) {
   if (!supplier?.email || !link) {
@@ -238,36 +202,29 @@ async function sendSupplierResetEmail({ supplier, link, expiresDays = 7 }) {
   }
 
   try {
-    /**
-     * From Kelinto, not a business. The password being reset belongs to the
-     * supplier's platform-wide account and opens every business they supply,
-     * so no one of those businesses is the sender - and whichever one the
-     * request happened to resolve to would be a stranger to some of them.
-     */
-    const business = PLATFORM_IDENTITY;
+    const business = await sendingBusiness();
     const text = [
-      `Somebody asked to reset the Kelinto supplier password for ${supplier.email}.`,
+      `Somebody asked to reset the ${business.name} supplier portal password for ${supplier.email}.`,
       '',
       `  Choose a new password  ${link}`,
       '',
       `The link works once and expires in ${expiresDays} days.`,
-      'If this was not you, ignore this message - nothing has changed.',
+      'If this was not you, ignore this message. Nothing has changed.',
       '',
       signOff(business),
     ].join('\n');
 
     return await sendMail({
       to: supplier.email,
-      from: platformFrom(),
-      subject: 'Reset your supplier portal password',
+      from: env.MAIL_FROM_ADMIN,
+      subject: `Reset your ${business.name} supplier portal password`,
       html: shell({
         business,
         preheader: `Choose a new password. The link expires in ${expiresDays} days.`,
         title: 'Reset your password',
-        intro: `Somebody asked to reset the Kelinto supplier password for <strong style="color:${MAIL.ink900};font-weight:600;">${escapeHtml(supplier.email)}</strong>. Use the button below within ${expiresDays} days.`,
+        intro: `Somebody asked to reset the ${escapeHtml(business.name)} supplier portal password for <strong style="color:${MAIL.ink900};font-weight:600;">${escapeHtml(supplier.email)}</strong>. Use the button below within ${expiresDays} days.`,
         blocks: button(link, 'Choose a new password'),
-        footerNote:
-          'If this was not you, ignore this message - nothing has changed until the link is used.',
+        footerNote: 'If this was not you, ignore this message. Nothing has changed until the link is used.',
       }),
       text,
     });
@@ -293,7 +250,7 @@ async function sendPurchaseOrderInvitation({ supplier, po }) {
     // The business placing this order, not the house brand - a supplier who
     // deals with two businesses on one platform must see which one is writing.
     const business = await sendingBusiness();
-    const origin = panelOrigin();
+    const origin = await storefrontOrigin();
     const link = `${origin}/supplier/orders/${po._id ?? po.id}`;
 
     const lineRows = (po.items ?? [])
@@ -376,7 +333,7 @@ async function sendPurchaseOrderOutcome({ supplier, po, won }) {
     // The business placing this order, not the house brand - a supplier who
     // deals with two businesses on one platform must see which one is writing.
     const business = await sendingBusiness();
-    const origin = panelOrigin();
+    const origin = await storefrontOrigin();
     const link = `${origin}/supplier/orders/${po._id ?? po.id}`;
 
     const intro = won
@@ -441,7 +398,7 @@ async function sendNegotiationEmail({ supplier, po, askedTotal, note, subject })
     // The business placing this order, not the house brand - a supplier who
     // deals with two businesses on one platform must see which one is writing.
     const business = await sendingBusiness();
-    const origin = panelOrigin();
+    const origin = await storefrontOrigin();
     const link = `${origin}/supplier/orders/${po._id ?? po.id}`;
 
     const blocks =
@@ -515,7 +472,7 @@ async function sendSupplierMessage({ supplier, channel, po, askedTotal, note }) 
     `${business.name}: we would like to revisit ${po.poNumber}.`,
     askedTotal != null ? `Our target is ${money(askedTotal)}.` : null,
     note,
-    `${panelOrigin()}/supplier/orders/${po._id ?? po.id}`,
+    `${await storefrontOrigin()}/supplier/orders/${po._id ?? po.id}`,
   ]
     .filter(Boolean)
     .join(' ');
@@ -542,7 +499,7 @@ async function sendPurchaseAdminAlert({ subject, po, supplierName, kind, status 
     // The business placing this order, not the house brand - a supplier who
     // deals with two businesses on one platform must see which one is writing.
     const business = await sendingBusiness();
-    const origin = panelOrigin();
+    const origin = await staffPanelOrigin();
     const link = `${origin}/admin/purchase-orders/${po._id ?? po.id}`;
 
     const intro =

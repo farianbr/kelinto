@@ -141,14 +141,12 @@ async function resolveBusiness(req, _res, next) {
      * inside it.
      */
     /**
-     * Which session speaks for this request.
-     *
-     * The supplier portal's own paths take the SUPPLIER cookie's business: one
-     * browser can hold a staff session and a supplier session at once on the
-     * shared host, for different businesses, and each has to open its own.
+     * The supplier portal never takes its business from a session. It lives
+     * at a business's own address (`<website>/supplier`), so the host names
+     * the business, exactly as it does for the website; step 4 below.
      */
     const portalPath = req.path.startsWith('/api/supplier-portal');
-    const token = req.cookies?.[portalPath ? `${env.COOKIE_NAME}_supplier` : env.COOKIE_NAME];
+    const token = portalPath ? null : req.cookies?.[env.COOKIE_NAME];
     if (token) {
       let claim = null;
       try {

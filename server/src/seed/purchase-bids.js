@@ -8,7 +8,6 @@ import '../models/Supplier.js';
 import '../models/Product.js';
 import '../models/PurchaseOrder.js';
 import * as purchaseBidService from '../services/purchaseBidService.js';
-import { backfillSupplierAccounts } from '../services/supplierPortalService.js';
 import { SUPPLIER_COMPONENT_TYPES, buildBidOrders } from './purchase-bids.data.js';
 
 /**
@@ -239,15 +238,9 @@ async function run() {
     );
   }
 
-  /**
-   * The logins above are written onto each business's `Supplier` record, where
-   * they used to live. Sign-in now reads the platform-wide `SupplierAccount`,
-   * so lift them into accounts here - otherwise a fresh seed hands out demo
-   * logins that do not work until somebody remembers the backfill.
-   */
-  await backfillSupplierAccounts({ quiet: true });
-
-  console.log(`\nSupplier portal: http://localhost:5173/supplier`);
+  // The logins above live on each business's own `Supplier` record, which is
+  // where sign-in reads them: one portal per business, at its own address.
+  console.log(`\nSupplier portal: each business's website address + /supplier (locally http://cellshoppe.localhost:5173/supplier)`);
   console.log(`  password for all of them: ${DEMO_PASSWORD}\n`);
 
   await disconnectDb();

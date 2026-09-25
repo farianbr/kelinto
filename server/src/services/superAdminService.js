@@ -153,7 +153,9 @@ async function listTenants() {
   const [tenants, businesses, plans] = await Promise.all([
     Tenant.find({}).sort({ name: 1 }).lean(),
     Business.find({})
-      .select('name code slug domain addressRequest businessType status tenant isDefault deletedAt purgeAfter')
+      .select(
+        'name code slug domain panelDomain domainLiveAt panelDomainLiveAt addressRequest businessType status tenant isDefault deletedAt purgeAfter createdAt',
+      )
       .lean(),
     Plan.find({}).select('name slug').lean(),
   ]);
@@ -213,10 +215,16 @@ async function listTenants() {
       // before the console could set one, reachable only by the switcher.
       slug: business.slug ?? null,
       domain: business.domain ?? null,
+      panelDomain: business.panelDomain ?? null,
+      // When each was first seen working. The row reads these for "Waiting for
+      // DNS", and the address form reads `panelDomain` to fill itself in.
+      domainLiveAt: business.domainLiveAt ?? null,
+      panelDomainLiveAt: business.panelDomainLiveAt ?? null,
       addressRequest: business.addressRequest ?? null,
       businessType: business.businessType,
       status: business.status,
       isDefault: Boolean(business.isDefault),
+      createdAt: business.createdAt ?? null,
       deletedAt: business.deletedAt ?? null,
       purgeAfter: business.purgeAfter ?? null,
       // Whether it can still be brought back, rather than making the console
@@ -240,6 +248,9 @@ async function listTenants() {
         status: tenant.status,
         contactName: tenant.contactName ?? null,
         contactEmail: tenant.contactEmail ?? null,
+        // Read back by the tenant's own page, which edits them.
+        phone: tenant.phone ?? null,
+        notes: tenant.notes ?? null,
         slots: tenant.slots ?? 0,
         /**
          * What is left to spend. A tenant with no free slot cannot create a
@@ -538,7 +549,7 @@ async function setBusinessAddress(businessId, body) {
   const panelDomain = normaliseDomain(body.panelDomain) || null;
 
   if (domain && panelDomain && domain === panelDomain) {
-    const message = 'One address cannot be the storefront and the panel.';
+    const message = 'One address cannot be both the website and the ERP.';
     throw ApiError.badRequest(message, 'BUSINESS_DOMAIN_INVALID', { panelDomain: message });
   }
 
@@ -1118,6 +1129,27 @@ async function setPlanFeature(id, { key, enabled }) {
 }
 
 /** Plans with what each one costs the platform to honour - its subscriber count. */
+/**
+ * The price list kelinto.com shows the public.
+ *
+ * Offered plans only, and only what a price list needs: name, words, price and
+ * how many businesses it includes. Never the feature defaults or who is
+ * subscribed, which are the console's business. Read from the same records the
+ * console edits, so the landing page cannot quote a price that has changed.
+ */
+async function listPublicPlans() {
+  const plans = await Plan.find({ isActive: true }).sort({ priceCents: 1, name: 1 }).lean();
+  return {
+    plans: plans.map((plan) => ({
+      id: plan._id.toString(),
+      name: plan.name,
+      description: plan.description ?? null,
+      priceCents: plan.priceCents,
+      includedSlots: plan.includedSlots,
+    })),
+  };
+}
+
 async function listPlansWithUsage() {
   const plans = await Plan.find({}).sort({ priceCents: 1, name: 1 });
   const tenants = await Tenant.find({ plan: { $ne: null } }).select('plan').lean();
@@ -1166,6 +1198,7 @@ export {
   approveAddressRequest,
   rejectAddressRequest,
   setBusinessAddress,
+  listPublicPlans,
   setBusinessStatus,
   setPlanFeature,
   updatePlan,
