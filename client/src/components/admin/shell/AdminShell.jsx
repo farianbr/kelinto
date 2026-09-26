@@ -1,9 +1,17 @@
-import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import useDocumentTitle from '@/hooks/useDocumentTitle';
 import useAdoptBusinessFromUrl from '@/hooks/useAdoptBusinessFromUrl';
 import { Navigate, Outlet, useLocation } from 'react-router';
-import { ShieldAlert } from 'lucide-react';
 import Skeleton from '@/components/ui/Skeleton';
+import RouteFallback from '@/components/layout/RouteFallback';
 import Breadcrumbs from '@/components/admin/Breadcrumbs';
 import { useAuth, useSignOut } from '@/hooks/useAuth';
 import { useAdminStats, useAdminBusinesses } from '@/hooks/useAdmin';
@@ -24,6 +32,10 @@ import AdminSidebar from './AdminSidebar';
 import AdminTopBar from './AdminTopBar';
 import CommandPalette from './CommandPalette';
 import { RecordLabelProvider } from './recordLabel';
+
+// Only ever drawn for somebody the ERP turns away, so it is not in the chunk
+// every staff member downloads.
+const PanelSignInPage = lazy(() => import('@/pages/PanelSignInPage'));
 
 /**
  * The ERP shell (§4). `/admin` mounts this instead of the storefront
@@ -49,8 +61,10 @@ export function AdminShell() {
 
   // The browser tab, per route. One call per surface rather than one per
   // page: the titles live in the route table beside the breadcrumbs.
-  useDocumentTitle();
-  const { user, isLoading, canUseAdmin, isStaff, impersonation, features } = useAuth();
+  const { user, isLoading, canUseAdmin, impersonation, features } = useAuth();
+  // The shell's effect runs after its children's, so it has to agree with the
+  // sign-in door it draws for a visitor or the tab reads "Dashboard" over it.
+  useDocumentTitle(!isLoading && !canUseAdmin ? 'Sign in' : undefined);
   const signOut = useSignOut();
   const { data: stats } = useAdminStats();
   const location = useLocation();
@@ -164,23 +178,26 @@ export function AdminShell() {
     );
   }
 
+  /**
+   * Anybody the ERP will not open for meets its sign-in door, right here.
+   *
+   * It used to be a wall reading "Admin access only" with nothing to press,
+   * drawn in the business's colours before anybody knew which business - and a
+   * signed-out owner, a customer holding the wrong session and a failed
+   * `/auth/me` all met the same sentence. The door tells those apart (sign in;
+   * go to the website or sign out; try again) and wears Kelinto, like the
+   * shared sign-in it is.
+   *
+   * Drawn in place rather than redirected, so the address stays in the bar:
+   * signing in re-renders this shell with the screen that was asked for, where
+   * a redirect would have dropped them on the dashboard. That also covers a
+   * host with no sign-in page of its own - a website host, or plain localhost.
+   */
   if (!canUseAdmin) {
-    // A staff account with no role gets a different sentence from a customer
-    // who wandered in: theirs is a door somebody has not opened yet, not a door
-    // that will never open (§7.6).
-    const unassigned = isStaff;
     return (
-      <div className="mx-auto flex max-w-lg flex-col items-center px-4 py-20 text-center">
-        <span className="mb-5 flex size-14 items-center justify-center rounded-full bg-danger-50 text-danger">
-          <ShieldAlert className="size-7" strokeWidth={1.5} />
-        </span>
-        <h1 className="text-2xl">{unassigned ? 'No access yet' : 'Admin access only'}</h1>
-        <p className="mt-3 text-md leading-relaxed text-ink-500">
-          {unassigned
-            ? 'Your staff account does not have a role assigned yet. An administrator needs to grant you access before the ERP opens.'
-            : 'This area is restricted to staff accounts.'}
-        </p>
-      </div>
+      <Suspense fallback={<RouteFallback />}>
+        <PanelSignInPage />
+      </Suspense>
     );
   }
 

@@ -19,7 +19,7 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ['auth', 'me'],
     // `/auth/me` answers 200 with `user: null` for a guest, so there is no 401 to
     // catch here - an error from this call is a real one and should surface.
@@ -137,12 +137,36 @@ export function AuthProvider({ children }) {
       impersonation,
       isImpersonating: Boolean(impersonation),
       storefrontOrigin,
+      /**
+       * `/auth/me` itself failed: the network, a 5xx, a 503 from a host that
+       * resolves no business. Nobody is known to be signed in, but nobody is
+       * known to be signed OUT either, so a screen deciding who may enter has
+       * to say that rather than treat it as a guest. It used to: an outage
+       * rendered as "restricted to staff" to the owner of the business.
+       */
+      authError: data ? null : (error ?? null),
+      retryAuth: refetch,
+      isRetryingAuth: isFetching,
       signIn,
       signUp,
       signOut,
       refresh,
     }),
-    [user, features, impersonation, storefrontOrigin, isLoading, signIn, signUp, signOut, refresh],
+    [
+      data,
+      user,
+      features,
+      impersonation,
+      storefrontOrigin,
+      isLoading,
+      error,
+      refetch,
+      isFetching,
+      signIn,
+      signUp,
+      signOut,
+      refresh,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

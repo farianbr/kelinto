@@ -1,7 +1,16 @@
 import { useState } from 'react';
-import { Navigate, useNavigate } from 'react-router';
+import { Navigate, useLocation, useNavigate } from 'react-router';
 import { useForm } from 'react-hook-form';
-import { AlertCircle, ArrowLeft, Building2, CheckCircle2, LogIn } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowLeft,
+  ArrowUpRight,
+  Building2,
+  CheckCircle2,
+  LogIn,
+  LogOut,
+  RefreshCw,
+} from 'lucide-react';
 import KelintoLogo from '@/components/platform/KelintoLogo';
 import { useAuth } from '@/hooks/useAuth';
 import api from '@/lib/api';
@@ -11,7 +20,7 @@ import { PlatformButton } from '@/components/superadmin/PlatformUI';
 import { PlatformError, PlatformInput } from '@/components/superadmin/PlatformForm';
 import RouteFallback from '@/components/layout/RouteFallback';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
-import { panelBusiness } from '@/lib/surface';
+import { panelBusiness, surface } from '@/lib/surface';
 
 /**
  * The front door of the admin host (`PANEL_HOST`), in the console's theme.
@@ -33,10 +42,28 @@ import { panelBusiness } from '@/lib/surface';
  * **On a business's own panel domain it is that business's door** (`panelBusiness`):
  * named after it, and the server signs in only its accounts, so there is never
  * a choice to offer.
+ *
+ * **It is also what `/admin` shows anybody the ERP will not open for**, drawn
+ * by `AdminShell` in place of the screen they asked for rather than redirected
+ * here. The address they typed or bookmarked stays in the bar, so signing in
+ * lands them on it instead of on the dashboard. It replaced a wall reading
+ * "Admin access only" that offered no way forward: a signed-out owner
+ * following their own invoice link met a permission error and nothing to press.
  */
 export function PanelSignInPage() {
-  const { user, isLoading, canUseAdmin, signIn, signOut } = useAuth();
+  const {
+    user,
+    isLoading,
+    canUseAdmin,
+    signIn,
+    signOut,
+    storefrontOrigin,
+    authError,
+    retryAuth,
+    isRetryingAuth,
+  } = useAuth();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const [view, setView] = useState('sign-in');
   const [error, setError] = useState(null);
   const [choice, setChoice] = useState(null);
@@ -56,7 +83,11 @@ export function PanelSignInPage() {
     setError(null);
     try {
       const signedIn = await signIn(values);
-      if (['admin', 'staff'].includes(signedIn.role)) navigate('/admin');
+      // Drawn inside `/admin/...`, the shell opens the requested screen by
+      // itself once the session exists; navigating would throw that away.
+      if (['admin', 'staff'].includes(signedIn.role) && !pathname.startsWith('/admin')) {
+        navigate('/admin');
+      }
     } catch (err) {
       // Their business signs its staff in on its own domain. A session cannot
       // follow them there (it belongs to this host), so they sign in there.
@@ -101,8 +132,10 @@ export function PanelSignInPage() {
         </div>
 
         <div className="rounded-xl border border-plat-line bg-plat-surface p-6">
-          {user ? (
-            <NotForThisPanel user={user} onSignOut={signOut} />
+          {authError && !user ? (
+            <SessionUnknown onRetry={() => retryAuth()} retrying={isRetryingAuth} />
+          ) : user ? (
+            <NotForThisPanel user={user} onSignOut={signOut} websiteUrl={websiteUrlFor(storefrontOrigin)} />
           ) : view === 'forgot' ? (
             <ForgotPassword onBack={() => setView('sign-in')} />
           ) : choice ? (
@@ -240,18 +273,83 @@ function BackLink({ onClick, children }) {
  * Signed in, but not somebody the panel is for. Saying which is what lets them
  * act: staff with no role need an administrator, a customer needs a different
  * website. Sign-out here is the reason they came back, so it is not asked twice.
+ *
+ * A customer is given the website as well, first: it is where they meant to
+ * be, and signing out of the account they are holding would only make them
+ * sign in again once they got there.
  */
-function NotForThisPanel({ user, onSignOut }) {
+function NotForThisPanel({ user, onSignOut, websiteUrl }) {
+  const isCustomer = user.role !== 'staff';
+  const offerWebsite = isCustomer && websiteUrl;
+
   return (
     <>
       <h1 className="text-xl font-semibold leading-tight text-plat-text">No ERP access</h1>
       <p className="mt-2 text-sm leading-normal text-plat-muted">
-        {user.role === 'staff'
-          ? `${user.email} has no role yet. Ask an administrator of your business to give you one.`
-          : `${user.email} is a customer account. Customers sign in on their store's own website, not here.`}
+        {isCustomer
+          ? `${user.email} is a customer account. Customers sign in on their store's own website, not here.`
+          : `${user.email} has no role yet. Ask an administrator of your business to give you one.`}
       </p>
-      <PlatformButton className="mt-4 w-full" onClick={onSignOut}>
+      {offerWebsite && (
+        <PlatformButton
+          variant="primary"
+          icon={ArrowUpRight}
+          className="mt-4 w-full"
+          onClick={() => window.location.assign(websiteUrl)}
+        >
+          Go to the website
+        </PlatformButton>
+      )}
+      <PlatformButton
+        variant={offerWebsite ? 'secondary' : 'primary'}
+        icon={LogOut}
+        className={cn('w-full', offerWebsite ? 'mt-2' : 'mt-4')}
+        onClick={onSignOut}
+      >
         Sign out and use another account
+      </PlatformButton>
+    </>
+  );
+}
+
+/**
+ * Where a customer who wandered in should go instead, or null.
+ *
+ * The business's own website when the server knows it. Failing that, `/` on
+ * any host that serves a website at all; on the ERP host `/` is this page, and
+ * a button that reloads the screen it sits on is not a way out.
+ */
+function websiteUrlFor(storefrontOrigin) {
+  if (storefrontOrigin) return storefrontOrigin;
+  return surface === 'panel' ? null : '/';
+}
+
+/**
+ * `/auth/me` failed, so whether anybody is signed in is unknown.
+ *
+ * Not the sign-in form: an owner whose session is fine would be asked for a
+ * password they do not need, and one that would fail for the same reason the
+ * check did. Not a permission wall either, which is what an outage used to
+ * read as. Retrying is the one thing that can change the answer.
+ */
+function SessionUnknown({ onRetry, retrying }) {
+  return (
+    <>
+      <h1 className="text-xl font-semibold leading-tight text-plat-text">
+        Could not check your sign-in
+      </h1>
+      <p className="mt-2 text-sm leading-normal text-plat-muted">
+        The ERP did not answer when asked who is signed in. Your session and your data are
+        unaffected; this is usually a dropped connection.
+      </p>
+      <PlatformButton
+        variant="primary"
+        icon={RefreshCw}
+        className="mt-4 w-full"
+        loading={retrying}
+        onClick={onRetry}
+      >
+        Try again
       </PlatformButton>
     </>
   );
