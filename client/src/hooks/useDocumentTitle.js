@@ -1,3 +1,4 @@
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 import { useEffect, useSyncExternalStore } from 'react';
 import { useLocation } from 'react-router';
 import { matchAdminRoute } from '@/lib/adminRoutes';
@@ -36,18 +37,17 @@ import { getBusinessName, subscribeBusiness } from '@/store/businessStore';
  * `admin` and `supplier` are built from the business being worked in rather
  * than fixed. A tenant switched to CellShoppe read "Invoices - Cellvix Admin"
  * in the tab strip, and the tab strip is the one place a second open window
- * says which shop it belongs to. `shop` keeps the wholesaler's own name
- * because the storefront is always Cellvix, and `superadmin` wears the
- * platform's name because it sits above every business rather than inside one.
+ * says which shop it belongs to. `shop` (the website) carries its own
+ * business's name, and `superadmin` wears Kelinto's because it sits above
+ * every business rather than inside one.
  */
 const SUFFIX = {
   superadmin: 'Kelinto Console',
-  shop: 'Cellvix',
 };
 
 /** The business-scoped surfaces, and what each is called after the name. */
 const SCOPED_SUFFIX = {
-  admin: 'Admin',
+  admin: 'ERP',
   supplier: 'Suppliers',
 };
 
@@ -75,6 +75,7 @@ const SUPERADMIN_TITLES = {
   '/superadmin/plans': 'Plans',
   '/superadmin/support': 'Support',
   '/superadmin/access': 'Access log',
+  '/superadmin/brand': 'Brand',
   '/superadmin/login': 'Sign in',
 };
 
@@ -181,17 +182,21 @@ export function useDocumentTitle(title) {
     the previous shop's name in the tab until the next navigation.
   */
   const businessName = useSyncExternalStore(subscribeBusiness, getBusinessName, getBusinessName);
+  // The website's own business, which is not the ERP's selection.
+  const website = useBusinessInfo();
 
   useEffect(() => {
     const surface = surfaceOf(pathname);
     const label = title || labelFor(pathname, surface);
     const scoped = SCOPED_SUFFIX[surface];
-    const suffix = scoped ? `${businessName || 'Cellvix'} ${scoped}` : SUFFIX[surface];
+    const suffix = scoped
+      ? `${businessName || 'Kelinto'} ${scoped}`
+      : (SUFFIX[surface] ?? website.name);
 
     // A plain hyphen, not an em dash: a tab strip truncates hard, and the
     // separator is doing structural work rather than punctuating a sentence.
     document.title = label ? `${label} - ${suffix}` : suffix;
-  }, [pathname, title, businessName]);
+  }, [pathname, title, businessName, website.name]);
 }
 
 export default useDocumentTitle;

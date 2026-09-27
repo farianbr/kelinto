@@ -1,6 +1,7 @@
 import cn from '@/lib/cn';
 import { productTitle } from '@/lib/format';
 import { productPhoto } from '@/lib/partPhoto';
+import { uploadSrcSet } from '@/lib/media';
 import PartIllustration from './PartIllustration';
 
 /**
@@ -33,15 +34,25 @@ import PartIllustration from './PartIllustration';
  * `alt=""` throughout: every placement already names the product in text beside
  * the image, so the picture is decorative and announcing it repeats the name.
  */
-export function PartVisual({ product, className }) {
+/**
+ * `sizes` is how wide the picture is drawn, so the browser can choose between
+ * an uploaded picture's 480 px and 1600 px copies (`lib/media.js`). The default
+ * fits every thumbnail placement - cards, cart lines, search rows - which all
+ * draw well under 480 px, so they never fetch the large one.
+ */
+export function PartVisual({ product, className, sizes = '(min-width: 1024px) 240px, 45vw', priority = false }) {
   const photo = productPhoto(product);
 
   if (photo) {
     return (
       <img
         src={photo}
+        srcSet={uploadSrcSet(photo)}
+        sizes={uploadSrcSet(photo) ? sizes : undefined}
         alt=""
-        loading="lazy"
+        loading={priority ? 'eager' : 'lazy'}
+        fetchPriority={priority ? 'high' : undefined}
+        decoding="async"
         className={cn('size-full object-contain', className)}
       />
     );
@@ -62,6 +73,10 @@ export function PartFrame({
   className,
   aspect = 'aspect-4/3',
   children,
+  // Passed to the picture: see `PartVisual`. The product page draws it large
+  // and above the fold, so it passes its own and `priority`.
+  sizes,
+  priority,
 }) {
   const model = productTitle(product.name, product.partTypeLabel);
   const showCaption = caption && Boolean(model);
@@ -114,7 +129,7 @@ export function PartFrame({
           floated in the middle at the other. 22% a side leaves the part at
           ~56% of the frame. */}
       <div className="relative z-1 size-full p-[22cqw]">
-        {children ?? <PartVisual product={product} />}
+        {children ?? <PartVisual product={product} sizes={sizes} priority={priority} />}
       </div>
     </div>
   );

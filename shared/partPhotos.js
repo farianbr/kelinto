@@ -17,7 +17,7 @@
  * dropping a file in that folder and adding one line to PHOTOS below.
  */
 
-const DIR = '/Cellvix Demo Product Images';
+const DIR = '/stock-photos';
 
 /**
  * `${brand key} ${part key}` -> filename.
@@ -27,7 +27,7 @@ const DIR = '/Cellvix Demo Product Images';
  * screen. See BRAND_KEY.
  */
 const PHOTOS = {
-  'iphone screen-assembly': 'iPhone Screen.png',
+  'iphone screen-assembly': 'iPhone Screen.webp',
   'iphone battery': 'iPhone Battery.webp',
   'iphone charging-port': 'iPhone Charging Port.webp',
   'iphone rear-camera': 'iPhone Back Camera.webp',

@@ -47,6 +47,7 @@ import * as supportController from '../controllers/supportController.js';
 import * as supplierPortalController from '../controllers/supplierPortalController.js';
 import * as customerPortalController from '../controllers/customerPortalController.js';
 import * as superAdminController from '../controllers/superAdminController.js';
+import * as assetController from '../controllers/assetController.js';
 
 import validate from '../middleware/validate.js';
 import {
@@ -245,6 +246,12 @@ router.get('/health', (req, res) =>
 // The platform's public price list, read by the kelinto.com landing page.
 // Outside `/superadmin` on purpose: that prefix answers only on the console host.
 router.get('/platform/plans', superAdminController.listPublicPlans);
+// Kelinto's own logo and favicon, for the landing page and the ERP sign-in.
+router.get('/platform/brand', assetController.platformBrand);
+// ...and where the console sets them. Files go to R2 under `platform/`.
+router.post('/superadmin/assets', requireSuperAdmin, assetController.acceptFile, assetController.uploadPlatformAsset);
+router.patch('/superadmin/brand', requireSuperAdmin, assetController.updatePlatformBrand);
+router.post('/superadmin/assets/discard', requireSuperAdmin, assetController.discardPlatformAssets);
 
 // --- auth ------------------------------------------------------------------
 router.post('/auth/register', authLimiter, validate(registerSchema), authController.register);
@@ -252,6 +259,9 @@ router.post('/auth/login', authLimiter, validate(loginSchema), authController.lo
 router.post('/auth/logout', authController.logout);
 // Deliberately not `requireAuth`: a guest is a valid answer here, see the controller.
 router.get('/auth/me', authController.me);
+// The ERP's "View website": minted on the ERP host, spent on the website's.
+router.post('/auth/website-handoff', requireAuth, requireStaff, resolveBusinessScope, authController.websiteHandoff);
+router.get('/auth/website-handoff', authLimiter, authController.claimWebsiteHandoff);
 router.post(
   '/auth/forgot-password',
   authLimiter,
@@ -1054,6 +1064,14 @@ router.patch('/admin/referrals/rate', ...adminOnly, validate(referralRateSchema)
 // role must not gain a second door onto the number that multiplies every payout.
 router.get('/admin/settings', ...admin, requirePermission('settings', 'view'), settingsController.get);
 router.patch('/admin/settings/business', ...admin, requirePermission('settings.business', 'full'), validate(businessInfoSchema), settingsController.updateBusiness);
+// Uploads into R2, under this business's own prefix. The logo and favicon need
+// the same permission as the screen that saves them; product media, the same
+// as editing a product. The upload returns an address; saving the form is what
+// puts it on the record.
+router.post('/admin/assets/identity', ...admin, requirePermission('settings.business', 'full'), assetController.acceptFile, assetController.uploadForBusiness('identity'));
+router.post('/admin/assets/catalogue', ...admin, requirePermission('purchase', 'full'), assetController.acceptFile, assetController.uploadForBusiness('catalogue'));
+// Delete uploads a form discarded without saving. Only still-pending files.
+router.post('/admin/assets/discard', ...admin, assetController.discardForBusiness);
 router.patch('/admin/settings/sale', ...admin, requirePermission('settings.financial', 'full'), validate(saleSettingsSchema), settingsController.updateSale);
 router.patch('/admin/settings/shipping', ...admin, requirePermission('settings.financial', 'full'), validate(shippingSettingsSchema), settingsController.updateShipping);
 router.patch('/admin/settings/payment-methods', ...admin, requirePermission('settings.financial', 'full'), validate(paymentMethodsSettingsSchema), settingsController.updatePaymentMethods);

@@ -34,7 +34,7 @@ const day = (value) => formatDate(value);
 const INK = '#111113';
 const MUTED = '#6b6b73';
 const LINE = '#e4e4e8';
-const BRAND = '#CF3429';
+const BRAND = '#41566e';
 const OK = '#087443';
 
 function escapeHtml(value) {

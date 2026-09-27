@@ -47,6 +47,14 @@ const CONTROL_MODELS = new Set([
   // A supplier's one login across every business it supplies; each business
   // keeps its own `Supplier` record for the relationship.
   'SupplierAccount',
+  // Signed-out session ids and spent handoff links. A session can be minted on
+  // one host and presented on another, so the list cannot live in a business.
+  'RevokedToken',
+  // Kelinto's own logo and favicon: the platform's, not any business's.
+  'PlatformSettings',
+  // Uploads no saved record uses yet, swept when abandoned. Keyed by the R2
+  // object key, which names its owner.
+  'PendingUpload',
 ]);
 
 /** `connection -> { modelName: Model }`, so a schema is compiled once per database. */

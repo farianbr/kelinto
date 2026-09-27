@@ -25,7 +25,7 @@ import { pressable } from '@/lib/motion';
 const MOVEMENTS = {
   refund: { label: 'Refund', icon: ArrowDownLeft },
   recharge: { label: 'Top-up', icon: Plus },
-  grant: { label: 'Added by Cellvix', icon: ArrowDownLeft },
+  grant: { label: 'Added to your account', icon: ArrowDownLeft },
   adjustment: { label: 'Adjustment', icon: ArrowUpRight },
   redemption: { label: 'Applied to order', icon: ArrowUpRight },
 };

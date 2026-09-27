@@ -57,8 +57,37 @@ function useActiveBusiness() {
 
 function BrandBlock({ compact }) {
   const business = useActiveBusiness();
+  const { branding } = useAuth();
   const name = business?.name ?? 'Operations';
   const initial = (name.trim()[0] ?? 'O').toUpperCase();
+
+  /**
+   * The business's own logo, uploaded in Settings › Business info, on a white
+   * tile: the sidebar is near-black and most logos are drawn for a light
+   * background. The name stays for screen readers, since the logo already
+   * says it to everyone else. Collapsed, the tile is the favicon; with
+   * neither uploaded, the lettered square as before.
+   */
+  if (branding?.logoUrl && !compact) {
+    return (
+      <div className="flex flex-col items-center gap-2 border-b border-white/10 px-4 py-4 text-center">
+        <span className="flex w-full items-center justify-center rounded-md bg-white px-3 py-2">
+          <img src={branding.logoUrl} alt="" className="h-10 w-auto max-w-full object-contain" decoding="async" />
+        </span>
+        <span className="sr-only">{name}</span>
+        <span className="eyebrow block text-ink-200">ERP system</span>
+      </div>
+    );
+  }
+  if (compact && branding?.faviconUrl) {
+    return (
+      <div className="flex justify-center border-b border-white/10 py-4">
+        <span className="flex size-9 items-center justify-center rounded-md bg-white p-1">
+          <img src={branding.faviconUrl} alt={name} className="size-full object-contain" decoding="async" />
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -409,6 +438,9 @@ function IconRail({ badges, onNavigate }) {
 }
 
 function UserFooter({ user, onSignOut, compact }) {
+  // The business's icon (Settings › Business info) stands in the round badge
+  // when it has one, so the rail carries the business's mark top and bottom.
+  const { branding } = useAuth();
   const initials = (user?.contactName ?? user?.businessName ?? 'A')
     .split(' ')
     .slice(0, 2)
@@ -434,9 +466,15 @@ function UserFooter({ user, onSignOut, compact }) {
   return (
     <div className="border-t border-white/10 px-3 py-3">
       <div className="flex items-center gap-2.5">
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-white/12 text-xs font-semibold text-white">
-          {initials}
-        </span>
+        {branding?.faviconUrl ? (
+          <span className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white p-1">
+            <img src={branding.faviconUrl} alt="" className="size-full object-contain" decoding="async" />
+          </span>
+        ) : (
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-white/12 text-xs font-semibold text-white">
+            {initials}
+          </span>
+        )}
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium text-white">
             {user?.contactName ?? 'Admin'}

@@ -105,7 +105,7 @@ const MAIL = {
   ink300: '#9b9ba5',
   line: '#e7e7ea',
   surface2: '#f7f7f8',
-  brand: '#CF3429',
+  brand: '#41566e',
 
   /* Six steps, mirroring the client's scale. */
   micro: '11px',
@@ -160,7 +160,7 @@ function renderHtml({ user, password, origin, approved, business }) {
              depth. Same identity, no stub - this mirrors bg-brand-gradient-compact
              in the client, which exists for exactly this reason. -->
         <tr><td style="height:3px;line-height:3px;font-size:0;background:${MAIL.brand};">
-          <div style="height:3px;background:linear-gradient(90deg,#8f221b 0%,#cf3429 55%,#e8564a 100%);">&nbsp;</div>
+          <div style="height:3px;background:linear-gradient(90deg,#2e3c4d 0%,#41566e 55%,#5f7185 100%);">&nbsp;</div>
         </td></tr>
 
         <tr><td style="padding:36px 36px 8px;">
@@ -394,7 +394,7 @@ async function sendPasswordResetEmail({ user, token, origin, business = null, ex
 
       <!-- The same brand hairline the welcome mail carries. -->
       <tr><td style="height:3px;line-height:3px;font-size:0;background:${MAIL.brand};">
-        <div style="height:3px;background:linear-gradient(90deg,#8f221b 0%,#cf3429 55%,#e8564a 100%);">&nbsp;</div>
+        <div style="height:3px;background:linear-gradient(90deg,#2e3c4d 0%,#41566e 55%,#5f7185 100%);">&nbsp;</div>
       </td></tr>
 
       <tr><td style="padding:36px 36px 8px;">

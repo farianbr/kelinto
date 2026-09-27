@@ -49,8 +49,35 @@ async function learnSurface() {
   }
 }
 
+/**
+ * The page's title, favicon and colours, written by the server in production
+ * (`server/src/utils/pageIdentity.js`). Asked for here in development, for the
+ * same reason as the surface above. Not awaited: nothing waits on a favicon.
+ */
+async function learnIdentity() {
+  if (!import.meta.env.DEV) return;
+  try {
+    const response = await fetch('/api/dev/identity', { credentials: 'include' });
+    if (!response.ok) return;
+    const identity = await response.json();
+    document.title = identity.title;
+    document.querySelector('link[rel="icon"]')?.setAttribute('href', identity.favicon);
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', identity.themeColor);
+    document.querySelector('meta[name="description"]')?.setAttribute('content', identity.description);
+    if (identity.paletteCss) {
+      const style = document.createElement('style');
+      style.dataset.businessTheme = 'page';
+      style.textContent = `:root{${identity.paletteCss}}`;
+      document.head.appendChild(style);
+    }
+  } catch {
+    // Placeholders stay; the app still runs.
+  }
+}
+
 async function start() {
   await learnSurface();
+  learnIdentity();
   // Imported only now: `lib/surface.js` reads the tags once, when it loads, and
   // the app pulls it in - so it must not load before they are written.
   const { default: App } = await import('./App');

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import api from '@/lib/api';
 import { BUSINESS_INFO } from '@/lib/constants';
+import { surface } from '@/lib/surface';
 
 /**
  * Who this storefront belongs to.
@@ -54,10 +55,6 @@ import { BUSINESS_INFO } from '@/lib/constants';
  */
 const FALLBACK = {
   ...BUSINESS_INFO,
-  // The constant IS the house's details, so the frame before the request
-  // resolves is the house's frame - which is what shipped before this hook
-  // existed. The real answer corrects it a moment later.
-  isHouse: true,
   social: Object.entries(BUSINESS_INFO.social ?? {})
     .filter(([, url]) => url && url !== '#')
     .map(([network, url]) => ({
@@ -75,6 +72,8 @@ export function useBusinessInfo() {
     // a navigation-heavy session down to one request without making an edit
     // take a reload to show up.
     staleTime: 10 * 60 * 1000,
+    // Kelinto's own hosts belong to no business, so there is nobody to ask.
+    enabled: surface !== 'superadmin' && surface !== 'platform',
   });
 
   return data ?? FALLBACK;

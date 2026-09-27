@@ -4,6 +4,7 @@ import { pressable } from '@/lib/motion';
 import RichText, { extractHeadings } from '@/lib/richText';
 import scrollToSection from '@/lib/scrollToSection';
 import AuthorCard from '@/components/content/AuthorCard';
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 
 /**
  * The long-form article written for ONE product, authored in admin under SEO.
@@ -40,6 +41,7 @@ import AuthorCard from '@/components/content/AuthorCard';
  * admin-authored copy never has to be trusted as markup (Instructions §8).
  */
 export function ProductArticle({ article, product, className }) {
+  const info = useBusinessInfo();
   // No article for this product, or only a draft - the server sends published
   // ones only, so there is simply nothing here.
   if (!article?.body) return null;
@@ -149,7 +151,7 @@ export function ProductArticle({ article, product, className }) {
           {!hasAuthor && (
             <p className="mt-7 flex items-center gap-2 border-t border-line pt-4 text-xs text-ink-400">
               <Wrench className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
-              Written by the Cellvix parts desk
+              Written by the {info.name} team
               {product?.partTypeLabel ? ` · ${product.partTypeLabel}` : ''}
             </p>
           )}

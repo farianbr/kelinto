@@ -42,18 +42,19 @@
 */
 
 /* ==========================================================================
-   Cellvix design tokens
+   Design tokens. The brand ramp below is the NEUTRAL default (slate); each
+   business's own ramp replaces it at runtime (shared/businessPalette.js).
    The single place any brand value is defined. See PROJECT_INSTRUCTIONS.md §2.
    Never hardcode a hex in a component - use the generated utility classes.
    ========================================================================== */
 
 @theme {
   /* --- brand ------------------------------------------------------------ */
-  --color-brand: #cf3429;
-  --color-brand-600: #b02a21;
-  --color-brand-700: #8e211a;
-  --color-brand-100: #fadcd9;
-  --color-brand-50: #fdf1f0;
+  --color-brand: #41566e;
+  --color-brand-600: #37485c;
+  --color-brand-700: #2c3a4b;
+  --color-brand-100: #e4e7eb;
+  --color-brand-50: #f6f7f8;
 
   /* --- ink (from the logo's black) --------------------------------------
      Every step from 300 up is a TEXT colour and clears WCAG 2.1 AA (4.5:1)
@@ -80,7 +81,7 @@
      that the inverted band belongs to the palette. A SOLID fill, not a second
      gradient block - §2.2 keeps the gradient for the CTA. White sits at ~18:1
      on it, white/60 at ~6.6:1, so both clear AA comfortably. */
-  --color-ink-deep: #1b0101;
+  --color-ink-deep: #07090b;
 
   /* --- surfaces & lines ------------------------------------------------- */
   --color-line: #e5e5ea;
@@ -500,31 +501,31 @@
   .bg-brand-gradient {
     background-image: linear-gradient(
       100deg,
-      var(--brand-grad-dark, #1a0603) 0%,
-      var(--brand-grad-mid, #8f221b) 38%,
-      var(--brand-grad-base, #cf3429) 72%,
-      var(--brand-grad-end, #e8564a) 100%
+      var(--brand-grad-dark, #090c0f) 0%,
+      var(--brand-grad-mid, #2e3c4d) 38%,
+      var(--brand-grad-base, #41566e) 72%,
+      var(--brand-grad-end, #5f7185) 100%
     );
   }
 
   /* The ramp for a LARGE surface carrying small text.
 
      White needs 4.5:1 to be readable as body copy, and the standard ramp ends
-     at #e8564a where white manages only 3.58 - fine on a button, whose label is
+     at #5f7185 where white manages only 3.58 - fine on a button, whose label is
      bold and short, and not fine on a tall panel holding paragraphs. That is a
      property of the colour, not of the design: no amount of care with the text
      fixes a ground that bright behind 14px copy.
 
      So a text-bearing block uses this instead. Same identity, same direction,
-     stopping at #9d251d - where white clears 7.7:1 and even white/70 clears
+     stopping at #334356 - where white clears 7.7:1 and even white/70 clears
      4.5, so the panel can still fade its secondary lines. Everything that is
      NOT a large text surface keeps the vivid ramp above. */
   .bg-brand-gradient-panel {
     background-image: linear-gradient(
       100deg,
-      var(--brand-grad-dark, #1a0603) 0%,
-      var(--brand-grad-panel-mid, #7d1e17) 45%,
-      var(--brand-grad-panel-end, #9d251d) 100%
+      var(--brand-grad-dark, #090c0f) 0%,
+      var(--brand-grad-panel-mid, #293544) 45%,
+      var(--brand-grad-panel-end, #334356) 100%
     );
   }
 
@@ -535,9 +536,9 @@
   .bg-brand-gradient-compact {
     background-image: linear-gradient(
       100deg,
-      var(--brand-grad-mid, #8f221b) 0%,
-      var(--brand-grad-base, #cf3429) 55%,
-      var(--brand-grad-end, #e8564a) 100%
+      var(--brand-grad-mid, #2e3c4d) 0%,
+      var(--brand-grad-base, #41566e) 55%,
+      var(--brand-grad-end, #5f7185) 100%
     );
   }
 
@@ -545,9 +546,9 @@
   .rule-brand-gradient {
     background-image: linear-gradient(
       90deg,
-      var(--brand-rule-dark, #1a0603) 0%,
-      var(--brand-rule-mid, #cf3429) 60%,
-      var(--brand-rule-end, #e8564a) 100%
+      var(--brand-rule-dark, #090c0f) 0%,
+      var(--brand-rule-mid, #41566e) 60%,
+      var(--brand-rule-end, #5f7185) 100%
     );
   }
 
@@ -566,9 +567,9 @@
   .bg-brand-gradient-orb {
     background-image: linear-gradient(
       100deg,
-      var(--brand-grad-mid, #8f221b) -35%,
-      var(--brand-grad-base, #cf3429) 55%,
-      var(--brand-grad-end, #e8564a) 135%
+      var(--brand-grad-mid, #2e3c4d) -35%,
+      var(--brand-grad-base, #41566e) 55%,
+      var(--brand-grad-end, #5f7185) 135%
     );
   }
   /* The orb ramp for a disc carrying a LABEL rather than a digit.
@@ -578,7 +579,7 @@
      large bold figure and fails the 4.5 AA floor for anything set as text. The
      promo banner's CTA is two words at 13px, so it needs the same treatment the
      panel ramp gives a text-bearing block: the same identity and direction,
-     stopping at #9d251d, where white clears 7.7:1.
+     stopping at #334356, where white clears 7.7:1.
 
      Stops still sit outside the element (-35% / 135%) for the reason the plain
      orb ramp does: a linear gradient is flat past its end stops, and on a disc
@@ -586,9 +587,9 @@
   .bg-brand-gradient-orb-panel {
     background-image: linear-gradient(
       100deg,
-      var(--brand-grad-orb-panel-dark, #5e120d) -35%,
-      var(--brand-grad-orb-panel-mid, #8b2019) 55%,
-      var(--brand-grad-orb-panel-end, #9d251d) 135%
+      var(--brand-grad-orb-panel-dark, #1b232d) -35%,
+      var(--brand-grad-orb-panel-mid, #2c3a4b) 55%,
+      var(--brand-grad-orb-panel-end, #334356) 135%
     );
   }
 
@@ -614,9 +615,9 @@
       linear-gradient(var(--color-surface), var(--color-surface)),
       linear-gradient(
         100deg,
-        var(--brand-grad-mid, #8f221b) 0%,
-        var(--brand-grad-base, #cf3429) 55%,
-        var(--brand-grad-end, #e8564a) 100%
+        var(--brand-grad-mid, #2e3c4d) 0%,
+        var(--brand-grad-base, #41566e) 55%,
+        var(--brand-grad-end, #5f7185) 100%
       );
     background-origin: border-box;
     background-clip: content-box, border-box;

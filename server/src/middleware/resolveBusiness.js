@@ -116,6 +116,19 @@ async function resolveBusiness(req, _res, next) {
       return next();
     }
 
+    /**
+     * **A website's host outranks any session, header or query.** A website is one business's,
+     * and a cookie naming another business must not be able to open that
+     * other business's database behind this business's address. The session
+     * is then read in the host's database, where an account from elsewhere
+     * does not exist, and `authenticate` treats it as signed out.
+     */
+    if (req.surface === 'storefront' && req.hostEntry) {
+      req.businessScope = req.hostEntry.businessId;
+      req.businessScopeSource = 'host';
+      return next();
+    }
+
     // 2. An explicit header - development, tooling, and the smoke suite.
     const header = req.get('x-business');
     if (header) {

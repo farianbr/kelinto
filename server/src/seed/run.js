@@ -146,8 +146,8 @@ const DEMO_USERS = [
     businessType: 'Retailer',
   },
   {
-    businessName: 'Cellvix',
-    contactName: 'Cellvix Admin',
+    businessName: 'CellShoppe',
+    contactName: 'CellShoppe Admin',
     email: 'admin@cellvix.ca',
     phone: '+1 (416) 555-0100',
     status: 'approved',
@@ -374,7 +374,7 @@ async function seedDatabase({ quiet = false } = {}) {
         name: 'Cellvix Group',
         slug: 'cellvix-group',
         status: 'active',
-        contactName: 'Cellvix Admin',
+        contactName: 'CellShoppe Admin',
         contactEmail: 'admin@cellvix.ca',
         // Three, so there are free slots to demonstrate adding a business with.
         slots: 3,

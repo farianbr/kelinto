@@ -95,13 +95,16 @@ const settingsSchema = new mongoose.Schema(
     key: { type: String, default: 'singleton', unique: true, index: true },
 
     business: {
-      name: { type: String, default: 'Cellvix' },
-      tagline: { type: String, default: 'Wholesale phone and laptop parts' },
-      phone: { type: String, default: '(416) 555-0100' },
-      email: { type: String, default: 'sales@cellvix.ca' },
-      website: { type: String, default: 'https://cellvix.ca' },
-      // Dummy until the client supplies the real number (§0.15).
-      taxNumber: { type: String, default: '12345 6789 RT0001' },
+      // Blank until the owner fills them in (ERP › Settings › Business info).
+      // They used to default to Cellvix's details, so every business created
+      // since carried another company's name, address and tax number until
+      // somebody noticed; the business record's own name wins over this one.
+      name: { type: String, default: '' },
+      tagline: { type: String, default: '' },
+      phone: { type: String, default: '' },
+      email: { type: String, default: '' },
+      website: { type: String, default: '' },
+      taxNumber: { type: String, default: '' },
       /**
        * Where a happy customer is sent to leave a review.
        *
@@ -122,6 +125,21 @@ const settingsSchema = new mongoose.Schema(
        * what every business gets today.
        */
       logoUrl: { type: String, default: '' },
+
+      /**
+       * The browser-tab icon, written into every page of the website by the
+       * server (`utils/pageIdentity.js`). Like the logo, an uploaded file in
+       * R2 under this business's own prefix; empty means the neutral placeholder.
+       */
+      faviconUrl: { type: String, default: '' },
+
+      /**
+       * The wide wordmark that runs across the bottom of the website footer,
+       * cropped by the panel's edge (the original design). Empty means the
+       * footer simply ends; it does not fall back to `logoUrl`, whose taglines
+       * and icon would read badly at that size.
+       */
+      footerLogoUrl: { type: String, default: '' },
 
       /**
        * The addresses a customer writes to, as opposed to `email`, which is

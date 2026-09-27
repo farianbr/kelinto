@@ -240,7 +240,7 @@ function ServiceForm({ mode, suppliers, categories, row, onSubmit, onCancel, isP
       <Textarea label="Notes" rows={2} {...register('notes')} />
 
       <p className="rounded-md bg-surface-2 px-3 py-2.5 text-xs leading-relaxed text-ink-500">
-        This is a cost, not something Cellvix sells - it has no stock and never reaches the
+        This is a cost, not something this business sells - it has no stock and never reaches the
         storefront. Recording a charge against it writes a real expense, so it shows up in the P&amp;L
         like any other.
       </p>

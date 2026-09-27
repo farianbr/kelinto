@@ -224,7 +224,7 @@ export function AdminBusinessFormPage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <Input
                   label="Business name"
-                  placeholder="Cellvix Mississauga"
+                  placeholder="Downtown branch"
                   error={errors.name?.message}
                   {...register('name')}
                 />

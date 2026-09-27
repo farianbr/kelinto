@@ -1,10 +1,8 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { BUSINESS_INFO } from '../../../shared/business.js';
 import { formatDate } from '../../../shared/dates.js';
 import { paletteFor, migrateColorToken } from '../../../shared/businessPalette.js';
 import { db, controlModels } from '../db/models.js';
+import storage from './storageService.js';
 
 /**
  * The invoice document.
@@ -19,24 +17,6 @@ import { db, controlModels } from '../db/models.js';
  * <style> block that is here carries print rules only - nothing the layout
  * depends on.
  */
-
-/**
- * The masthead logo, inlined as a data URI.
- *
- * A mail client will not fetch a remote image until the reader asks it to, and
- * plenty never ask - an invoice whose letterhead is a broken-image icon is the
- * one thing worse than no letterhead. Read once at boot; if the file is not
- * there the masthead falls back to the wordmark set in type.
- */
-const here = path.dirname(fileURLToPath(import.meta.url));
-const LOGO = (() => {
-  try {
-    const file = path.resolve(here, '..', '..', '..', 'client', 'public', 'brand', 'logo.png');
-    return `data:image/png;base64,${fs.readFileSync(file).toString('base64')}`;
-  } catch {
-    return null;
-  }
-})();
 
 const CAD = new Intl.NumberFormat('en-CA', {
   style: 'currency',
@@ -82,8 +62,8 @@ const COUNTRY_NAMES = {
 const INK = '#111113';
 const MUTED = '#6b6b73';
 const LINE = '#e4e4e8';
-/** Cellvix red. Only used when a caller did not resolve the real business. */
-const BRAND_FALLBACK = '#CF3429';
+/** Neutral slate. Only used when a caller did not resolve the real business. */
+const BRAND_FALLBACK = '#41566e';
 
 /**
  * The document's type scale.
@@ -275,10 +255,12 @@ async function resolveInvoiceBrand(businessId) {
      * better answer than somebody else's logo.
      */
     isHouse: business.isDefault === true,
+    // The business's own uploaded logo, embedded (see `storageService.dataUriOf`).
+    logo: await storage.dataUriOf(info.logoUrl),
   };
 }
 
-function renderInvoiceHtml({ invoice, order, user, origin, nonce, shop, brandColor, isHouse }) {
+function renderInvoiceHtml({ invoice, order, user, origin, nonce, shop, brandColor, logo = null }) {
   const balance = (invoice.amount ?? 0) - (invoice.amountPaid ?? 0);
   const settled = balance <= 0;
 
@@ -293,9 +275,6 @@ function renderInvoiceHtml({ invoice, order, user, origin, nonce, shop, brandCol
    */
   const business = shop ?? BUSINESS_INFO;
   const BRAND = brandColor ?? BRAND_FALLBACK;
-  // The bundled logo is Cellvix's, so it prints only when no other business was
-  // resolved - see the note beside the masthead.
-  const useHouseLogo = !shop || isHouse === true;
 
   /**
    * The strapline, unless it is still the schema default.
@@ -305,7 +284,7 @@ function renderInvoiceHtml({ invoice, order, user, origin, nonce, shop, brandCol
    * description under its own name. Blank is the honest answer - the same rule
    * the ticket document applies to the default phone number.
    */
-  const tagline = !useHouseLogo && business.tagline === 'Wholesale phone and laptop parts' ? '' : (business.tagline ?? '');
+  const tagline = business.tagline === 'Wholesale phone and laptop parts' ? '' : (business.tagline ?? '');
 
   // What this document calls itself. A tax invoice is issued only against money
   // that arrived; before that the same row is an amount due, and a receipt for
@@ -374,20 +353,13 @@ ${
           <td style="vertical-align:top;">
             ${
               /**
-               * The logo file belongs to ONE business, so only that one gets it.
-               *
-               * `client/public/brand/logo.png` is Cellvix's wordmark, read once
-               * at boot - there is no per-business logo store yet. Printing it
-               * on every invoice put the wholesaler's mark on a repair shop's
-               * paperwork, which is the same bug as the hardcoded red and more
-               * obvious to a customer than the colour was.
-               *
-               * A shop with no logo of its own falls through to the typeset
-               * wordmark below, which is built from its own name and colour -
-               * a better answer than somebody else's logo.
+               * The business's OWN logo, uploaded in Settings and embedded as a
+               * data URI, or its name set in type. Never a bundled file: one
+               * file for the whole install was one business's mark printed on
+               * every other business's paperwork.
                */
-              LOGO && useHouseLogo
-                ? `<img src="${LOGO}" alt="${escapeHtml(business.name)}" width="190" height="48"
+              logo
+                ? `<img src="${logo}" alt="${escapeHtml(business.name)}" width="190" height="48"
                      style="display:block;width:190px;height:auto;border:0;" />`
                 : `<table role="presentation" cellpadding="0" cellspacing="0">
               <tr>
@@ -578,7 +550,7 @@ ${/*
             ${escapeHtml(business.address.line1)}, ${escapeHtml(business.address.city)}, ${escapeHtml(business.address.region)} ${escapeHtml(business.address.postal)} · ${escapeHtml(business.domain)}
             ${
               origin && order?.orderNumber
-                ? `<br /><a href="${escapeHtml(origin)}/account/orders/${escapeHtml(order.orderNumber)}" style="color:${BRAND};text-decoration:none;">View this order in your Cellvix account</a>`
+                ? `<br /><a href="${escapeHtml(origin)}/account/orders/${escapeHtml(order.orderNumber)}" style="color:${BRAND};text-decoration:none;">View this order in your account</a>`
                 : ''
             }
           </td>

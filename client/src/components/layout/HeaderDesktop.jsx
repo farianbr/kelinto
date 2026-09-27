@@ -10,6 +10,7 @@ import { useCart } from '@/hooks/useCart';
 import { useAuth } from '@/hooks/useAuth';
 import { useAccountMenuTrigger } from '@/components/account/AccountMenu';
 import { pressable } from '@/lib/motion';
+import BusinessMark from './BusinessMark';
 
 /**
  * Account control. Guests get the sign-in popup; a signed-in user gets the
@@ -20,7 +21,7 @@ function AccountControl() {
   const openAccount = useUiStore((s) => s.openAccount);
   const accountTrigger = useAccountMenuTrigger();
   const accountMenuOpen = useUiStore((s) => s.accountMenuOpen);
-  const { user, isAuthenticated, isApproved, isPending, isAdmin } = useAuth();
+  const { user, isAuthenticated, isApproved, isPending, isPanelAccount } = useAuth();
 
   // Open, the trigger takes the accent rather than the hover grey: three panels
   // hang off this cluster and the lit button is what says which one you opened.
@@ -48,7 +49,7 @@ function AccountControl() {
       </span>
       <span className="max-w-[140px] text-left leading-tight">
         <span className="eyebrow block text-ink-300">
-          {!user ? 'Sign in' : isAdmin ? 'Staff' : isApproved ? 'Account' : 'Pending'}
+          {!user ? 'Sign in' : isPanelAccount ? 'Staff' : isApproved ? 'Account' : 'Pending'}
         </span>
         <span className="block truncate font-display text-sm font-semibold text-ink-900">
           {user ? user.displayName : 'My account'}
@@ -99,30 +100,13 @@ export function HeaderDesktop() {
 
   const { count: cartCount, subtotal } = useCart();
   const info = useBusinessInfo();
-  const isHouse = info.isHouse !== false;
 
   return (
     <div className="relative hidden lg:block">
       <div className="mx-auto flex max-w-[1400px] items-center gap-5 px-6 py-3.5">
-        {/* A business that has uploaded a mark gets it; one that has not gets
-            its name set as a wordmark. The bundled Cellvix PNG is the fallback
-            only for the house business - serving it to every business made
-            CellShoppe's storefront carry the wholesaler's logo. */}
+        {/* The business's uploaded logo, or its name as a wordmark. */}
         <Link to="/" className="shrink-0" aria-label={`${info.name} home`}>
-          {info.logoUrl ? (
-            <img src={info.logoUrl} alt={info.name} className="h-9 w-auto" />
-          ) : isHouse ? (
-            <img
-              src="/brand/logo.png"
-              srcSet="/brand/logo.png 1x, /brand/logo@2x.png 2x"
-              alt={`${info.name} - ${info.tagline}`}
-              width="1000"
-              height="254"
-              className="h-9 w-auto"
-            />
-          ) : (
-            <span className="font-display text-xl font-bold text-ink-900">{info.name}</span>
-          )}
+          <BusinessMark size="lg" />
         </Link>
 
         <button

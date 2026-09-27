@@ -1,3 +1,4 @@
+import { urlOf } from './storageService.js';
 import { db } from '../db/models.js';
 import '../models/Product.js';
 import '../models/Taxonomy.js';
@@ -66,7 +67,7 @@ function serialize(product, user) {
     sku: doc.sku,
     name: doc.name,
     slug: doc.slug,
-    image: doc.image ?? null,
+    image: urlOf(doc.image) ?? null,
     partType: doc.partType,
     partTypeLabel: doc.partTypeLabel,
     grade: doc.grade,
@@ -170,7 +171,9 @@ function serializeDetail(product, user) {
   return {
     ...serialize(product, user),
     description: doc.description,
-    images: doc.images ?? [],
+    images: (doc.images ?? []).map(urlOf),
+    video: urlOf(doc.video) || null,
+    videoPoster: urlOf(doc.videoPoster) || null,
     specs: doc.specs instanceof Map ? Object.fromEntries(doc.specs) : (doc.specs ?? {}),
   };
 }

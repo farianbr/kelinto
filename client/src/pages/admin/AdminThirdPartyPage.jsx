@@ -130,7 +130,7 @@ export function AdminThirdPartyPage() {
             <li>Create a project in the Google Cloud console, or pick an existing one.</li>
             <li>Enable the People API for Contacts, and the Calendar API for Calendar.</li>
             <li>
-              Configure the OAuth consent screen as an <strong>internal</strong> app if Cellvix uses
+              Configure the OAuth consent screen as an <strong>internal</strong> app if your business uses
               Google Workspace - that avoids a verification review.
             </li>
             <li>

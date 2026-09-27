@@ -1,4 +1,4 @@
-import { Navigate, Outlet } from 'react-router';
+import { Outlet } from 'react-router';
 import useDocumentTitle from '@/hooks/useDocumentTitle';
 import Header from './Header';
 import { NAV_STRIP_H } from './PrimaryNav';
@@ -8,28 +8,38 @@ import BackToTop from './BackToTop';
 import ScrollToTop from './ScrollToTop';
 import AccountPopup from '@/components/account/AccountPopup';
 import SignOutConfirm from '@/components/account/SignOutConfirm';
-import RouteFallback from './RouteFallback';
-import { useAuth } from '@/hooks/useAuth';
+import useBusinessInfo from '@/hooks/useBusinessInfo';
+import useBusinessTheme from '@/hooks/useBusinessTheme';
 
 /** Chrome shared by every route: header, footer, and the global overlays. */
 export function RootLayout() {
   // The browser tab, per route. One call per surface rather than one per
   // page: the titles live in the route table beside the breadcrumbs.
   useDocumentTitle();
-  const { isLoading, isAdmin, isStaff } = useAuth();
 
-  // Cellvix people have no buyer side. The catalogue, cart and checkout all
-  // assume a business account behind them, so any staff account is sent to the
-  // console
-  // from any storefront URL - typed, bookmarked or followed from an email.
-  //
-  // The wait on `isLoading` is what keeps a hard refresh at `/` from painting
-  // the shop for a beat before `/auth/me` answers.
-  if (isLoading) return <RouteFallback />;
-  if (isAdmin || isStaff) return <Navigate to="/admin" replace />;
+  /**
+   * The website wears ITS business's colours, not the platform's and not
+   * Cellvix's. In production the server has already written the same ramp into
+   * the page (`utils/pageIdentity.js`), so this changes nothing on screen
+   * there; in development it is what paints the website at all. Applied only
+   * once the business has answered, so the first frame is never repainted with
+   * a guess.
+   *
+   * Staff are NOT sent away from here any more. They used to be redirected to
+   * the ERP from every website URL, which made the website impossible to view
+   * while signed in; now they see it as a customer does, with "Go to the ERP"
+   * in the account menu (no strip above the header, by client ruling).
+   */
+  const info = useBusinessInfo();
+  const known = Boolean(info.colorToken);
+  const themeVars = useBusinessTheme(info.colorToken, { portals: known });
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div
+      className="flex min-h-screen flex-col"
+      style={known ? themeVars : undefined}
+      data-business-theme={known ? '' : undefined}
+    >
       <ScrollToTop />
 
       <a

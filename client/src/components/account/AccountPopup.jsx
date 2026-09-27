@@ -58,6 +58,7 @@ const TABS = [
  * feature lines states but does not evidence.
  */
 function SidePanel() {
+  const info = useBusinessInfo();
   const STATS = [
     { value: '400+', label: 'SKUs in stock' },
     { value: '24h', label: 'Typical approval' },
@@ -85,7 +86,7 @@ function SidePanel() {
     // treatments.
     <aside className="scroll-slim relative hidden max-h-full w-full overflow-y-auto rounded-lg bg-brand-gradient-panel p-6 text-white md:flex md:flex-col md:gap-6">
       <div>
-        <p className="eyebrow mb-2 opacity-70">Cellvix wholesale portal</p>
+        <p className="eyebrow mb-2 opacity-70">{info.name}</p>
         <h3 className="text-2xl leading-tight text-white">
           Wholesale pricing for verified repair businesses
         </h3>
@@ -176,8 +177,8 @@ function ForgotPasswordView({ onBack }) {
         <div>
           <h3 className="text-xl">Check your inbox</h3>
           <p className="mx-auto mt-2 max-w-sm text-md leading-relaxed text-ink-500">
-            If <span className="font-medium text-ink-900">{getValues('email')}</span> has a Cellvix
-            account, a reset link is on its way. It expires in an hour and can only be used once.
+            If <span className="font-medium text-ink-900">{getValues('email')}</span> has an
+            account here, a reset link is on its way. It expires in an hour and can only be used once.
           </p>
         </div>
         <Button variant="outline" onClick={onBack}>
@@ -439,6 +440,7 @@ function ChangeAccountType({ onBack, label = 'Change account type' }) {
  * account means.
  */
 function AccountTypeChoice({ onPick }) {
+  const info = useBusinessInfo();
   const OPTIONS = [
     {
       key: 'buyer',
@@ -450,7 +452,7 @@ function AccountTypeChoice({ onPick }) {
     {
       key: 'supplier',
       icon: Building2,
-      title: 'I want to supply Cellvix',
+      title: info.name ? `I want to supply ${info.name}` : 'I want to supply parts',
       body: 'Tell us what you stock. Our purchasing team reviews every application and gets in touch to agree terms.',
       cta: 'Apply as a supplier',
     },

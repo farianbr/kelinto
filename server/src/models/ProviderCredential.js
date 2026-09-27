@@ -70,7 +70,7 @@ const PROVIDER_FIELDS = [
     provider: 'payment',
     label: 'Payment gateway',
     description:
-      'Cellvix ships with a mock gateway that approves every charge unless a PO number starts with DECLINE. Real keys replace it.',
+      'Kelinto ships with a mock gateway that approves every charge unless a PO number starts with DECLINE. Real keys replace it.',
     unblocks: null,
     fields: [
       { key: 'publishableKey', label: 'Publishable key' },

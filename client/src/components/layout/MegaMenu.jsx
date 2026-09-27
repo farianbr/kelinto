@@ -320,7 +320,7 @@ export function MegaMenu() {
                           Net 30 terms for approved accounts
                         </h4>
                         <p className="mt-2 text-sm leading-relaxed text-white/75">
-                          Approved Cellvix accounts unlock wholesale pricing, credit terms and
+                          Approved accounts unlock wholesale pricing, credit terms and
                           same-day dispatch from our Canadian warehouse.
                         </p>
                       </div>

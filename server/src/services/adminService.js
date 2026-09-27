@@ -16,6 +16,8 @@ import '../models/Taxonomy.js';
 import '../models/Settings.js';
 import ApiError from '../utils/ApiError.js';
 import env from '../config/env.js';
+import { currentContext } from '../db/context.js';
+import storage from './storageService.js';
 import creditService from './creditService.js';
 import storeCredit from './storeCreditService.js';
 import referralService from './referralService.js';
@@ -1317,8 +1319,30 @@ function shapeProduct(product) {
     modelSlug: product.modelSlug,
     modelName: product.modelName,
     isActive: product.isActive,
+    image: urlOf(product.image) ?? '',
+    images: (product.images ?? []).map(urlOf),
+    video: urlOf(product.video) ?? '',
+    videoPoster: urlOf(product.videoPoster) ?? '',
     updatedAt: product.updatedAt,
   };
+}
+
+/**
+ * The product's pictures and video are this business's own uploads or nothing:
+ * never a link to somebody else's server (`storageService.isAllowedUrl`).
+ */
+function assertOwnMedia(data) {
+  const code = currentContext()?.code;
+  const urls = [data.image, data.video, data.videoPoster, ...(data.images ?? [])].filter(Boolean);
+  if (urls.some((url) => !storage.isAllowedUrl(url, code))) {
+    throw ApiError.badRequest('Upload product pictures and video here rather than linking to another site.', 'ASSET_NOT_OURS');
+  }
+}
+
+/** The files a product was pointing at, for deleting the ones an edit dropped. */
+function mediaOf(product) {
+  // The poster is deleted with its video (a sibling key), so it is not listed.
+  return [product?.image, product?.video, ...(product?.images ?? [])].filter(Boolean);
 }
 
 /**
@@ -1393,7 +1417,18 @@ async function resolveTaxonomyNames(data) {
   };
 }
 
+/** The form sends addresses; the product keeps keys (`storageService.toKey`). */
+function mediaAsKeys(data) {
+  for (const field of ['image', 'video', 'videoPoster']) {
+    if (data[field] !== undefined) data[field] = storage.toKey(data[field]);
+  }
+  if (data.images !== undefined) data.images = data.images.map(storage.toKey);
+  return data;
+}
+
 async function createProduct(data) {
+  assertOwnMedia(data);
+  mediaAsKeys(data);
   const existing = await db().Product.findOne({ sku: data.sku.toUpperCase() });
   if (existing) throw ApiError.conflict('That SKU already exists.', 'DUPLICATE_SKU');
 
@@ -1408,6 +1443,8 @@ async function createProduct(data) {
     ),
   });
 
+  // Its uploads are saved now, so the sweeper must leave them alone.
+  await storage.claim(mediaOf(product), currentContext()?.code);
   invalidateTree();
   return shapeProduct(product.toObject());
 }
@@ -1419,10 +1456,19 @@ async function updateProduct(id, data) {
   const duplicate = await db().Product.findOne({ sku: data.sku.toUpperCase(), _id: { $ne: id } });
   if (duplicate) throw ApiError.conflict('That SKU already exists.', 'DUPLICATE_SKU');
 
+  assertOwnMedia(data);
+  // Absent media fields mean "not edited", never "cleared": a form that did not
+  // load the pictures must not delete them by saving.
+  for (const field of ['image', 'images', 'video', 'videoPoster']) {
+    if (data[field] === undefined) delete data[field];
+  }
+  mediaAsKeys(data);
+  const before = mediaOf(product);
   const names = await resolveTaxonomyNames(data);
   Object.assign(product, data, names, { sku: data.sku.toUpperCase() });
 
   await product.save();
+  await storage.releaseReplaced(before, mediaOf(product), currentContext()?.code);
   invalidateTree();
   return shapeProduct(product.toObject());
 }

@@ -37,6 +37,13 @@ export function SettingsFormActions({
    * screen they are leaving.
    */
   unsavedLabel = 'your changes',
+  /**
+   * How many files this form uploaded that are not saved yet
+   * (`useUploadSession`). Named in the warning, because leaving deletes them:
+   * a logo somebody just uploaded is the edit they are least likely to realise
+   * is not kept.
+   */
+  pendingUploads = 0,
 }) {
   /**
    * Leaving a dirty form asks first.
@@ -73,6 +80,14 @@ export function SettingsFormActions({
           a screen reader mid-sentence, and an error below is announced by the
           form's own alert. */}
       <p aria-live="polite" className="min-w-0">
+        {/* Said beside Save, where the eye is: an upload is not kept until
+            this form is saved, which nothing else on the page says. */}
+        {pendingUploads > 0 && (
+          <span className="flex items-center gap-1.5 text-sm text-warn">
+            <AlertCircle className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+            {pendingUploads === 1 ? 'Uploaded file not saved yet.' : `${pendingUploads} uploaded files not saved yet.`}
+          </span>
+        )}
         {saved && !dirty && !error && (
           <span className="flex items-center gap-1.5 text-sm text-ok">
             <CheckCircle2 className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
@@ -100,7 +115,11 @@ export function SettingsFormActions({
         onClose={guard.stay}
         onConfirm={guard.leave}
         title="Leave without saving?"
-        body={`You have edited ${unsavedLabel} and not saved. Leaving this page now discards those edits.`}
+        body={
+          pendingUploads > 0
+            ? `You uploaded ${pendingUploads === 1 ? 'a file' : `${pendingUploads} files`} for ${unsavedLabel} and have not saved. Leaving this page now deletes ${pendingUploads === 1 ? 'it' : 'them'} and discards your other edits.`
+            : `You have edited ${unsavedLabel} and not saved. Leaving this page now discards those edits.`
+        }
         confirmLabel="Leave without saving"
         cancelLabel="Stay on this page"
         tone="danger"

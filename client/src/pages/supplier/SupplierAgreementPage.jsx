@@ -55,7 +55,7 @@ export function SupplierAgreementPage() {
         <PanelEmpty
           icon={ShieldCheck}
           title="No agreements to sign"
-          body="Nothing has been sent to you. If you were expecting a document, ask your contact at Cellvix."
+          body="Nothing has been sent to you. If you were expecting a document, ask your contact at the business."
         />
       </Panel>
     );

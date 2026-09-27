@@ -71,7 +71,7 @@ function triggerDate(trigger, invoice) {
  */
 const RULE_TOKENS = [
   { token: '{{customer_name}}', label: 'Customer name' },
-  { token: '{{shop_name}}', label: 'Cellvix' },
+  { token: '{{shop_name}}', label: 'Your business' },
   { token: '{{invoice_number}}', label: 'Invoice number' },
   { token: '{{amount}}', label: 'Amount outstanding' },
   { token: '{{status}}', label: 'Invoice status' },
@@ -121,7 +121,7 @@ const invoiceStatusRuleSchema = new mongoose.Schema(
 invoiceStatusRuleSchema.statics.render = function render(body, { invoice, user, money }) {
   const values = {
     '{{customer_name}}': user?.businessName ?? user?.contactName ?? '',
-    '{{shop_name}}': 'Cellvix',
+    '{{shop_name}}': 'Your business',
     '{{invoice_number}}': invoice?.number ?? '',
     '{{amount}}': money ?? '',
     '{{status}}': invoice?.status ?? '',

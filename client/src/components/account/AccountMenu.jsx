@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useState } from 'react';
-import { Link, NavLink } from 'react-router';
-import { LogOut, ShieldCheck } from 'lucide-react';
+import { NavLink } from 'react-router';
+import { ArrowUpRight, LogOut, ShieldCheck } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import cn from '@/lib/cn';
 import { ACCOUNT_NAV_ITEMS } from '@shared/schemas/account';
@@ -8,6 +8,7 @@ import { accountIcon } from './accountIcons';
 import useUiStore from '@/store/uiStore';
 import { useAuth, useSignOut } from '@/hooks/useAuth';
 import { ease, pressable } from '@/lib/motion';
+import { panelUrl } from '@/lib/surface';
 
 /**
  * Panel width. Was 280, which fit the longest label and nothing else: the rows
@@ -73,7 +74,7 @@ export function AccountMenu() {
   const open = useUiStore((s) => s.accountMenuOpen);
   const close = useUiStore((s) => s.closeAccountMenu);
 
-  const { user, isApproved, isPending, isAdmin } = useAuth();
+  const { user, isApproved, isPending, isPanelAccount } = useAuth();
   const signOut = useSignOut();
 
   const titleId = useId();
@@ -188,7 +189,7 @@ export function AccountMenu() {
                   <span
                     className={cn(
                       'mt-2 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold',
-                      isAdmin
+                      isPanelAccount
                         ? 'bg-surface-3 text-ink-700'
                         : isApproved
                           ? 'bg-ok-50 text-ok'
@@ -196,7 +197,7 @@ export function AccountMenu() {
                     )}
                   >
                     <ShieldCheck className="size-3.5" strokeWidth={2.25} aria-hidden="true" />
-                    {isAdmin ? 'Staff account' : isApproved ? 'Wholesale account approved' : 'Under review'}
+                    {isPanelAccount ? 'Staff account' : isApproved ? 'Wholesale account approved' : 'Under review'}
                   </span>
                 </header>
 
@@ -207,16 +208,18 @@ export function AccountMenu() {
                     business name above it, which is the misalignment that made
                     the text look shoved into the corner. */}
                 <div className="scroll-slim flex-1 overflow-y-auto overscroll-contain p-1.5">
-                  {isAdmin ? (
+                  {isPanelAccount ? (
                     // Staff have no buyer orders, invoices or credit - the buyer
-                    // nav would be eight dead ends.
-                    <Link
-                      to="/admin"
+                    // nav would be eight dead ends. A full navigation: the ERP
+                    // is its own host with its own session.
+                    <a
+                      href={panelUrl('/admin')}
                       onClick={close}
                       className={cn(pressable, 'flex items-center gap-3 rounded-md px-1.5 py-2 text-sm font-medium text-ink-700 hover:bg-surface-2 hover:text-ink-900')}
                     >
-                      Admin console
-                    </Link>
+                      <ArrowUpRight className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+                      Go to the ERP
+                    </a>
                   ) : (
                     <ul className="space-y-0.5">
                       {ACCOUNT_NAV_ITEMS.map((item) => {

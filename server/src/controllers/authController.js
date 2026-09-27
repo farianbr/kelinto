@@ -1,3 +1,5 @@
+import storage from '../services/storageService.js';
+import '../models/Settings.js';
 import ApiError, { asyncHandler } from '../utils/ApiError.js';
 import * as authService from '../services/authService.js';
 import auditService from '../services/auditService.js';
@@ -92,6 +94,8 @@ const login = asyncHandler(async (req, res) => {
     ({ user, business } = await authService.login(req.body, {
       // A business's own panel domain signs in that business's accounts only.
       pinned: req.hostPinned ? req.businessScope : null,
+      // The ERP opens for owners and staff, a website for its customers.
+      surface: req.surface,
     }));
   } catch (error) {
     await auditService.recordSecurity({
@@ -164,8 +168,54 @@ const logout = asyncHandler(async (req, res) => {
     });
   }
 
+  // Ended on the server as well as in this browser, so a copy of the token is
+  // worthless from here on - and so is any website session opened from it.
+  await authService.revokeSession(authService.readSession(req.cookies?.[env.COOKIE_NAME]));
   authService.clearSession(res);
   res.status(204).end();
+});
+
+/**
+ * The ERP's "View website": a one-time link that opens this business's website
+ * already signed in as this staff member (`authService.createWebsiteHandoff`).
+ * Staff only; a support session has no person to sign in as.
+ */
+const websiteHandoff = asyncHandler(async (req, res) => {
+  if (!req.user) throw ApiError.forbidden('A support session cannot open the website signed in.', 'IMPERSONATION_NOT_A_BUYER');
+  res.json(
+    await authService.createWebsiteHandoff({
+      user: req.user,
+      claims: authService.readSession(req.cookies?.[env.COOKIE_NAME]),
+      businessId: req.businessScope,
+      surface: req.surface,
+      to: req.body?.to,
+    }),
+  );
+});
+
+/**
+ * The website end of the handoff. Always lands the browser on the website: signed
+ * in when the link was good, signed out when it was not, and never told which
+ * check failed.
+ */
+const claimWebsiteHandoff = asyncHandler(async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  // Spent only on a website host: the link opens a website session, and must
+  // not become a second way into the ERP or the console.
+  const claimed =
+    req.surface === 'storefront'
+      ? await authService.claimWebsiteHandoff(req.query.t, res, { businessId: req.businessScope })
+      : null;
+  if (claimed) {
+    await auditService.recordSecurity({
+      req,
+      action: 'auth.website_view',
+      entity: { kind: 'session', id: '', label: 'website' },
+      description: `${claimed.user.email} opened the website from the ERP.`,
+      subject: claimed.user,
+    });
+  }
+  res.redirect(302, claimed?.to ?? '/');
 });
 
 /**
@@ -190,10 +240,27 @@ async function storefrontOrigin(req) {
   return originOfStorefront(await businessConfig(req.businessScope));
 }
 
+/**
+ * The active business's logo and icon, for the ERP's own chrome: the sidebar
+ * and the browser tab. ERP users only (staff, owners, a support session); a
+ * customer's website already has them from `/business-info`. Follows the
+ * business switcher, because `/auth/me` is scoped to the selected business.
+ */
+async function erpBranding(req) {
+  const panelUser = req.user && ['admin', 'staff'].includes(req.user.role);
+  if (!(panelUser || req.impersonation) || !currentBusinessId()) return null;
+  const settings = await db().Settings.findOne({ key: 'singleton' }).select('business.logoUrl business.faviconUrl').lean();
+  return {
+    logoUrl: storage.urlOf(settings?.business?.logoUrl ?? '') || '',
+    faviconUrl: storage.urlOf(settings?.business?.faviconUrl ?? '') || '',
+  };
+}
+
 const me = asyncHandler(async (req, res) => {
   res.json({
     user: await sessionUser(req.user),
     features: staffFeatures(req),
+    branding: await erpBranding(req),
     storefrontOrigin: await storefrontOrigin(req),
     /**
      * An active support session, when there is one (SAAS_PLATFORM §4.5).
@@ -237,7 +304,7 @@ const applyAsSupplier = asyncHandler(async (req, res) => {
  * the work and stays silent about what it found.
  */
 const forgotPassword = asyncHandler(async (req, res) => {
-  await authService.forgotPassword(req.body);
+  await authService.forgotPassword(req.body, { surface: req.surface });
   res.status(204).end();
 });
 
@@ -256,4 +323,4 @@ const resetPassword = asyncHandler(async (req, res) => {
   res.json({ user: user.toPublic() });
 });
 
-export { register, login, logout, me, forgotPassword, resetPassword, applyAsSupplier };
+export { register, login, logout, me, forgotPassword, resetPassword, applyAsSupplier, websiteHandoff, claimWebsiteHandoff };

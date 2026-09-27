@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
-import { ChevronDown, Clock, LogOut } from 'lucide-react';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
+import { ArrowUpRight, ChevronDown, Clock, LogOut } from 'lucide-react';
 import cn from '@/lib/cn';
 import { ACCOUNT_NAV, ACCOUNT_NAV_ITEMS } from '@shared/schemas/account';
 import { accountIcon } from './accountIcons';
@@ -11,6 +11,8 @@ import { useAuth, useSignOut } from '@/hooks/useAuth';
 import { useAccountSummary } from '@/hooks/useAccount';
 import useUiStore from '@/store/uiStore';
 import { pressable } from '@/lib/motion';
+import { panelUrl } from '@/lib/surface';
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 
 /**
  * Which group and which leaf the current URL is in.
@@ -181,7 +183,8 @@ function NavTree({ badges, activeGroup, activeChildKey }) {
  * pending businesses get the "under review" state rather than a bare 403.
  */
 export function AccountLayout() {
-  const { user, isLoading, isAuthenticated, isApproved, isAdmin } = useAuth();
+  const { user, isLoading, isAuthenticated, isApproved, isPanelAccount } = useAuth();
+  const info = useBusinessInfo();
   const signOut = useSignOut();
   const openAccount = useUiStore((s) => s.openAccount);
   const navigate = useNavigate();
@@ -228,7 +231,7 @@ export function AccountLayout() {
       <div className="mx-auto flex max-w-lg flex-col items-center px-4 py-20 text-center">
         <h1 className="text-2xl">Sign in to your account</h1>
         <p className="mt-3 text-md leading-relaxed text-ink-500">
-          Order history, invoices, credit and the quick order pad live behind your Cellvix wholesale
+          Order history, invoices, credit and the quick order pad live behind your {info.name}{' '}
           account.
         </p>
         <Button className="mt-7" size="lg" onClick={() => openAccount('signin')}>
@@ -238,9 +241,28 @@ export function AccountLayout() {
     );
   }
 
-  // Staff accounts have no buyer-side orders, invoices or credit - /account is
-  // the wrong dashboard for them, so send them to the admin console.
-  if (isAdmin) return <Navigate to="/admin" replace />;
+  // Staff accounts have no buyer-side orders, invoices or credit, so /account
+  // has nothing to show them. Said in place rather than redirected: a redirect
+  // off the website is what used to make it impossible to view while signed in.
+  if (isPanelAccount) {
+    return (
+      <div className="mx-auto max-w-lg px-4 py-20 text-center">
+        <h1 className="text-2xl">This is the customer dashboard</h1>
+        <p className="mt-3 text-md leading-relaxed text-ink-500">
+          {user.displayName} is a staff account at {info.name}, so there are no orders, invoices or
+          credit of its own to show here. Customers' records are in the ERP.
+        </p>
+        <Button
+          className="mt-7"
+          size="lg"
+          iconRight={ArrowUpRight}
+          onClick={() => window.location.assign(panelUrl('/admin/clients'))}
+        >
+          Open customers in the ERP
+        </Button>
+      </div>
+    );
+  }
 
   if (!isApproved) {
     return (
@@ -256,8 +278,8 @@ export function AccountLayout() {
         </p>
         <p className="mt-6 rounded-md bg-surface-2 px-4 py-3 text-sm text-ink-500">
           Questions? Email{' '}
-          <a href="mailto:sales@cellvix.ca" className="font-medium text-brand hover:underline">
-            sales@cellvix.ca
+          <a href={`mailto:${info.supportEmail}`} className="font-medium text-brand hover:underline">
+            {info.supportEmail}
           </a>
           .
         </p>

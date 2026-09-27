@@ -1,4 +1,3 @@
-import jwt from 'jsonwebtoken';
 /**
  * `User` and `Role` are **per-business** collections, so both are read off the
  * request's own connection rather than imported (SAAS_PLATFORM §4.1).
@@ -14,7 +13,7 @@ import jwt from 'jsonwebtoken';
 import '../models/User.js';
 import ApiError from '../utils/ApiError.js';
 import env from '../config/env.js';
-import { clearSession } from '../services/authService.js';
+import { clearSession, isRevoked, readSession } from '../services/authService.js';
 import '../models/Role.js';
 import { controlModels, db } from '../db/models.js';
 import { isImpersonating } from './impersonationAuth.js';
@@ -26,7 +25,7 @@ const STATUS_ERRORS = {
   ],
   rejected: [
     'ACCOUNT_REJECTED',
-    'This account was not approved. Contact sales@cellvix.ca if you think that is a mistake.',
+    'This account was not approved. Contact the business if you think that is a mistake.',
   ],
   suspended: [
     'ACCOUNT_SUSPENDED',
@@ -48,7 +47,15 @@ async function authenticate(req, res, next) {
   if (!token) return next();
 
   try {
-    const payload = jwt.verify(token, env.JWT_SECRET);
+    const payload = readSession(token);
+    /**
+     * No `sid`, no session. Every token minted since sessions became revocable
+     * carries one; a token without it predates that and could never be signed
+     * out, so it is refused rather than honoured for its remaining days. The
+     * one cost is that everybody signed in before the change signs in once
+     * more. A token with a `kind` is a one-time link, never a session.
+     */
+    if (!payload?.sid || payload.kind) throw new Error('not a session');
 
     /**
      * The control plane first, then this business.
@@ -82,12 +89,21 @@ async function authenticate(req, res, next) {
      * common path. Nothing is written here, so there is no interaction between
      * the two.
      */
-    const [controlAdmin, businessUser] = await Promise.all([
+    const [controlAdmin, businessUser, revoked] = await Promise.all([
       controlModels().User.findOne({ _id: payload.sub, role: 'admin' }),
       db().User.findById(payload.sub),
+      // Signed out on the server, or opened from an ERP session that was.
+      isRevoked(payload),
     ]);
 
-    const user = controlAdmin ?? businessUser;
+    const found = controlAdmin ?? businessUser;
+    // A password change ends every session opened before it (`User.setPassword`).
+    // Compared in whole seconds because `iat` is, so the session issued in the
+    // same moment as the change survives it.
+    const stale =
+      found?.sessionsValidFrom &&
+      payload.iat < Math.floor(found.sessionsValidFrom.getTime() / 1000);
+    const user = revoked || stale ? null : found;
 
     if (user) {
       req.user = user;
@@ -157,9 +173,10 @@ function requireApproved(req, _res, next) {
  *
  * A staff login is not a business. It has no cart, no orders, no invoices and
  * no credit, so every route beneath this one would either read an empty shape
- * or write buyer data against an account that should never own any. The client
- * redirects staff away from the storefront (`RootLayout`); this is the half
- * that holds when the request does not come from our UI.
+ * or write buyer data against an account that should never own any. Staff may
+ * VIEW the website (opened from the ERP, with a staff strip and prices shown),
+ * but the client keeps them on a browser-only cart; this is the half that holds
+ * when the request does not come from our UI.
  *
  * Its own code rather than `requireApproved`'s: an admin is not `approved` and
  * would otherwise be told their account is under review, which is nonsense and
@@ -184,7 +201,7 @@ function denyAdmin(req, _res, next) {
   if (isStaffAccount(req.user)) {
     return next(
       ApiError.forbidden(
-        'Staff accounts do not have a buyer side. Use the admin console.',
+        'Staff accounts do not have a buyer side. Use the ERP.',
         'ADMIN_NOT_A_BUYER',
       ),
     );
@@ -286,7 +303,10 @@ function isStaffAccount(user) {
 
 /** True when this requester may see wholesale pricing. Used by the product serializer. */
 function canSeePricing(user) {
-  return Boolean(user && user.status === 'approved');
+  // Staff see their own business's prices when they view its website from the
+  // ERP: they set those prices, and a website previewed with every price
+  // hidden is not the website their customers see.
+  return Boolean(user && (user.status === 'approved' || isStaffAccount(user)));
 }
 
 export { authenticate, requireAuth, requireApproved, denyAdmin, requireAdmin, requireStaff, requirePermission, isStaffAccount, canSeePricing };

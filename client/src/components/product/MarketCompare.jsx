@@ -3,6 +3,7 @@ import { ChevronDown, TrendingDown } from 'lucide-react';
 import cn from '@/lib/cn';
 import { money } from '@/lib/format';
 import { pressable } from '@/lib/motion';
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 
 /**
  * The competitor comparison.
@@ -21,6 +22,7 @@ import { pressable } from '@/lib/motion';
  *   variant="detail" - the same breakdown, already open.
  */
 export function MarketCompare({ market, price, variant = 'card', className }) {
+  const info = useBusinessInfo();
   const [open, setOpen] = useState(false);
   const panelId = useId();
 
@@ -31,7 +33,7 @@ export function MarketCompare({ market, price, variant = 'card', className }) {
   // The rows, ours included and cheapest first - a comparison table that does
   // not rank is just a list, and the reader has to do the ordering themselves.
   const rows = [
-    { name: 'Cellvix', price, isUs: true },
+    { name: info.name || 'Us', price, isUs: true },
     ...competitors.map((entry) => ({ ...entry, isUs: false })),
   ].sort((a, b) => a.price - b.price);
 

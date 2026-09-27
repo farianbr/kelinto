@@ -7,8 +7,15 @@ const productSchema = new mongoose.Schema(
     slug: { type: String, required: true, unique: true, index: true },
     description: String,
 
+    // Uploaded to R2 under this business's own prefix (`storageService`). A
+    // product with no `image` falls back to the stock photo for its brand
+    // and component type, then to a placeholder illustration.
     image: String,
     images: [String],
+    // One short clip, shown on the product page under the pictures.
+    video: String,
+    // Its poster frame, made when the video was uploaded.
+    videoPoster: String,
 
     partType: { type: String, required: true, index: true }, // screen | battery | charging-port | ...
     partTypeLabel: String,

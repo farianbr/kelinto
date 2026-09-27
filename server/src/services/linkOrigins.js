@@ -37,6 +37,16 @@ import { businessConfig } from '../middleware/businessConfigCache.js';
  */
 function originOfStorefront(business) {
   if (!business || business.deletedAt) return null;
+  /**
+   * **Development never uses a custom domain.** Development reads the live
+   * database, so a domain proved live in production (`parts.cellshoppe.ca`)
+   * is live here too - and on a developer's machine it points at the VPS, or
+   * at nothing on `:5173`. The ERP's "Website" button then opened a page that
+   * could not load. `<slug>.localhost` is the local copy of the same website.
+   */
+  if (!env.isProd && business.slug && env.storefrontDomain) {
+    return env.originFor(`${business.slug}.${env.storefrontDomain}`);
+  }
   if (business.domain && business.domainLive) return env.originFor(business.domain);
   if (business.slug && env.storefrontDomain) {
     return env.originFor(`${business.slug}.${env.storefrontDomain}`);

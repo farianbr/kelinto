@@ -28,7 +28,10 @@ let mergeState = 'idle'; // 'idle' | 'running' | 'done'
  * the local copy is dropped.
  */
 export function useCart() {
-  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const { isAuthenticated: signedIn, isPanelAccount, isLoading: authLoading } = useAuth();
+  // Staff viewing the website have no server cart (`denyAdmin`), so they get
+  // the browser-only cart a guest gets: the page behaves, nothing is ordered.
+  const isAuthenticated = signedIn && !isPanelAccount;
   const queryClient = useQueryClient();
 
   const local = useCartStore();

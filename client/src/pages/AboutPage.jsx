@@ -286,7 +286,7 @@ function Hero() {
     <Slab aria-labelledby="about-heading">
       <Reveal className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] lg:items-end lg:gap-14">
         <div>
-          <p className="eyebrow mb-5 text-brand">About Cellvix</p>
+          <p className="eyebrow mb-5 text-brand">About {info.name}</p>
           <h1
             id="about-heading"
             className="text-d-md leading-[1.02] tracking-[-0.035em] sm:text-d-lg lg:text-d-xl"
@@ -297,7 +297,7 @@ function Hero() {
 
         <div>
           <p className="text-lg leading-relaxed text-ink-400">
-            Cellvix is a Canadian wholesale supplier of replacement parts for phones, tablets,
+            {info.name} is a Canadian supplier of replacement parts for phones, tablets,
             laptops, wearables and consoles. We sell to repair businesses only - which is why every
             price, grade and stock figure on this site is one you can build a quote around.
           </p>
@@ -374,12 +374,13 @@ function Statement() {
 }
 
 function Principles() {
+  const info = useBusinessInfo();
   return (
     <Slab aria-labelledby="principles-heading">
       <SectionHeader
         id="principles-heading"
         eyebrow="How we work"
-        title="What sets a Cellvix order apart"
+        title={`What sets a ${info.name} order apart`}
         lede="Five commitments that decide what we stock, how it is graded and when it ships."
         centered
       />
@@ -411,13 +412,14 @@ function Principles() {
 }
 
 function Story() {
+  const info = useBusinessInfo();
   return (
     <Slab aria-labelledby="story-heading">
       <SectionHeader
         id="story-heading"
         eyebrow="Our story"
         title="How we got here"
-        lede="Cellvix started as a fix for the part of a repair business nobody photographs: sourcing."
+        lede={`${info.name} started as a fix for the part of a repair business nobody photographs: sourcing.`}
       />
 
       {/* Reveal renders AS the <li> - wrapping list items in a motion <div>

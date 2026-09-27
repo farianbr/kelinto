@@ -57,7 +57,7 @@ async function sendCustomerPortalLink({ user, business, url }) {
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border:1px solid ${line};border-radius:${MAIL.radiusCard};overflow:hidden;">
 
       <tr><td style="height:3px;line-height:3px;font-size:0;background:${MAIL.brand};">
-        <div style="height:3px;background:linear-gradient(90deg,#8f221b 0%,#cf3429 55%,#e8564a 100%);">&nbsp;</div>
+        <div style="height:3px;background:linear-gradient(90deg,#2e3c4d 0%,#41566e 55%,#5f7185 100%);">&nbsp;</div>
       </td></tr>
 
       <tr><td style="padding:36px 36px 8px;">

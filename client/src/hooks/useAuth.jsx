@@ -49,6 +49,12 @@ export function AuthProvider({ children }) {
    */
   const storefrontOrigin = data?.storefrontOrigin ?? null;
 
+  /**
+   * The active business's `{ logoUrl, faviconUrl }` for the ERP's sidebar and
+   * browser tab, or null outside the ERP. Follows the business switcher.
+   */
+  const branding = data?.branding ?? null;
+
   const refresh = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['auth', 'me'] });
     // Pricing is embedded in every product response, so the catalogue has to be
@@ -120,6 +126,9 @@ export function AuthProvider({ children }) {
       // an administrator has granted a role - access is granted, never
       // inherited (§7.6). The server decides for real; this only shapes the UI.
       isStaff: user?.role === 'staff',
+      // Any ERP account, owner or staff. On the website this is the "viewing as
+      // staff" state: the header offers the ERP instead of a customer dashboard.
+      isPanelAccount: user?.role === 'admin' || user?.role === 'staff',
       // A support session reaches the panel with no `user` at all - the grant
       // is the authorisation, exactly as it is server-side in `requireStaff`.
       // Without this the staff member would enter a business and land on a sign-in
@@ -137,6 +146,7 @@ export function AuthProvider({ children }) {
       impersonation,
       isImpersonating: Boolean(impersonation),
       storefrontOrigin,
+      branding,
       /**
        * `/auth/me` itself failed: the network, a 5xx, a 503 from a host that
        * resolves no business. Nobody is known to be signed in, but nobody is
@@ -158,6 +168,7 @@ export function AuthProvider({ children }) {
       features,
       impersonation,
       storefrontOrigin,
+      branding,
       isLoading,
       error,
       refetch,

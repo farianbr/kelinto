@@ -74,6 +74,29 @@ const schema = z.object({
       message: 'SECRETS_KEY must be at least 16 characters, or empty to derive one from JWT_SECRET',
     }),
 
+  /**
+   * Cloudflare R2, where every uploaded file lives: each business's logo,
+   * favicon, product images and videos, and Kelinto's own logo and favicon
+   * (`services/storageService.js`).
+   *
+   * All empty means uploads are off: the upload controls say so and every
+   * surface falls back to its placeholder. Nothing else depends on them.
+   *
+   * `R2_PUBLIC_URL` is the bucket's public address - a custom domain connected
+   * to the bucket (`https://assets.kelinto.com`) or its `r2.dev` URL. Files are
+   * READ from there by browsers; they are WRITTEN through the account endpoint
+   * with the key pair, which never leaves the server.
+   */
+  R2_ACCOUNT_ID: z.string().trim().default(''),
+  R2_ACCESS_KEY_ID: z.string().trim().default(''),
+  R2_SECRET_ACCESS_KEY: z.string().trim().default(''),
+  R2_BUCKET: z.string().trim().default(''),
+  R2_PUBLIC_URL: z
+    .string()
+    .trim()
+    .default('')
+    .transform((value) => value.replace(/\/+$/, '')),
+
   CLIENT_ORIGIN: z.string().default('http://localhost:5173'),
 
   /**

@@ -2,9 +2,19 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { useAuth } from './useAuth';
 
+/**
+ * An approved CUSTOMER. Staff viewing the website are signed in and may be
+ * `approved`, but have no buyer side (`denyAdmin`), so nothing here is asked
+ * for on their behalf.
+ */
+function useIsBuyer() {
+  const { isApproved, isPanelAccount } = useAuth();
+  return isApproved && !isPanelAccount;
+}
+
 /** Dashboard payload: recent orders, credit, invoice totals, quick reorder. */
 export function useAccountSummary() {
-  const { isApproved } = useAuth();
+  const isApproved = useIsBuyer();
   return useQuery({
     queryKey: ['account', 'summary'],
     queryFn: () => api.get('/account/summary'),
@@ -14,7 +24,7 @@ export function useAccountSummary() {
 }
 
 export function useOrders() {
-  const { isApproved } = useAuth();
+  const isApproved = useIsBuyer();
   return useQuery({
     queryKey: ['orders'],
     queryFn: () => api.get('/orders'),
@@ -34,7 +44,7 @@ export function useOrder(orderNumber) {
 }
 
 export function useInvoices() {
-  const { isApproved } = useAuth();
+  const isApproved = useIsBuyer();
   return useQuery({
     queryKey: ['invoices'],
     queryFn: () => api.get('/invoices'),
@@ -50,7 +60,7 @@ export function useInvoices() {
  * statement is a page, the balance is a number several pages want.
  */
 export function useStoreCredit() {
-  const { isApproved } = useAuth();
+  const isApproved = useIsBuyer();
   return useQuery({
     queryKey: ['store-credit'],
     queryFn: () => api.get('/account/store-credit'),
@@ -64,7 +74,7 @@ export function useStoreCredit() {
  * Separate from useStoreCredit: two instruments, two statements.
  */
 export function useCreditActivity() {
-  const { isApproved } = useAuth();
+  const isApproved = useIsBuyer();
   return useQuery({
     queryKey: ['credit-activity'],
     queryFn: () => api.get('/account/credit-activity'),
@@ -78,7 +88,7 @@ export function useCreditActivity() {
  * merged into one feed. The same feed the account rep sees on the admin side.
  */
 export function useAccountActivity() {
-  const { isApproved } = useAuth();
+  const isApproved = useIsBuyer();
   return useQuery({
     queryKey: ['activity'],
     queryFn: () => api.get('/account/activity'),
@@ -97,7 +107,7 @@ export function useAccountActivity() {
  * position back to the top on every click.
  */
 export function useActivityHistory({ kind = 'all', from = null, to = null, page = 1, limit = 20 } = {}) {
-  const { isApproved } = useAuth();
+  const isApproved = useIsBuyer();
 
   return useQuery({
     queryKey: ['activity', 'history', { kind, from, to, page, limit }],
@@ -116,7 +126,7 @@ export function useActivityHistory({ kind = 'all', from = null, to = null, page 
 
 /** Referral code, rate, referred accounts and what they have earned. */
 export function useReferrals() {
-  const { isApproved } = useAuth();
+  const isApproved = useIsBuyer();
   return useQuery({
     queryKey: ['referrals'],
     queryFn: () => api.get('/account/referrals'),
@@ -126,7 +136,7 @@ export function useReferrals() {
 }
 
 export function useSavedCarts() {
-  const { isApproved } = useAuth();
+  const isApproved = useIsBuyer();
   return useQuery({
     queryKey: ['cart', 'saved'],
     queryFn: () => api.get('/cart/saved'),

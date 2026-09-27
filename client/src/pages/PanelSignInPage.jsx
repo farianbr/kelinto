@@ -35,9 +35,10 @@ import { panelBusiness, surface } from '@/lib/surface';
  * accent as soon as one is known.
  *
  * Its own form rather than the storefront's `SignInTab`, because that one is
- * built from storefront controls. The behaviour is the same and the server is
- * the same: one password opening accounts at several businesses gets the
- * choice, and a customer who lands here is told where to go instead.
+ * built from storefront controls. One password opening accounts at several
+ * businesses gets the choice. **A customer's credentials fail here exactly as a
+ * wrong password does** (`authService.allowedHere`): the page never says what
+ * kind of account an address belongs to.
  *
  * **On a business's own panel domain it is that business's door** (`panelBusiness`):
  * named after it, and the server signs in only its accounts, so there is never
@@ -287,7 +288,7 @@ function NotForThisPanel({ user, onSignOut, websiteUrl }) {
       <h1 className="text-xl font-semibold leading-tight text-plat-text">No ERP access</h1>
       <p className="mt-2 text-sm leading-normal text-plat-muted">
         {isCustomer
-          ? `${user.email} is a customer account. Customers sign in on their store's own website, not here.`
+          ? 'This account does not open the ERP.'
           : `${user.email} has no role yet. Ask an administrator of your business to give you one.`}
       </p>
       {offerWebsite && (

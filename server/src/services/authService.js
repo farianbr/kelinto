@@ -1,7 +1,9 @@
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 import { controlModels, db } from '../db/models.js';
 import '../models/User.js';
+import '../models/RevokedToken.js';
 import '../models/Supplier.js';
 import ApiError from '../utils/ApiError.js';
 import env from '../config/env.js';
@@ -12,6 +14,7 @@ import { displayNameOf } from '../utils/displayName.js';
 import { currentBusinessId } from '../db/context.js';
 import { businessesFor, inBusinessDb } from './loginDirectory.js';
 import { businessConfig } from '../middleware/businessConfigCache.js';
+import { originOfStorefront } from './linkOrigins.js';
 
 // "Remember me" drives a long-lived cookie so the buyer is auto-signed-in on
 // return visits (brief §8.1).
@@ -32,10 +35,21 @@ const REMEMBER_MS = 90 * 24 * 60 * 60 * 1000;
  *
  * Signed, so a client cannot point itself at another database by editing it.
  */
-function issueSession(res, user, remember = false, businessId = null) {
-  const claims = { sub: user._id.toString(), ...(businessId ? { biz: String(businessId) } : {}) };
+/**
+ * `sid` is this session's own random id, which is what signing out revokes
+ * (`models/RevokedToken.js`). `parent` is set only on a website session opened
+ * from the ERP, and names the ERP session it came from, so signing out there
+ * ends this one too.
+ */
+function issueSession(res, user, remember = false, businessId = null, { parent = null, expiresIn = null } = {}) {
+  const claims = {
+    sub: user._id.toString(),
+    sid: crypto.randomBytes(16).toString('base64url'),
+    ...(businessId ? { biz: String(businessId) } : {}),
+    ...(parent ? { parent } : {}),
+  };
   const token = jwt.sign(claims, env.JWT_SECRET, {
-    expiresIn: remember ? '90d' : env.JWT_EXPIRES_IN,
+    expiresIn: expiresIn ?? (remember ? '90d' : env.JWT_EXPIRES_IN),
   });
 
   res.cookie(env.COOKIE_NAME, token, {
@@ -54,6 +68,58 @@ function issueSession(res, user, remember = false, businessId = null) {
 
 function clearSession(res) {
   res.clearCookie(env.COOKIE_NAME, { path: '/' });
+}
+
+/** The signed claims of a session cookie, or null when there is none or it is not ours. */
+function readSession(token) {
+  if (!token) return null;
+  try {
+    return jwt.verify(token, env.JWT_SECRET);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * End a session on the server, not just in this browser.
+ *
+ * Writes the token's `sid` to the revocation list until the token would have
+ * expired anyway. Idempotent: signing out twice is not an error. A token with
+ * no `sid` predates this and is refused by `authenticate` regardless.
+ */
+async function revokeSession(claims) {
+  if (!claims?.sid || !claims.exp) return;
+  await controlModels()
+    .RevokedToken.updateOne(
+      { _id: claims.sid },
+      { $setOnInsert: { kind: 'session', expiresAt: new Date(claims.exp * 1000) } },
+      { upsert: true },
+    )
+    .catch((error) => console.error(`  Could not revoke session - ${error.message}`));
+}
+
+/**
+ * Replace the current session with a fresh one for the same person, keeping
+ * its business, its "remember me" and its ERP parent.
+ *
+ * Used after somebody changes their own password: the change ends every
+ * session opened before it, including the one making the change, and signing
+ * the person out of the screen they are standing on would be a punishment for
+ * doing the right thing.
+ */
+async function reissueSession(req, res, user) {
+  const claims = readSession(req.cookies?.[env.COOKIE_NAME]);
+  if (!claims?.sid) return;
+  await revokeSession(claims);
+  const remember = claims.exp - claims.iat > 8 * 24 * 60 * 60;
+  issueSession(res, user, remember, claims.biz ?? null, { parent: claims.parent ?? null });
+}
+
+/** Is this session, or the ERP session it was opened from, signed out? */
+async function isRevoked(claims) {
+  const ids = [claims?.sid, claims?.parent].filter(Boolean);
+  if (!ids.length) return false;
+  return Boolean(await controlModels().RevokedToken.exists({ _id: { $in: ids } }));
 }
 
 async function register(data, { ip } = {}) {
@@ -271,24 +337,52 @@ async function adminMaySignInHere(admin, pinned) {
  * other businesses, because `app.cellshoppe.ca` signing somebody into another
  * company's panel would be that company's password typed into CellShoppe's page.
  */
-async function loginCandidates(email, pinned = null) {
+/**
+ * ## Each door opens for its own population only
+ *
+ * `surface` is the host's application (`utils/surface.js`), and it narrows the
+ * list before any password is checked:
+ *
+ * - **`panel`** (the ERP): tenant admins and staff. A customer's address and
+ *   password typed here find nothing.
+ * - **`storefront`** (a business's website): that business's customers only.
+ *   No tenant admin, no staff, and never the login directory, which would let
+ *   one business's website sign in another business's staff. Staff reach the
+ *   website from the ERP (`createWebsiteHandoff`), already signed in.
+ * - **`any`** (no host split, and plain `localhost`): everybody, as before.
+ *
+ * An account of the wrong kind is therefore indistinguishable from an address
+ * nobody holds: both answer `INVALID_CREDENTIALS`, and the reply says nothing
+ * about which kind of account an address belongs to. It used to sign a
+ * customer into the ERP and then tell them "that is a customer account".
+ */
+function allowedHere(user, surface) {
+  const panelAccount = user.role === 'admin' || user.role === 'staff';
+  if (surface === 'panel') return panelAccount;
+  if (surface === 'storefront') return !panelAccount;
+  return true;
+}
+
+async function loginCandidates(email, { pinned = null, surface = 'any' } = {}) {
   const candidates = [];
 
-  const admin = await controlModels().User.findOne({ email, role: 'admin' }).select('+passwordHash');
-  if (admin && (await adminMaySignInHere(admin, pinned))) {
-    candidates.push({ user: admin, business: null });
+  if (surface !== 'storefront') {
+    const admin = await controlModels().User.findOne({ email, role: 'admin' }).select('+passwordHash');
+    if (admin && (await adminMaySignInHere(admin, pinned))) {
+      candidates.push({ user: admin, business: null });
+    }
   }
 
   const hereId = currentBusinessId();
   const here = await db().User.findOne({ email }).select('+passwordHash');
-  if (here) {
+  if (here && allowedHere(here, surface)) {
     const record = hereId
       ? await controlModels().Business.findById(hereId).select('name code').lean()
       : null;
     candidates.push({ user: here, business: record });
   }
 
-  if (pinned) return candidates;
+  if (pinned || surface === 'storefront') return candidates;
 
   for (const business of await businessesFor(email)) {
     // Already covered by step 2 - the same account, not a second one.
@@ -296,11 +390,18 @@ async function loginCandidates(email, pinned = null) {
     const found = await inBusinessDb(business, () =>
       db().User.findOne({ email }).select('+passwordHash'),
     );
-    if (found) candidates.push({ user: found, business });
+    if (found && allowedHere(found, surface)) candidates.push({ user: found, business });
   }
 
   return candidates;
 }
+
+/**
+ * A real bcrypt hash of nothing anybody will type, compared against when an
+ * address has no account here, so "no such account" costs the same time as
+ * "wrong password" and the delay cannot be used to test addresses.
+ */
+const DUMMY_HASH = bcrypt.hashSync(crypto.randomBytes(16).toString('hex'), 10);
 
 /**
  * Sign in.
@@ -321,13 +422,14 @@ async function loginCandidates(email, pinned = null) {
  * business an address appears in would tell anybody who types a colleague's
  * email where that colleague works, without knowing their password.
  */
-async function login({ email, password, business: chosen = null }, { pinned = null } = {}) {
-  const candidates = await loginCandidates(email, pinned);
+async function login({ email, password, business: chosen = null }, { pinned = null, surface = 'any' } = {}) {
+  const candidates = await loginCandidates(email, { pinned, surface });
 
   const matches = [];
   for (const candidate of candidates) {
     if (await candidate.user.verifyPassword(password)) matches.push(candidate);
   }
+  if (!candidates.length) await bcrypt.compare(String(password ?? ''), DUMMY_HASH);
 
   if (!matches.length) {
     throw ApiError.unauthorized('That email and password do not match.', 'INVALID_CREDENTIALS');
@@ -359,7 +461,7 @@ async function login({ email, password, business: chosen = null }, { pinned = nu
 
   if (user.status === 'rejected') {
     throw ApiError.forbidden(
-      'This account was not approved. Contact sales@cellvix.ca if you think that is a mistake.',
+      'This account was not approved. Contact the business if you think that is a mistake.',
       'ACCOUNT_REJECTED',
     );
   }
@@ -404,8 +506,11 @@ function hashResetToken(token) {
  * A staff account is deliberately included - staff sign in through the same
  * form, and excluding them would leak which addresses are staff.
  */
-async function forgotPassword({ email }, { origin } = {}) {
-  const here = await db().User.findOne({ email });
+async function forgotPassword({ email }, { origin, surface = 'any' } = {}) {
+  // The same population the sign-in on this host opens for: a customer's
+  // reset link must not be minted by the ERP, where it would sign them in.
+  const found = await db().User.findOne({ email });
+  const here = found && allowedHere(found, surface) ? found : null;
   if (here) {
     await issueReset(here, { origin, businessId: currentBusinessId() });
     return;
@@ -419,7 +524,11 @@ async function forgotPassword({ email }, { origin } = {}) {
    * holds a panel account for the address, each sent BY that business and
    * resetting only that account - a person who works at two has two passwords,
    * and a link that silently chose one would reset the wrong one half the time.
+   *
+   * Never from a website: the directory holds staff, and a website's door is
+   * for its own customers.
    */
+  if (surface === 'storefront') return;
   for (const business of await businessesFor(email)) {
     await inBusinessDb(business, async () => {
       const user = await db().User.findOne({ email });
@@ -496,4 +605,125 @@ async function resetPassword({ token, password }) {
   return user;
 }
 
-export { issueSession, clearSession, register, applyAsSupplier, findForAudit, login, forgotPassword, resetPassword, hashResetToken, RESET_TTL_MS };
+// ---- ERP to website ----------------------------------------------------------
+
+/** How long a handoff link lives. Long enough to follow, short enough to be spent. */
+const HANDOFF_SECONDS = 60;
+
+/**
+ * How long a website session opened from the ERP lasts. A working day: it is a
+ * viewing session, and it ends sooner if the ERP session it came from does.
+ */
+const WEBSITE_VIEW_EXPIRES_IN = '12h';
+
+/**
+ * A path on the website to land on, or `/`. Only a same-site path: never a
+ * scheme, a host or a protocol-relative `//`, so the signed link cannot be
+ * turned into a redirect to somewhere else.
+ */
+function safeLandingPath(to) {
+  const path = String(to ?? '/');
+  if (!path.startsWith('/') || path.startsWith('//') || path.includes('\\')) return '/';
+  return path.slice(0, 512);
+}
+
+/**
+ * The link that opens a business's website already signed in as this staff
+ * member (the ERP's "View website").
+ *
+ * ## Why a link and not a shared cookie
+ *
+ * Sessions are host-only cookies, so the ERP's session never reaches the
+ * website, and a cookie on `.kelinto.com` would reach every tenant's website at
+ * once. Instead the ERP mints a **single-use, 60-second** signed link that
+ * names one business, one person and the ERP session it came from. The website
+ * spends it (`claimWebsiteHandoff`) and issues its own session, whose `parent`
+ * is that ERP session - so signing out of the ERP signs this person out of the
+ * website too, on its next request.
+ *
+ * Returns `{ url }`. With no host split (`any`), the ERP and the website are one
+ * host and one cookie, so the url is simply the path.
+ */
+async function createWebsiteHandoff({ user, claims, businessId, surface, to }) {
+  const landing = safeLandingPath(to);
+  if (surface === 'any') return { url: landing };
+
+  const origin = originOfStorefront(await businessConfig(businessId));
+  if (!origin) {
+    throw ApiError.conflict('This business has no website address yet.', 'NO_WEBSITE');
+  }
+  if (!claims?.sid) throw ApiError.unauthorized();
+
+  const token = jwt.sign(
+    {
+      kind: 'website-handoff',
+      sub: user._id.toString(),
+      biz: String(businessId),
+      parent: claims.sid,
+      to: landing,
+      jti: crypto.randomUUID(),
+    },
+    env.JWT_SECRET,
+    { expiresIn: HANDOFF_SECONDS },
+  );
+
+  return { url: `${origin}/api/auth/website-handoff?t=${encodeURIComponent(token)}` };
+}
+
+/**
+ * Spend a handoff link on the website it names, and sign the person in there.
+ *
+ * Refused (returns null, and the caller lands the browser on the website signed
+ * out) when the link is expired, forged, already spent, meant for another
+ * business, or when the ERP session it came from has since been signed out, or
+ * the account is gone or locked. Returns : where to land, and who.
+ */
+async function claimWebsiteHandoff(token, res, { businessId }) {
+  const payload = readSession(token);
+  if (payload?.kind !== 'website-handoff' || !payload.jti || !payload.parent) return null;
+  if (!businessId || String(payload.biz) !== String(businessId)) return null;
+
+  try {
+    await controlModels().RevokedToken.create({
+      _id: `handoff:${payload.jti}`,
+      kind: 'handoff',
+      expiresAt: new Date(payload.exp * 1000),
+    });
+  } catch {
+    // Already spent: the insert lost to an earlier claim of the same link.
+    return null;
+  }
+
+  if (await isRevoked({ parent: payload.parent })) return null;
+
+  const admin = await controlModels().User.findOne({ _id: payload.sub, role: 'admin' });
+  const user = admin && (await adminMaySignInHere(admin, businessId))
+    ? admin
+    : await db().User.findOne({ _id: payload.sub, role: { $in: ['admin', 'staff'] } });
+  if (!user || user.lockedAt) return null;
+
+  issueSession(res, user, false, user === admin ? null : businessId, {
+    parent: payload.parent,
+    expiresIn: WEBSITE_VIEW_EXPIRES_IN,
+  });
+  return { to: payload.to ?? '/', user };
+}
+
+export {
+  issueSession,
+  clearSession,
+  readSession,
+  revokeSession,
+  reissueSession,
+  isRevoked,
+  register,
+  applyAsSupplier,
+  findForAudit,
+  login,
+  forgotPassword,
+  resetPassword,
+  hashResetToken,
+  RESET_TTL_MS,
+  createWebsiteHandoff,
+  claimWebsiteHandoff,
+};

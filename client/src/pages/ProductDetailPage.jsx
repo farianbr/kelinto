@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { Check, ChevronRight, Lock, Search, ShieldCheck, ShoppingCart } from 'lucide-react';
 import cn from '@/lib/cn';
+import { uploadThumb } from '@/lib/media';
 import api from '@/lib/api';
 import { money, productTitle } from '@/lib/format';
 import { GRADES } from '@/lib/constants';
@@ -74,6 +75,8 @@ function Breadcrumbs({ product }) {
 export function ProductDetailPage() {
   const { slug } = useParams();
   const [qty, setQty] = useState(1);
+  // Which of the product's own pictures is in the frame; null is the main one.
+  const [shown, setShown] = useState(null);
   const [justAdded, setJustAdded] = useState(false);
 
   const { addItem } = useCart();
@@ -146,9 +149,15 @@ export function ProductDetailPage() {
             connector or a stamped number against the part in their hand, which
             a 600px photo does not settle. It renders its children untouched on
             touch devices and where there is no photograph. */}
+        <div className="min-w-0">
         <div className="group relative overflow-hidden rounded-lg border border-line bg-surface-2">
-          <ImageZoom product={product}>
-            <PartFrame product={product} aspect="aspect-square" />
+          <ImageZoom product={shown ? { ...product, image: shown } : product}>
+            <PartFrame
+              product={shown ? { ...product, image: shown } : product}
+              aspect="aspect-square"
+              sizes="(min-width: 768px) 50vw, 100vw"
+              priority
+            />
           </ImageZoom>
 
           <GradeBadge grade={product.grade} className="absolute left-4 top-4 z-3" />
@@ -160,6 +169,46 @@ export function ProductDetailPage() {
             <Search className="size-3.5 shrink-0" strokeWidth={2.25} aria-hidden="true" />
             Hover to magnify
           </p>
+        </div>
+
+        {/* The product's other pictures, when the business uploaded any. The
+            main picture leads the row so there is always a way back to it. */}
+        {product.images?.length > 0 && (
+          <ul className="mt-3 flex flex-wrap gap-2" aria-label="More pictures">
+            {[product.image, ...product.images].filter(Boolean).map((url) => {
+              const active = (shown ?? product.image) === url;
+              return (
+                <li key={url}>
+                  <button
+                    type="button"
+                    onClick={() => setShown(url === product.image ? null : url)}
+                    aria-pressed={active}
+                    aria-label="Show this picture"
+                    className={cn(
+                      pressable,
+                      'size-16 overflow-hidden rounded-md border bg-surface-2',
+                      active ? 'border-ink-900' : 'border-line hover:border-line-strong',
+                    )}
+                  >
+                    <img src={uploadThumb(url)} alt="" className="size-full object-contain p-1" loading="lazy" decoding="async" />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {product.video && (
+          // Nothing but the poster downloads until somebody presses play.
+          <video
+            src={product.video}
+            poster={product.videoPoster || undefined}
+            controls
+            playsInline
+            preload="none"
+            className="mt-3 aspect-video w-full rounded-lg border border-line bg-ink-900"
+          />
+        )}
         </div>
 
         {/* ---- detail ------------------------------------------------------ */}

@@ -7,6 +7,7 @@ import {
   Globe,
   LifeBuoy,
   LogOut,
+  Palette,
   ShieldCheck,
   Store,
 } from 'lucide-react';
@@ -86,6 +87,8 @@ function useNav() {
           count: pulse.liveGrants.length,
           tone: 'danger',
         },
+        // Kelinto's own logo and favicon.
+        { key: 'brand', label: 'Brand', to: '/superadmin/brand', icon: Palette },
       ],
     },
   ];

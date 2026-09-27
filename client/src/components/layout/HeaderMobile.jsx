@@ -12,6 +12,7 @@ import { useCart } from '@/hooks/useCart';
 import { useAuth } from '@/hooks/useAuth';
 import { useAccountMenuTrigger } from '@/components/account/AccountMenu';
 import { ease, pressable } from '@/lib/motion';
+import BusinessMark from './BusinessMark';
 
 /**
  * Tablet / mobile header (brief §4.2, Unimart pattern):
@@ -111,27 +112,10 @@ export function HeaderMobile() {
           <Menu className="size-[22px]" strokeWidth={2} />
         </button>
 
-        {/* Same fallback ladder as the desktop header: the business's own mark,
-            then the bundled artwork for the house business only, then its name
-            as a wordmark. `truncate` because a long name has one narrow row
-            between two buttons here. */}
+        {/* The business's uploaded logo, or its name as a wordmark, truncated
+            because a long name has one narrow row between two buttons here. */}
         <Link to="/" className="mx-auto min-w-0" aria-label={`${info.name} home`}>
-          {info.logoUrl ? (
-            <img src={info.logoUrl} alt={info.name} className="h-8 w-auto" />
-          ) : info.isHouse !== false ? (
-            <img
-              src="/brand/logo.png"
-              srcSet="/brand/logo.png 1x, /brand/logo@2x.png 2x"
-              alt={`${info.name} - ${info.tagline}`}
-              width="1000"
-              height="254"
-              className="h-8 w-auto"
-            />
-          ) : (
-            <span className="block truncate font-display text-lg font-bold text-ink-900">
-              {info.name}
-            </span>
-          )}
+          <BusinessMark size="md" />
         </Link>
 
         {/* Signed in, this opens the account menu - the same dropdown the

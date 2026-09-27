@@ -466,46 +466,17 @@ export function Footer() {
         </div>
 
         {/* ---- the wordmark ------------------------------------------------
-            The real mark, not type set to look like it. This is the CELLV*X
-            wordmark lifted out of the client's lockup and flattened to its
-            black-and-leaf colourway - the letters carry the logo's own grunge
-            texture, which no font can stand in for, and the maple leaf is the
-            brand's, not a red `o`. The tagline and domain that ride along in
-            the full lockup are dropped: at this size they would shout three
-            things where the footer wants one quiet one.
-
-            The asset is trimmed to its ink, so `w-full` puts the C and the X
-            flush against both edges of the panel - which is why this block has
-            no side padding.
-
-            The crop: the wrapper's aspect ratio is the image's own width over
-            70% of its height, and the image is pinned to the wrapper's top at
-            full width. So exactly the top 70% shows and the bottom 30% is cut
- - the word runs out of the panel rather than sitting in it, which
-            is what stops it reading as a fifth column. Nothing under it on
-            purpose; the panel's rounded bottom edge does the rest of the
-            clipping.
-
-            Decorative - the header carries the accessible name. */}
-        <div className="pt-8 lg:pt-10">
-          {/* The rounded bottom corners live HERE rather than on the outer
-              panel. That panel used to carry `overflow-hidden` to clip this
-              image against its corners, and the same rule sliced the top off
-              any Support popover rising above its row. This block already
-              crops the image; matching the panel's own `rounded-xl` on its
-              bottom two corners is the rest of what that clip was doing. */}
-          <div className="relative aspect-2456/305 w-full overflow-hidden rounded-b-xl">
-            <img
-              src="/brand/wordmark.png"
-              alt=""
-              aria-hidden="true"
-              draggable="false"
-              loading="lazy"
-              decoding="async"
-              className="pointer-events-none absolute inset-x-0 top-0 w-full select-none"
-            />
-          </div>
-        </div>
+            The original design, now fed by the business's own file: the footer
+            logo (ERP › Settings › Business info) runs the full width of the
+            panel and is cropped by its bottom edge - a texture the footer ends
+            on, not a logo to be read. It used to be bundled Cellvix artwork;
+            a business with no footer logo simply ends on the panel's padding.
+            Decorative: the header carries the accessible name. */}
+        {info.footerLogoUrl ? (
+          <FooterWordmark src={info.footerLogoUrl} />
+        ) : (
+          <div className="h-8 lg:h-10" aria-hidden="true" />
+        )}
       </div>
 
       {/* ---- the fine print ------------------------------------------------
@@ -534,3 +505,48 @@ export function Footer() {
 }
 
 export default Footer;
+
+/**
+ * The footer logo, full width, with its bottom 30% cropped away.
+ *
+ * The crop is the wrapper's aspect ratio: the image's own width over 70% of
+ * its height, with the image pinned to the top at full width, so exactly the
+ * top 70% shows. The ratio is read from the file once it loads - each business
+ * uploads its own, so it cannot be a constant as it was for the one bundled
+ * file. Uploads are trimmed to their ink on the server (`mediaProcessor`), which
+ * is what puts the letters flush against both edges of the panel.
+ *
+ * Until the file has loaded, the box takes a typical wordmark's shape (8:1),
+ * so the page does not jump by much when it arrives.
+ *
+ * **Not `loading="lazy"`.** The image is absolutely positioned and has no
+ * height until it has loaded, and a lazy image with no area never counts as on
+ * screen - so the browser never fetched it at all. It is a trimmed ~10 KB PNG;
+ * `fetchPriority="low"` keeps it behind everything above it instead.
+ */
+function FooterWordmark({ src }) {
+  const [ratio, setRatio] = useState(null);
+
+  return (
+    <div className="pt-8 lg:pt-10">
+      <div
+        className="relative w-full overflow-hidden rounded-b-xl"
+        style={{ aspectRatio: ratio ?? '8 / 1' }}
+      >
+        <img
+          src={src}
+          alt=""
+          aria-hidden="true"
+          draggable="false"
+          fetchPriority="low"
+          decoding="async"
+          onLoad={(event) => {
+            const { naturalWidth, naturalHeight } = event.currentTarget;
+            if (naturalWidth && naturalHeight) setRatio(`${naturalWidth} / ${naturalHeight * 0.7}`);
+          }}
+          className="pointer-events-none absolute inset-x-0 top-0 w-full select-none"
+        />
+      </div>
+    </div>
+  );
+}

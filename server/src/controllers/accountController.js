@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { asyncHandler } from '../utils/ApiError.js';
 import env from '../config/env.js';
 import * as accountService from '../services/accountService.js';
+import { reissueSession } from '../services/authService.js';
 import { storefrontOrigin } from '../services/linkOrigins.js';
 
 const summary = asyncHandler(async (req, res) => {
@@ -40,6 +41,8 @@ const removePaymentMethod = asyncHandler(async (req, res) => {
 
 const changePassword = asyncHandler(async (req, res) => {
   await accountService.changePassword(req.user, req.body);
+  // The change ended every older session, this one included; keep this one.
+  await reissueSession(req, res, req.user);
   res.status(204).end();
 });
 

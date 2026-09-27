@@ -521,7 +521,7 @@ function decorate(body, account, business = BUSINESS_INFO, origin = env.publicOr
     // commercial message. Not optional, and not the author's job to remember.
     `<p style="font-size:12px;color:#6B6B6B;margin:0 0 8px">${escape(business.name)}${address ? ` - ${escape(address)}` : ''}</p>`,
     '<p style="font-size:12px;color:#6B6B6B;margin:0">You are receiving this because you hold a wholesale account with us. ',
-    `<a href="${unsubscribeUrl(account, origin)}" style="color:#CF3429">Unsubscribe</a>.</p>`,
+    `<a href="${unsubscribeUrl(account, origin)}" style="color:#41566e">Unsubscribe</a>.</p>`,
     '</div>',
   ].join('');
 }
@@ -879,7 +879,8 @@ async function summary() {
     unsubscribed,
     consenting,
     channels: await channelStatuses(),
-    businessName: settings?.business?.name ?? BUSINESS_INFO.name,
+    // The record's name, as everywhere else; Settings only mirrors it.
+    businessName: (await sendingBusiness()).name || settings?.business?.name || BUSINESS_INFO.name,
   };
 }
 

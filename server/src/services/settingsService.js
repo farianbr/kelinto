@@ -5,7 +5,12 @@ import {
   DEFAULT_TIER_WARRANTY_BONUS,
 } from '../models/Settings.js';
 import { controlModels, db } from '../db/models.js';
-import { currentBusinessId } from '../db/context.js';
+import { currentBusinessId, currentContext } from '../db/context.js';
+import storage from './storageService.js';
+import { forgetBusinessIdentity } from '../utils/pageIdentity.js';
+import { forgetBusinessConfig } from '../middleware/businessConfigCache.js';
+import { resetBusinessResolution } from '../middleware/resolveBusiness.js';
+import { migrateColorToken } from '../../../shared/businessPalette.js';
 import { BUSINESS_INFO } from '../../../shared/business.js';
 import { COUNTRIES } from '../../../shared/countries.js';
 import '../models/Settings.js';
@@ -113,6 +118,10 @@ const COMMUNICATIONS_WIRED = {
  */
 async function get() {
   const doc = await db().Settings.load();
+  const businessId = currentBusinessId();
+  const record = businessId
+    ? await controlModels().Business.findById(businessId).select('name').lean()
+    : null;
 
   /**
    * Whether a kiosk PIN has ever been set.
@@ -147,7 +156,18 @@ async function get() {
      */
     business: {
       ...doc.business,
-      logoUrl: doc.business?.logoUrl ?? '',
+      /**
+       * **The business's one name is the RECORD's** - the name in the ERP
+       * sidebar, the website, every invoice and email. `Settings.business.name`
+       * was a second copy this form edited while everything else read the
+       * record, so it could say "Cellvix" on a business called CellShoppe.
+       * The form shows the record's name and saving writes both.
+       */
+      name: record?.name || doc.business?.name || '',
+      // Stored as keys, sent as addresses (`storageService.urlOf`).
+      logoUrl: storage.urlOf(doc.business?.logoUrl ?? ''),
+      faviconUrl: storage.urlOf(doc.business?.faviconUrl ?? ''),
+      footerLogoUrl: storage.urlOf(doc.business?.footerLogoUrl ?? ''),
       supportEmail: doc.business?.supportEmail ?? '',
       billingEmail: doc.business?.billingEmail ?? '',
       whatsapp: doc.business?.whatsapp ?? '',
@@ -321,7 +341,7 @@ async function publicProfile() {
 
   const businessId = currentBusinessId();
   const record = businessId
-    ? await controlModels().Business.findById(businessId).select('name isDefault').lean()
+    ? await controlModels().Business.findById(businessId).select('name isDefault colorToken').lean()
     : null;
 
   const email = info.email ?? '';
@@ -330,19 +350,13 @@ async function publicProfile() {
     // The record wins, then Settings, then the house name - see the note above.
     name: record?.name || info.name || BUSINESS_INFO.name,
     tagline: info.tagline ?? '',
-    logoUrl: info.logoUrl ?? '',
-
-    /**
-     * Whether this is the house business - the one carrying `isDefault`.
-     *
-     * The storefront's bundled artwork (`/brand/logo.png`, the footer wordmark)
-     * is Cellvix's own, so it is right for exactly one business and wrong for
-     * every other. A business with no `logoUrl` of its own falls back to that
-     * artwork only when this is true, and to its name set as a wordmark
-     * otherwise - which is why the flag has to reach the client rather than
-     * being inferred from the name matching a string.
-     */
-    isHouse: record?.isDefault === true,
+    logoUrl: storage.urlOf(info.logoUrl ?? ''),
+    faviconUrl: storage.urlOf(info.faviconUrl ?? ''),
+    footerLogoUrl: storage.urlOf(info.footerLogoUrl ?? ''),
+    // The website's colour ramp (`shared/businessPalette.js`), from the
+    // business record. The server writes the same ramp into the page; the
+    // client re-applies it so development and client-side navigation agree.
+    colorToken: migrateColorToken(record?.colorToken),
 
     phone: info.phone ?? '',
     email,
@@ -407,15 +421,45 @@ async function patch($set) {
  * in `client/src/lib/constants.js`.
  */
 async function updateBusiness(input) {
-  return patch({
-    'business.name': input.name,
+  /**
+   * The logo and favicon are files this business uploaded, nothing else: a
+   * link to another server is a file we neither hold nor vouch for, drawn on
+   * every page. The file each one replaces is deleted from storage once the
+   * new one is saved.
+   */
+  const code = currentContext()?.code;
+  for (const field of ['logoUrl', 'faviconUrl', 'footerLogoUrl']) {
+    if (input[field] && !storage.isAllowedUrl(input[field], code)) {
+      throw ApiError.badRequest('Upload the image here rather than linking to another site.', 'ASSET_NOT_OURS', {
+        [field]: 'Upload the image instead.',
+      });
+    }
+  }
+  const before = (await db().Settings.load())?.business ?? {};
+
+  // The record is the name (see `get`); Settings keeps a copy in step.
+  const businessId = currentBusinessId();
+  const name = String(input.name ?? '').trim();
+  if (businessId && name) {
+    await controlModels().Business.updateOne({ _id: businessId }, { $set: { name } });
+    // The name is cached for the website's page title, the host directory and
+    // the middleware's business config; all three must drop it.
+    forgetBusinessConfig(businessId);
+    resetBusinessResolution();
+  }
+
+  const saved = await patch({
+    'business.name': name,
     'business.tagline': input.tagline ?? '',
     'business.phone': input.phone ?? '',
     'business.email': input.email ?? '',
     'business.website': input.website ?? '',
     'business.taxNumber': input.taxNumber ?? '',
     'business.reviewUrl': input.reviewUrl ?? '',
-    'business.logoUrl': input.logoUrl ?? '',
+    // The form sends addresses; the record keeps keys (`storageService.toKey`).
+    'business.logoUrl': storage.toKey(input.logoUrl ?? ''),
+    'business.faviconUrl': storage.toKey(input.faviconUrl ?? ''),
+    'business.footerLogoUrl': storage.toKey(input.footerLogoUrl ?? ''),
     'business.supportEmail': input.supportEmail ?? '',
     'business.billingEmail': input.billingEmail ?? '',
     'business.whatsapp': input.whatsapp ?? '',
@@ -438,6 +482,14 @@ async function updateBusiness(input) {
     ...(input.social === undefined ? {} : { 'business.social': input.social }),
     'business.address': input.address,
   });
+
+  await storage.releaseReplaced(
+    [before.logoUrl, before.faviconUrl, before.footerLogoUrl],
+    [input.logoUrl ?? '', input.faviconUrl ?? '', input.footerLogoUrl ?? ''],
+    code,
+  );
+  forgetBusinessIdentity(currentBusinessId());
+  return saved;
 }
 
 /**

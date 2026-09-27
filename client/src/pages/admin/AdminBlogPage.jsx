@@ -1,3 +1,4 @@
+import useActiveBusinessName from '@/hooks/useActiveBusinessName';
 import { useState } from 'react';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -80,6 +81,7 @@ function toDateInput(value) {
  */
 function PostForm({ post, onSubmit, onCancel, isPending, error }) {
   const [tab, setTab] = useState('write');
+  const businessName = useActiveBusinessName('');
 
   const { register, handleSubmit, watch, formState, control } = useAdminForm({
     /*
@@ -104,7 +106,7 @@ function PostForm({ post, onSubmit, onCancel, isPending, error }) {
       category: post?.category ?? BLOG_CATEGORIES[0].value,
       tagList: (post?.tags ?? []).join(', '),
       coverImage: post?.coverImage ?? '',
-      authorName: post?.author?.name ?? 'Cellvix',
+      authorName: post?.author?.name ?? businessName,
       authorRole: post?.author?.role ?? '',
       authorBio: post?.author?.bio ?? '',
       authorPhoto: post?.author?.photo ?? '',

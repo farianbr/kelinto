@@ -113,6 +113,20 @@ export function AdminShell() {
   const colorToken = activeBusiness?.colorToken ?? cachedColorToken ?? undefined;
   const theme = useBusinessTheme(colorToken);
 
+  /**
+   * The browser tab wears the business's own icon while the ERP is open. The
+   * shared ERP host's page is Kelinto's until then (`utils/pageIdentity.js`),
+   * and it goes back to that when the shell unmounts.
+   */
+  const { branding } = useAuth();
+  useEffect(() => {
+    const link = document.querySelector('link[rel="icon"]');
+    if (!link || !branding?.faviconUrl) return undefined;
+    const previous = link.getAttribute('href');
+    link.setAttribute('href', branding.faviconUrl);
+    return () => link.setAttribute('href', previous ?? '');
+  }, [branding?.faviconUrl]);
+
   // Keep the cache honest for the next reload. A no-op unless the token moved.
   useEffect(() => {
     if (activeBusiness) {
@@ -169,7 +183,7 @@ export function AdminShell() {
   if (isLoading) {
     return (
       <div style={theme} data-business-theme="admin" className="flex h-dvh">
-        <div className="hidden w-[220px] shrink-0 bg-ink-deep md:block" />
+        <div className="hidden w-55 shrink-0 bg-ink-deep md:block" />
         <div className="flex-1 p-6">
           <Skeleton className="mb-6 h-10 w-56" />
           <Skeleton className="h-96" />

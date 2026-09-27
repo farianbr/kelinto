@@ -1776,7 +1776,12 @@ export function useAdminMutations() {
     // would let one screen silently revert a field another screen just changed.
     saveBusinessInfo: useMutation({
       mutationFn: (body) => api.patch('/admin/settings/business', body),
-      onSuccess: invalidate,
+      onSuccess: () => {
+        invalidate();
+        // The name, logo and icon also drive the ERP's own sidebar and tab
+        // (`/auth/me` branding) and the business list the switcher reads.
+        queryClient.invalidateQueries({ queryKey: ['auth', 'me'] });
+      },
     }),
     saveSaleSettings: useMutation({
       mutationFn: (body) => api.patch('/admin/settings/sale', body),

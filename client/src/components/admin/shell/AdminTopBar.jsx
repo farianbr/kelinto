@@ -1,11 +1,13 @@
 import { useLocation, useNavigate } from 'react-router';
-import { ArrowLeft, Menu, Search } from 'lucide-react';
+import { ArrowLeft, Globe, Menu, Search } from 'lucide-react';
 import cn from '@/lib/cn';
 import { matchAdminRoute } from '@/lib/adminRoutes';
 import CreateMenu from './CreateMenu';
 import BusinessSwitcher from './BusinessSwitcher';
 import NotificationMenu from './NotificationMenu';
 import { pressable } from '@/lib/motion';
+import useOpenWebsite from '@/hooks/useOpenWebsite';
+import { useAuth } from '@/hooks/useAuth';
 
 /**
  * The ERP top bar (§4, convention 4): page-title chip with a back arrow,
@@ -20,6 +22,9 @@ export function AdminTopBar({ user, onOpenSearch, onOpenMobileNav }) {
   const navigate = useNavigate();
   const meta = matchAdminRoute(location.pathname);
   const isHome = location.pathname === '/admin';
+  const website = useOpenWebsite();
+  // A support session is nobody the website could sign in.
+  const { isImpersonating } = useAuth();
 
   const initials = (user?.contactName ?? user?.businessName ?? 'A')
     .split(' ')
@@ -81,6 +86,22 @@ export function AdminTopBar({ user, onOpenSearch, onOpenMobileNav }) {
             qualifies everything to its right - what you create lands in the
             business you are in. */}
         <BusinessSwitcher />
+
+        {/* This business's website, in a new tab, signed in as this person so
+            they see it with prices and a way back here. */}
+        {!isImpersonating && (
+          <button
+            type="button"
+            onClick={() => website.open('/')}
+            disabled={website.opening}
+            aria-label="Open the website"
+            title="Open the website, signed in as you"
+            className={cn(pressable, 'flex h-9 items-center gap-1.5 rounded-md px-2 text-sm font-medium text-ink-500 hover:bg-surface-2 hover:text-ink-900 disabled:opacity-60')}
+          >
+            <Globe className="size-[18px]" strokeWidth={2} aria-hidden="true" />
+            <span className="hidden xl:inline">Website</span>
+          </button>
+        )}
 
         <CreateMenu />
 

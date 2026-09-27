@@ -1,3 +1,4 @@
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 import { useState } from 'react';
 import { ArrowDownLeft, ArrowUpRight, CreditCard, Wallet } from 'lucide-react';
 import cn from '@/lib/cn';
@@ -84,6 +85,7 @@ function CreditActivityRow({ entry }) {
  * the invoices page, and two copies of the same list drift.
  */
 export function AccountCreditPage() {
+  const info = useBusinessInfo();
   const { data: summary, isLoading } = useAccountSummary();
   const { data: creditData, isLoading: creditLoading } = useStoreCredit();
   const { data: activity, isLoading: activityLoading } = useCreditActivity();
@@ -150,7 +152,7 @@ export function AccountCreditPage() {
           Closed by default: the two statements, which are reference. */}
       <CollapsiblePanel
         title="Line of credit"
-        description="What Cellvix extends to this account, and how much of it is drawn."
+        description={`What ${info.name} extends to this account, and how much of it is drawn.`}
         defaultOpen
         summary={<span className="tnum">{money(credit.available)} available</span>}
         action={
@@ -246,7 +248,7 @@ export function AccountCreditPage() {
           header of a list they mostly scroll past. */}
       <CollapsiblePanel
         title="Top up store credit"
-        description="Money you hold with Cellvix. It comes off your next order automatically."
+        description={`Money you hold with ${info.name}. It comes off your next order automatically.`}
         defaultOpen
         summary={<span className="tnum">{money(storeCredit)} on hand</span>}
       >

@@ -23,7 +23,7 @@ import { formatDate } from '../../../shared/dates.js';
 const INK = '#111113';
 const MUTED = '#6b6b73';
 const LINE = '#e4e4e8';
-const BRAND = '#CF3429';
+const BRAND = '#41566e';
 
 /** The same six-step scale the invoice uses, so the two read as one system. */
 const T = {

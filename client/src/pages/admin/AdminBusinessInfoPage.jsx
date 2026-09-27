@@ -14,6 +14,8 @@ import Input from '@/components/ui/Input';
 import PhoneField from '@/components/ui/PhoneField';
 import SelectField from '@/components/ui/SelectField';
 import PageHeader from '@/components/admin/PageHeader';
+import AssetUpload from '@/components/admin/AssetUpload';
+import useUploadSession from '@/hooks/useUploadSession';
 import { SettingsFormActions, PlaceholderNotice } from '@/components/admin/settings/SettingsForm';
 import { ADMIN_ROUTES } from '@/lib/adminRoutes';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
@@ -45,6 +47,8 @@ const EMPTY = {
   taxNumber: '',
   reviewUrl: '',
   logoUrl: '',
+  faviconUrl: '',
+  footerLogoUrl: '',
   whatsapp: '',
   mapUrl: '',
   hours: [],
@@ -84,6 +88,8 @@ export function AdminBusinessInfoPage() {
   const { data, isLoading } = useAdminSettings();
   const { saveBusinessInfo } = useAdminMutations();
   const [saved, setSaved] = useState(false);
+  // Logos and the icon uploaded on this visit but not yet saved.
+  const uploads = useUploadSession();
 
   const {
     register,
@@ -110,6 +116,7 @@ export function AdminBusinessInfoPage() {
     setSaved(false);
     try {
       const next = await saveBusinessInfo.mutateAsync(values);
+      uploads.settle();
       // Reset *to the server's answer*, not to what was typed: it is what the
       // document now holds, and it is what makes the form clean again.
       reset(formValues(next.business));
@@ -130,9 +137,8 @@ export function AdminBusinessInfoPage() {
       />
 
       <PlaceholderNotice>
-        These details ship with placeholder values and are printed on invoices, transactional email
-        and the website footer. Replace them with the real ones - the GST/HST number especially,
-        which is a stand-in and is not a valid registration.
+        These details are printed on invoices, transactional email and the website. Anything left
+        blank is left off those pages rather than filled with a guess.
       </PlaceholderNotice>
 
       <form onSubmit={handleSubmit(onSubmit)} className="max-w-form space-y-4">
@@ -151,16 +157,61 @@ export function AdminBusinessInfoPage() {
               error={errors.tagline?.message}
               {...register('tagline')}
             />
-            {/* A URL rather than an upload: every other image in this system is
-                a path the catalogue already serves. Empty is the normal answer
-                and prints the business name as a wordmark. */}
-            <Input
-              label="Logo URL"
-              containerClassName="sm:col-span-2"
-              hint="Shown in the website header. Leave empty to show the business name as text instead."
-              placeholder="https://…/logo.png"
-              error={errors.logoUrl?.message}
-              {...register('logoUrl')}
+          </div>
+          {/* Uploaded, not linked: the file is stored under this business's own
+              folder and the form holds its address. Empty shows the business
+              name as text in the header and a neutral icon in the browser tab. */}
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <Controller
+              name="logoUrl"
+              control={control}
+              render={({ field }) => (
+                <AssetUpload
+                  label="Logo"
+                  endpoint="identity"
+                  kind="logo"
+                  shape="wide"
+                  placeholder="Name as text"
+                  hint="Website header and invoices. Transparent PNG works best."
+                  value={field.value}
+                  onChange={(url) => field.onChange(url)}
+                  session={uploads}
+                />
+              )}
+            />
+            <Controller
+              name="footerLogoUrl"
+              control={control}
+              render={({ field }) => (
+                <AssetUpload
+                  label="Footer logo"
+                  endpoint="identity"
+                  kind="footer-logo"
+                  shape="wide"
+                  placeholder="None"
+                  hint="Optional. A wide wordmark that runs across the bottom of the footer, cropped by its edge. Upload it at least 2800 px wide so it stays sharp."
+                  value={field.value}
+                  onChange={(url) => field.onChange(url)}
+                  session={uploads}
+                />
+              )}
+            />
+            <Controller
+              name="faviconUrl"
+              control={control}
+              render={({ field }) => (
+                <AssetUpload
+                  label="Icon"
+                  endpoint="identity"
+                  kind="favicon"
+                  shape="square"
+                  placeholder="Default"
+                  hint="Square, at least 192 × 192 px. PNG or ICO. Used in the browser tab and in the ERP."
+                  value={field.value}
+                  onChange={(url) => field.onChange(url)}
+                  session={uploads}
+                />
+              )}
             />
           </div>
         </Panel>
@@ -396,11 +447,14 @@ export function AdminBusinessInfoPage() {
 
         <SettingsFormActions
           unsavedLabel="this business's details"
+          pendingUploads={uploads.count}
           dirty={isDirty}
           saving={isSubmitting || saveBusinessInfo.isPending}
           saved={saved}
           error={errors.root?.message}
           onReset={() => {
+            // Discarding the edits discards the files uploaded for them.
+            uploads.discardAll();
             reset();
             setSaved(false);
           }}

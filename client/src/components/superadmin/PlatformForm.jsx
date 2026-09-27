@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useId, useState } from 'react';
-import { AlertTriangle, X } from 'lucide-react';
+import { AlertTriangle, Eye, EyeOff, X } from 'lucide-react';
 
 import Overlay from '@/components/ui/Overlay';
 import cn from '@/lib/cn';
@@ -149,11 +149,16 @@ function FieldNote({ id, hint, error }) {
  * belongs to the value, such as `$`, so it is never typed twice.
  */
 export const PlatformInput = forwardRef(function PlatformInput(
-  { label, hint, error, required, className, prefix, suffix, ...props },
+  { label, hint, error, required, className, prefix, suffix, type = 'text', ...props },
   ref,
 ) {
   const id = useId();
   const describedBy = error ? `${id}-error` : hint ? `${id}-hint` : undefined;
+  // A password can be shown while it is typed, as on every other field in the
+  // app (`ui/Input`): a mistyped password on a sign-in form is otherwise found
+  // only by failing to sign in.
+  const [revealed, setRevealed] = useState(false);
+  const isPassword = type === 'password';
 
   return (
     <div className={className}>
@@ -172,8 +177,24 @@ export const PlatformInput = forwardRef(function PlatformInput(
           aria-invalid={error ? true : undefined}
           aria-describedby={describedBy}
           {...props}
-          className={cn(fieldClasses(error), 'h-9', prefix && 'pl-7', suffix && 'pr-24')}
+          type={isPassword && revealed ? 'text' : type}
+          className={cn(fieldClasses(error), 'h-9', prefix && 'pl-7', suffix && 'pr-24', isPassword && 'pr-10')}
         />
+        {isPassword && (
+          <button
+            type="button"
+            onClick={() => setRevealed((value) => !value)}
+            aria-label={revealed ? 'Hide password' : 'Show password'}
+            aria-pressed={revealed}
+            className={cn(pressable, 'absolute inset-y-0 right-0.5 my-auto flex size-8 items-center justify-center rounded-md text-plat-dim hover:text-plat-text')}
+          >
+            {revealed ? (
+              <EyeOff className="size-4" strokeWidth={2} aria-hidden="true" />
+            ) : (
+              <Eye className="size-4" strokeWidth={2} aria-hidden="true" />
+            )}
+          </button>
+        )}
         {suffix && (
           <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center font-mono text-xs text-plat-dim">
             {suffix}

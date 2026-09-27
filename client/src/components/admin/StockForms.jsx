@@ -1,4 +1,5 @@
-import { useForm } from 'react-hook-form';
+import { useState } from 'react';
+import { Controller, useForm } from 'react-hook-form';
 import { AlertCircle } from 'lucide-react';
 import cn from '@/lib/cn';
 import { count as formatCount } from '@/lib/format';
@@ -9,6 +10,10 @@ import Checkbox from '@/components/ui/Checkbox';
 import SelectMenu from '@/components/ui/SelectMenu';
 import { optionsFor } from '@/lib/taxonomy';
 import { GRADE_ORDER, GRADES } from '@/lib/constants';
+import AssetUpload from '@/components/admin/AssetUpload';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import useUploadSession from '@/hooks/useUploadSession';
+import useUnsavedGuard from '@/hooks/useUnsavedGuard';
 
 /** Condition grades, in the order the scale reads. Moved here with the form. */
 const GRADE_OPTIONS = GRADE_ORDER.map((grade) => ({
@@ -209,8 +214,30 @@ function ProductForm({ product, tree, onSubmit, onCancel, isPending, error }) {
       seriesSlug: product?.seriesSlug ?? '',
       modelSlug: product?.modelSlug ?? '',
       isActive: product?.isActive ?? true,
+      image: product?.image ?? '',
+      images: product?.images ?? [],
+      video: product?.video ?? '',
+      videoPoster: product?.videoPoster ?? '',
     },
   });
+
+  // Pictures and video uploaded in this form but not saved yet. Leaving the
+  // page asks first; cancelling asks first; either way they are deleted.
+  const uploads = useUploadSession();
+  const guard = useUnsavedGuard(uploads.hasPending);
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  function cancel() {
+    if (uploads.hasPending) setConfirmCancel(true);
+    else onCancel();
+  }
+
+  /**
+   * Whether this form knows the product's pictures. A new product does, and so
+   * does one opened from its detail page; a row from a list that never carried
+   * them does not, and posting its empty fields back would delete every upload
+   * the product has. So the media fields are sent only when they were known.
+   */
+  const knowsMedia = !product || 'image' in product;
 
   const path = {
     deviceType: watch('deviceTypeSlug'),
@@ -240,13 +267,19 @@ function ProductForm({ product, tree, onSubmit, onCancel, isPending, error }) {
 
   return (
     <form
-      onSubmit={handleSubmit((values) =>
-        onSubmit({
+      onSubmit={handleSubmit((values) => {
+        // Handed to the save now. If the save fails the files stay on the form
+        // for a retry, and anything never saved is swept by the server.
+        uploads.settle();
+        return onSubmit({
           ...values,
           price: Math.round(Number(values.priceDollars) * 100) || 0,
           stock: Number(values.stock) || 0,
-        }),
-      )}
+          ...(knowsMedia
+            ? { images: (values.images ?? []).filter(Boolean) }
+            : { image: undefined, images: undefined, video: undefined, videoPoster: undefined }),
+        });
+      })}
       className="space-y-4"
     >
       {error && (
@@ -348,10 +381,84 @@ function ProductForm({ product, tree, onSubmit, onCancel, isPending, error }) {
 
       <Input label="Description" {...register('description')} />
 
+      {knowsMedia && (
+        <fieldset className="rounded-md border border-line p-3.5">
+          <legend className="eyebrow px-1 text-ink-400">Pictures and video</legend>
+          <div className="space-y-4">
+            <Controller
+              name="image"
+              control={control}
+              render={({ field }) => (
+                <AssetUpload
+                  label="Main picture"
+                  endpoint="catalogue"
+                  kind="product-image"
+                  hint="Shown on the product card and page. Without one, the stock photo for this brand and component type is used."
+                  value={field.value}
+                  onChange={field.onChange}
+                  session={uploads}
+                />
+              )}
+            />
+            <Controller
+              name="images"
+              control={control}
+              render={({ field }) => {
+                const list = field.value ?? [];
+                // Every picture so far, plus one empty slot to add the next
+                // (up to eight).
+                const slots = list.length < 8 ? [...list, ''] : list;
+                return (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {slots.map((url, index) => (
+                      <AssetUpload
+                        key={`${index}-${url}`}
+                        label={index === 0 ? 'More pictures' : `Picture ${index + 1}`}
+                        endpoint="catalogue"
+                        kind="product-image"
+                        placeholder="Add"
+                        session={uploads}
+                        value={url}
+                        onChange={(next) => {
+                          const updated = [...list];
+                          if (next) updated[index] = next;
+                          else updated.splice(index, 1);
+                          field.onChange(updated.filter(Boolean));
+                        }}
+                      />
+                    ))}
+                  </div>
+                );
+              }}
+            />
+            <Controller
+              name="video"
+              control={control}
+              render={({ field }) => (
+                <AssetUpload
+                  label="Video"
+                  endpoint="catalogue"
+                  kind="product-video"
+                  shape="video"
+                  hint="Optional. MP4, MOV or WebM, up to 100 MB and 2 minutes. Compressed for the web on upload."
+                  value={field.value}
+                  poster={watch('videoPoster')}
+                  onChange={(url, extra) => {
+                    field.onChange(url);
+                    setValue('videoPoster', extra?.poster ?? '', { shouldDirty: true });
+                  }}
+                  session={uploads}
+                />
+              )}
+            />
+          </div>
+        </fieldset>
+      )}
+
       <Checkbox label="Listed on the website" className="-ml-2" {...register('isActive')} />
 
       <div className="flex justify-end gap-2 pt-1">
-        <Button type="button" variant="ghost" onClick={onCancel}>
+        <Button type="button" variant="ghost" onClick={cancel}>
           Cancel
         </Button>
         <Button
@@ -362,6 +469,32 @@ function ProductForm({ product, tree, onSubmit, onCancel, isPending, error }) {
           {product ? 'Save changes' : 'Create product'}
         </Button>
       </div>
+
+      {/* Names what is lost: the files, which are deleted, not just the edits. */}
+      <ConfirmDialog
+        open={confirmCancel}
+        onClose={() => setConfirmCancel(false)}
+        onConfirm={() => {
+          uploads.discardAll();
+          setConfirmCancel(false);
+          onCancel();
+        }}
+        title={`Discard ${uploads.count === 1 ? 'the file' : `the ${uploads.count} files`} you uploaded?`}
+        body={`${product ? product.name : 'This product'} has not been saved, so ${uploads.count === 1 ? 'it is' : 'they are'} deleted if you close the form now.`}
+        confirmLabel="Discard and close"
+        cancelLabel="Keep editing"
+        tone="danger"
+      />
+      <ConfirmDialog
+        open={guard.blocked}
+        onClose={guard.stay}
+        onConfirm={guard.leave}
+        title="Leave without saving the product?"
+        body="Pictures or video you uploaded here are not saved yet. Leaving this page deletes them."
+        confirmLabel="Leave and delete them"
+        cancelLabel="Stay on this page"
+        tone="danger"
+      />
     </form>
   );
 }

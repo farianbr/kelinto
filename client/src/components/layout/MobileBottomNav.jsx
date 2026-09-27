@@ -32,10 +32,10 @@ export function MobileBottomNav() {
   const accountMenuOpen = useUiStore((s) => s.accountMenuOpen);
 
   const { count: cartCount } = useCart();
-  const { isAuthenticated, isPending, isAdmin } = useAuth();
+  const { isAuthenticated, isPending } = useAuth();
 
   const visible = y > BOTTOM_NAV_REVEAL_AT;
-  const accountTo = isAdmin ? '/admin' : '/account';
+  const accountTo = '/account';
 
   return (
     <AnimatePresence>

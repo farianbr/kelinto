@@ -78,7 +78,7 @@ export function NotFoundPage() {
           Eager, not lazy: it is the first thing in the viewport, and lazy
           loading the only picture on the page buys nothing. */}
       <img
-        src="/404-artwork.png"
+        src="/404-artwork.webp"
         alt=""
         width={745}
         height={335}

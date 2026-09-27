@@ -113,7 +113,7 @@ async function seedSuperAdmin({ quiet = false } = {}) {
       name: 'Cellvix Group',
       slug: 'cellvix-group',
       status: 'active',
-      contactName: 'Cellvix Admin',
+      contactName: 'CellShoppe Admin',
       contactEmail: 'admin@cellvix.ca',
       phone: '+1 (416) 555-0100',
       // Three: the two businesses that exist plus one free, so the console can

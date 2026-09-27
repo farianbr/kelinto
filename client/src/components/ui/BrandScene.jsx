@@ -1,4 +1,5 @@
 import cn from '@/lib/cn';
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 
 /**
  * Full-bleed illustrations for the moments that are not a product grid: order
@@ -257,7 +258,7 @@ function PaymentFailedScene() {
 }
 
 const SCENES = {
-  success: { render: SuccessScene, alt: 'A sealed Cellvix parcel on the workshop bench, marked complete' },
+  success: { render: SuccessScene, alt: 'A sealed parcel on the workshop bench, marked complete' },
   'not-found': {
     render: NotFoundScene,
     alt: 'A device disassembled on a repair workshop, its screen and housing separated',
@@ -271,6 +272,7 @@ const SCENES = {
 export function BrandScene({ variant = 'success', className, showMark = true }) {
   const scene = SCENES[variant] ?? SCENES.success;
   const Render = scene.render;
+  const info = useBusinessInfo();
 
   return (
     <div className={cn('relative w-full max-w-[420px]', className)}>
@@ -283,9 +285,10 @@ export function BrandScene({ variant = 'success', className, showMark = true }) 
         <Render />
       </svg>
 
-      {showMark && (
+      {/* The business's own logo, when it has uploaded one. */}
+      {showMark && info.logoUrl && (
         <img
-          src="/brand/logo-mark.png"
+          src={info.logoUrl}
           alt=""
           aria-hidden="true"
           width="512"

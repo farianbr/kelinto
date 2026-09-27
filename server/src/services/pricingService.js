@@ -1,3 +1,4 @@
+import { urlOf } from './storageService.js';
 import { db } from '../db/models.js';
 import '../models/Offer.js';
 import '../models/Order.js';
@@ -244,7 +245,7 @@ async function priceCart(cart, user, { deliveryCode = 'ground' } = {}) {
       sku: product.sku,
       name: product.name,
       slug: product.slug,
-      image: product.image ?? null,
+      image: urlOf(product.image) ?? null,
       grade: product.grade,
       partType: product.partType,
       partTypeLabel: product.partTypeLabel,
@@ -443,7 +444,7 @@ async function expandBundles(cart, _user) {
         sku: product.sku,
         name: product.name,
         slug: product.slug,
-        image: product.image ?? null,
+        image: urlOf(product.image) ?? null,
         grade: product.grade,
         partType: product.partType,
         partTypeLabel: product.partTypeLabel,

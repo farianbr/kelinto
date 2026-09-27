@@ -1,3 +1,4 @@
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { ArrowRight, Clock, Newspaper, Search } from 'lucide-react';
@@ -113,6 +114,7 @@ function FeaturedPost({ post }) {
  * shop's filters follow (PROJECT_INSTRUCTIONS.md §4.2).
  */
 export function BlogPage() {
+  const info = useBusinessInfo();
   const [params, setParams] = useSearchParams();
   const category = params.get('category') ?? '';
   // Set by the tag links at the foot of an article.
@@ -184,7 +186,7 @@ export function BlogPage() {
   return (
     <div className="mx-auto max-w-[1400px] px-3 py-6 sm:px-4 lg:px-6 lg:py-10">
       <header className="mb-7 max-w-2xl">
-        <p className="eyebrow mb-2 text-brand">Cellvix journal</p>
+        <p className="eyebrow mb-2 text-brand">{info.name} journal</p>
         <h1 className="text-3xl sm:text-d-sm">Workshop notes for repair businesses</h1>
         <p className="mt-3 text-md leading-relaxed text-ink-500">
           Grading standards, diagnostics, credit terms and what is moving in the catalogue

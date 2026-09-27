@@ -346,12 +346,25 @@ const userSchema = new mongoose.Schema(
     approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     rejectionReason: String,
     lastLoginAt: Date,
+
+    /**
+     * Sessions signed before this moment no longer count (`authenticate`).
+     *
+     * Moved by every password change, whoever makes it: the account holder, an
+     * administrator, or a reset link. A password is changed because somebody
+     * else may know the old one, and a session they already opened with it
+     * would otherwise outlive the change by up to 90 days.
+     */
+    sessionsValidFrom: { type: Date, default: null },
   },
   { timestamps: true },
 );
 
 userSchema.methods.setPassword = async function setPassword(plain) {
   this.passwordHash = await bcrypt.hash(plain, 10);
+  // Every session opened with the old password ends. The caller re-issues one
+  // for the person making the change when that person is signed in here.
+  this.sessionsValidFrom = new Date();
 };
 
 userSchema.methods.verifyPassword = function verifyPassword(plain) {

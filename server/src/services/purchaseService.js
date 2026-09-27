@@ -1,3 +1,4 @@
+import { urlOf } from './storageService.js';
 import mongoose from 'mongoose';
 
 import { db } from '../db/models.js';
@@ -1298,7 +1299,7 @@ function shapeInventoryRow(product, threshold) {
     name: product.name,
     sku: product.sku,
     slug: product.slug,
-    image: product.image ?? null,
+    image: urlOf(product.image) ?? null,
     grade: product.grade,
     partTypeLabel: product.partTypeLabel ?? product.partType,
     brandName: product.brandName ?? null,
@@ -1413,6 +1414,12 @@ async function getInventoryItem(id) {
       deviceTypeName: product.deviceTypeName ?? null,
       seriesName: product.seriesName ?? null,
       partType: product.partType,
+      // The product's own uploads, for the edit form. Sent so saving that form
+      // keeps them; a form that did not know them would post them back empty.
+      image: urlOf(product.image) ?? '',
+      images: (product.images ?? []).map(urlOf),
+      video: urlOf(product.video) ?? '',
+      videoPoster: urlOf(product.videoPoster) ?? '',
     },
     movements: movements.map((movement) => ({
       id: movement._id.toString(),

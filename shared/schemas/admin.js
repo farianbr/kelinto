@@ -438,6 +438,12 @@ const productSchema = z.object({
   seriesSlug: z.string().trim().min(1, 'Select a series.'),
   modelSlug: z.string().trim().min(1, 'Select a model.'),
   isActive: z.boolean().default(true),
+  // Uploaded files' addresses (`POST /admin/assets/catalogue`), or empty.
+  image: z.string().trim().url().max(1000).optional().or(z.literal('')),
+  images: z.array(z.string().trim().url().max(1000)).max(8).optional(),
+  video: z.string().trim().url().max(1000).optional().or(z.literal('')),
+  // The still shown until the video is played, written by the upload itself.
+  videoPoster: z.string().trim().url().max(1000).optional().or(z.literal('')),
 });
 
 const ORDER_STATUS_FLOW = [
@@ -2462,8 +2468,15 @@ const businessInfoSchema = z.object({
    */
   reviewUrl: z.string().trim().url('Enter a valid URL.').optional().or(z.literal('')),
 
-  /** The storefront wordmark. Empty renders the business name as text. */
+  /**
+   * The website's logo and browser-tab icon, each an uploaded file's address
+   * (`POST /admin/assets`). Empty renders the business name as text and a
+   * neutral placeholder icon. The server refuses an address that is not this
+   * business's own upload.
+   */
   logoUrl: z.string().trim().url('Enter a valid URL.').optional().or(z.literal('')),
+  faviconUrl: z.string().trim().url('Enter a valid URL.').optional().or(z.literal('')),
+  footerLogoUrl: z.string().trim().url('Enter a valid URL.').optional().or(z.literal('')),
 
   // Where a customer writes TO. Both fall back to `email` when read, so a
   // business with one mailbox types it once.

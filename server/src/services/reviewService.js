@@ -1,3 +1,4 @@
+import { urlOf } from './storageService.js';
 import { db } from '../db/models.js';
 import '../models/Review.js';
 import '../models/Order.js';
@@ -129,7 +130,7 @@ async function listPending(userId, { orderId = null } = {}) {
         // bought even if the catalogue has moved on.
         name: item.name,
         slug: item.slug,
-        image: item.image ?? null,
+        image: urlOf(item.image) ?? null,
         grade: item.grade,
         partType: item.partType,
         partTypeLabel: item.partTypeLabel,

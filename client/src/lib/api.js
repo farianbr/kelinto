@@ -33,10 +33,13 @@ export class ApiError extends Error {
  * names. Sending a selection there lets a panel session somebody opened once
  * redirect a shopper's browser into another business. See `buildUrl`.
  *
+ * `/auth/website-handoff` is the ERP's "Website" button, which opens the
+ * website of the business the ERP is showing, so it follows the switcher too.
+ *
  * `/kiosk` is deliberately absent: it is its own application on its own
  * session and adopts its business from the URL, not from the panel's store.
  */
-const SELECTABLE = ['/admin', '/auth/me'];
+const SELECTABLE = ['/admin', '/auth/me', '/auth/website-handoff'];
 
 function isSelectable(path) {
   return SELECTABLE.some((prefix) => path === prefix || path.startsWith(`${prefix}/`) || path.startsWith(`${prefix}?`));
@@ -126,8 +129,10 @@ async function request(path, { method = 'GET', body, params, signal } = {}) {
       method,
       // The session is an httpOnly cookie - it must ride along on every call.
       credentials: 'include',
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
+      // A file goes as multipart, and the browser writes that header itself
+      // (with the boundary); setting it here would break the upload.
+      headers: body && !(body instanceof FormData) ? { 'Content-Type': 'application/json' } : undefined,
+      body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
       signal,
     });
   } catch (cause) {
@@ -185,6 +190,12 @@ export const api = {
   post: (path, body, options) => request(path, { ...options, method: 'POST', body }),
   patch: (path, body, options) => request(path, { ...options, method: 'PATCH', body }),
   delete: (path, options) => request(path, { ...options, method: 'DELETE' }),
+  /** One file, as the multipart field `file`. */
+  upload: (path, file, params, options) => {
+    const form = new FormData();
+    form.append('file', file);
+    return request(path, { ...options, method: 'POST', body: form, params });
+  },
 };
 
 export default api;

@@ -1,3 +1,4 @@
+import { urlOf } from './storageService.js';
 import mongoose from 'mongoose';
 import creditService from './creditService.js';
 import { db } from '../db/models.js';
@@ -101,7 +102,7 @@ function flattenBundles(bundles) {
       sku: line.sku,
       name: line.name,
       slug: line.slug,
-      image: line.image,
+      image: urlOf(line.image),
       grade: line.grade,
       partType: line.partType,
       partTypeLabel: line.partTypeLabel,

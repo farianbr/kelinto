@@ -1,3 +1,4 @@
+import { sweepAbandoned } from './services/storageService.js';
 import env from './config/env.js';
 import { connectDb, disconnectDb } from './config/db.js';
 import { createApp } from './app.js';
@@ -103,6 +104,19 @@ async function main() {
   // Must stay above keepAliveTimeout, or headers time out on a still-valid socket.
   server.headersTimeout = 66_000;
 
+  /**
+   * Uploads nobody saved (a closed tab, a crash mid-form) are deleted from R2
+   * after a few hours (`storageService.sweepAbandoned`). Every half hour, and
+   * once shortly after boot. Idempotent, so several Passenger processes each
+   * running it is harmless. `unref` so it never holds the process open.
+   */
+  const sweep = () =>
+    sweepAbandoned()
+      .then((count) => count && console.log(`  Removed ${count} abandoned upload(s).`))
+      .catch((error) => console.error(`  Upload sweep failed - ${error.message}`));
+  setTimeout(sweep, 60_000).unref();
+  setInterval(sweep, 30 * 60_000).unref();
+
   async function shutdown(signal) {
     console.log(`\n  ${signal} received, shutting down.`);
     server.close(async () => {
@@ -119,7 +133,7 @@ async function main() {
 // Passenger keeps restarting into the same wall. The message is what shows up
 // in the app's stderr log.
 main().catch((error) => {
-  console.error(`\n  Cellvix API failed to start: ${error.message}\n`);
+  console.error(`\n  Kelinto API failed to start: ${error.message}\n`);
   console.error(error);
   process.exit(1);
 });

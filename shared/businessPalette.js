@@ -57,7 +57,7 @@
  */
 const BUSINESS_PALETTE = {
   /**
-   * Cellvix, and the default for anything unset.
+   * The original Cellvix red, kept as a choice. No longer the default.
    *
    * **These are the published brand values, copied exactly** - not regenerated
    * from a formula like the others. The Cellvix ramp was hand-tuned (the
@@ -160,8 +160,14 @@ const BUSINESS_PALETTE = {
 /** The enum `Business.colorToken` validates against. */
 const BUSINESS_COLOR_TOKENS = Object.keys(BUSINESS_PALETTE);
 
-/** What an unset or unrecognised token falls back to. */
-const DEFAULT_BUSINESS_COLOR = 'red';
+/**
+ * What an unset or unrecognised token falls back to.
+ *
+ * Slate, the quiet one. It used to be `red`, Cellvix's brand, so every new
+ * business opened wearing another company's colour until somebody changed it.
+ * A business picks its own in the ERP or the console; until then it is neutral.
+ */
+const DEFAULT_BUSINESS_COLOR = 'slate';
 
 /**
  * The ramp for a token, never undefined.

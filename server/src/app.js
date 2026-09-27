@@ -23,6 +23,7 @@ import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { attachSurface, superAdminHostOnly, supplierPortalHostOnly, injectSurface, surfaceInfo } from './utils/surface.js';
 import { canonicalPageUrl, isBusinessOrigin, isForeignHost, isServedHost } from './services/hostDirectory.js';
 import { businessConfig } from './middleware/businessConfigCache.js';
+import { injectIdentity, pageIdentity } from './utils/pageIdentity.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST = path.resolve(here, '..', '..', 'client', 'dist');
@@ -57,6 +58,10 @@ async function defaultAddressFor(req) {
 function createApp() {
   const app = express();
 
+  // Where uploaded files are read from (R2's public address), when uploads are
+  // set up. One origin added to the policy, not a blanket `https:`.
+  const uploadOrigin = env.R2_PUBLIC_URL ? [new URL(env.R2_PUBLIC_URL).origin] : [];
+
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
 
@@ -84,7 +89,11 @@ function createApp() {
       crossOriginResourcePolicy: { policy: 'cross-origin' },
       contentSecurityPolicy: {
         useDefaults: true,
-        directives: { 'img-src': ["'self'", 'data:', 'https://s.whc.ca'] },
+        directives: {
+          'img-src': ["'self'", 'data:', 'https://s.whc.ca', ...uploadOrigin],
+          // Product videos are served from the same bucket as the images.
+          'media-src': ["'self'", ...uploadOrigin],
+        },
       },
     }),
   );
@@ -191,6 +200,19 @@ function createApp() {
    * collections, which the model registry routes regardless of what is ambient.
    */
   app.use(openBusinessDb);
+
+  // Development only: the page identity the production shell has written into
+  // it (`utils/pageIdentity.js`), for the page Vite serves. After the business
+  // is resolved, because a website's identity is its business's.
+  if (!env.isProd) {
+    app.get('/api/dev/identity', async (req, res, next) => {
+      try {
+        res.json(await pageIdentity(req));
+      } catch (error) {
+        next(error);
+      }
+    });
+  }
 
   // Every route can read req.user; individual routes decide whether it is required.
   app.use(authenticate);
@@ -315,7 +337,9 @@ function createApp() {
        */
       res.set('Cache-Control', 'no-cache');
       res.vary('Host');
-      res.type('html').send(injectSurface(shell, req));
+      const identity = await pageIdentity(req).catch(() => null);
+      const page = injectSurface(shell, req);
+      res.type('html').send(identity ? injectIdentity(page, identity) : page);
     });
   }
 

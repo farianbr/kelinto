@@ -558,7 +558,7 @@ export function ContactPage() {
             to="/about"
             className={cn(pressable, 'inline-flex h-12 items-center rounded-full border border-line-strong bg-surface px-6 font-display text-md font-semibold text-ink-700 hover:border-ink-300 hover:bg-surface-2')}
           >
-            About Cellvix
+            About {info.name}
           </Link>
         </Reveal>
       </Slab>

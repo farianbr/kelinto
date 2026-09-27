@@ -1,3 +1,4 @@
+import { urlOf } from './storageService.js';
 import { db } from '../db/models.js';
 import '../models/Cart.js';
 import '../models/Product.js';
@@ -39,7 +40,7 @@ async function serialize(cart, user) {
     sku: line.sku,
     name: line.name,
     slug: line.slug,
-    image: line.image,
+    image: urlOf(line.image),
     partType: line.partType,
     partTypeLabel: line.partTypeLabel,
     brandSlug: line.brandSlug ?? null,

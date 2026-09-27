@@ -43,7 +43,7 @@ export function ApproveClientForm({ user, onSubmit, onCancel, isPending, error }
       creditLimitDollars: 5000,
       terms: 'net30',
       repName: 'Marc Deveau',
-      repEmail: 'marc@cellvix.ca',
+      repEmail: 'rep@example.com',
       // Already in the composed shape `PhoneField` reads and writes, so the
       // field does not silently reformat its own default on first paint.
       repPhone: '+1 416 555 0110',

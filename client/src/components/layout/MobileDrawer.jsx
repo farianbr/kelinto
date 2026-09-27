@@ -13,6 +13,7 @@ import useApplyFilterPath from '@/hooks/useApplyFilterPath';
 import { useTaxonomy } from '@/hooks/useCatalog';
 import { useAuth, useSignOut } from '@/hooks/useAuth';
 import { pressable } from '@/lib/motion';
+import BusinessMark from './BusinessMark';
 
 /**
  * The drawer is the SITE's menu, not the account's.
@@ -45,19 +46,6 @@ const NAV_LINKS = [
   { label: 'Terms & conditions', to: '/contact', neverActive: true },
 ];
 
-// Staff get one door into the console rather than the buyer dashboard links.
-// The ERP has its own sidebar and its own thirty-odd screens - mirroring that
-// tree into the storefront drawer would be a second, worse copy of it.
-const ADMIN_LINKS = [
-  { label: 'Home', to: '/' },
-  { label: 'Shop all parts', to: '/shop' },
-  { label: 'Admin console', to: '/admin' },
-  { label: 'Combo deals', to: '/offers' },
-  { label: 'Blog', to: '/blog' },
-  { label: 'FAQ', to: '/faq' },
-  { label: 'About us', to: '/about' },
-  { label: 'Contact us', to: '/contact' },
-];
 
 /**
  * Left slide-in navigation drawer (brief §4.2).
@@ -83,9 +71,11 @@ export function MobileDrawer() {
   const { pathname } = useLocation();
 
   const { data: tree } = useTaxonomy();
-  const { isAdmin, isAuthenticated } = useAuth();
+  const { isAuthenticated } = useAuth();
   const signOut = useSignOut();
-  const navLinks = isAdmin ? ADMIN_LINKS : NAV_LINKS;
+  // The same site menu for everybody. Staff reach the ERP from the account menu
+  // and the staff bar above the header, not from a second copy of this list.
+  const navLinks = NAV_LINKS;
 
   const currentNodes = stack.length === 0 ? (tree ?? []) : (stack[stack.length - 1].children ?? []);
   const levelKeys = ['deviceType', 'brand', 'series', 'model'];
@@ -109,22 +99,8 @@ export function MobileDrawer() {
       side="left"
       header={
         <div>
-          {/* The business's own mark, the bundled artwork for the house
-              business only, then its name as a wordmark - the same ladder both
-              headers use. */}
-          {info.logoUrl ? (
-            <img src={info.logoUrl} alt={info.name} className="h-7 w-auto" />
-          ) : info.isHouse !== false ? (
-            <img
-              src="/brand/logo.png"
-              alt={info.name}
-              width="1000"
-              height="254"
-              className="h-7 w-auto"
-            />
-          ) : (
-            <span className="block font-display text-lg font-bold text-ink-900">{info.name}</span>
-          )}
+          {/* The same mark both headers draw. */}
+          <BusinessMark size="sm" />
           {info.tagline && <p className="eyebrow mt-1.5 text-ink-400">{info.tagline}</p>}
         </div>
       }

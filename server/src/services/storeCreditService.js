@@ -99,7 +99,7 @@ const RECEIPTED_TYPES = new Set(['recharge', 'grant', 'refund', 'referral']);
 
 const RECEIPT_LABELS = {
   recharge: 'Account top-up',
-  grant: 'Store credit issued by Cellvix',
+  grant: 'Store credit added to your account',
   refund: 'Refund to store credit',
   referral: 'Referral commission',
 };
@@ -226,7 +226,7 @@ async function allocate(userId, { amount, note }, adminId) {
     userId,
     amount,
     type: amount > 0 ? 'grant' : 'adjustment',
-    note: note || (amount > 0 ? 'Credit added by Cellvix' : 'Adjustment by Cellvix'),
+    note: note || (amount > 0 ? 'Credit added to your account' : 'Balance adjustment'),
     createdBy: adminId,
   });
 }

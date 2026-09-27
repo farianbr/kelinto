@@ -36,7 +36,7 @@ const LINE = '#e4e4e8';
  * (`DEFAULT_BUSINESS_COLOR`); an email is not the place to introduce a fourth
  * answer to "what colour is this shop".
  */
-const BRAND_FALLBACK = '#cf3429';
+const BRAND_FALLBACK = '#41566e';
 
 function escapeHtml(value) {
   return String(value ?? '')

@@ -56,7 +56,7 @@ const TTL_MS = 60_000;
  */
 async function loadConfig(businessId) {
   const business = await Business.findById(businessId)
-    .select('code businessType featureOverrides tenant deletedAt slug domain panelDomain domainLiveAt panelDomainLiveAt')
+    .select('code name colorToken businessType featureOverrides tenant deletedAt slug domain panelDomain domainLiveAt panelDomainLiveAt')
     .lean();
 
   if (!business) return null;
@@ -67,6 +67,9 @@ async function loadConfig(businessId) {
 
   return {
     code: business.code ?? null,
+    // The website's name and colour ramp, written into its page (`utils/pageIdentity.js`).
+    name: business.name ?? '',
+    colorToken: business.colorToken ?? null,
     businessType: business.businessType ?? 'product',
     featureOverrides: business.featureOverrides ?? null,
     /**

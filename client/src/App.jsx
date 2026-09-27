@@ -58,6 +58,7 @@ const SuperAdminPlansPage = lazy(() => import('@/pages/superadmin/SuperAdminPlan
 const SuperAdminPlanPage = lazy(() => import('@/pages/superadmin/SuperAdminPlanPage'));
 const SuperAdminSupportPage = lazy(() => import('@/pages/superadmin/SuperAdminSupportPage'));
 const SuperAdminAccessPage = lazy(() => import('@/pages/superadmin/SuperAdminAccessPage'));
+const SuperAdminBrandPage = lazy(() => import('@/pages/superadmin/SuperAdminBrandPage'));
 
 const AccountLayout = lazy(() => import('@/components/account/AccountLayout'));
 const AccountOverviewPage = lazy(() => import('@/pages/account/AccountOverviewPage'));
@@ -428,6 +429,7 @@ const superAdminRoutes = (
     <Route path="support" element={<SuperAdminSupportPage />} />
     <Route path="support/:tenantId" element={<SuperAdminSupportPage />} />
     <Route path="access" element={<SuperAdminAccessPage />} />
+    <Route path="brand" element={<SuperAdminBrandPage />} />
     <Route path="*" element={<Navigate to="/superadmin" replace />} />
   </Route>
 );
