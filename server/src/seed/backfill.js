@@ -10,6 +10,7 @@ import { backfillCellvixFeatures } from './backfill-cellvix-features.js';
 import { backfillCompetitors } from './backfill-competitors.js';
 import { backfillLoginDirectory } from '../services/loginDirectory.js';
 import { backfillSupplierLogins } from '../services/supplierPortalService.js';
+import { backfillKelintoNaming } from './backfill-kelinto-naming.js';
 
 /**
  * One door onto the seven one-off migrations.
@@ -82,6 +83,11 @@ const TASKS = [
     name: 'supplier-logins',
     run: backfillSupplierLogins,
     summary: 'Move supplier portal logins from the retired platform-wide accounts onto each business’s own supplier record.',
+  },
+  {
+    name: 'kelinto-naming',
+    run: backfillKelintoNaming,
+    summary: 'Move Kelinto’s brand files from platform/ to kelinto/ in R2, and rename the "Platform" super admin and plan.',
   },
 ];
 

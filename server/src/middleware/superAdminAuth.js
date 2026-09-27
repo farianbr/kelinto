@@ -40,7 +40,9 @@ async function authenticateSuperAdmin(req, res, next) {
     }
 
     const admin = await SuperAdmin.findById(payload.sub);
-    if (!admin?.isActive) {
+    // A token older than the last password reset is dead, whatever its expiry.
+    const revoked = admin?.sessionsValidFrom && payload.iat * 1000 < admin.sessionsValidFrom.getTime();
+    if (!admin?.isActive || revoked) {
       clearSuperAdminSession(res);
       return next();
     }

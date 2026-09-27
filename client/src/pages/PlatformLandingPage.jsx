@@ -1,6 +1,6 @@
-import { Fragment } from 'react';
+import { Fragment, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { motion, useReducedMotion } from 'motion/react';
+import { useInView } from 'motion/react';
 import {
   AlertTriangle,
   ArrowRight,
@@ -75,22 +75,24 @@ const FLOW = [
 
 const AUDIENCES = ['Repair shops', 'Parts wholesalers', 'Retailers', 'Garages', 'Salons', 'Clinics', 'IT services'];
 
-/** Arrival: a short rise and fade, once. Readers who ask for less motion get none. */
+/**
+ * Arrival: a short rise and fade, once. Readers who ask for less motion get
+ * none. A CSS transition (`.reveal`), not a Motion animation: Motion 11 blinks
+ * each block back to its starting opacity for a frame as it finishes.
+ */
 function Reveal({ children, className, delay = 0, as = 'div' }) {
-  const reduce = useReducedMotion();
+  const ref = useRef(null);
+  const shown = useInView(ref, { once: true, margin: '-60px' });
   const Tag = as;
-  if (reduce) return <Tag className={className}>{children}</Tag>;
-  const MotionTag = motion[as] ?? motion.div;
   return (
-    <MotionTag
-      className={className}
-      initial={{ opacity: 0, transform: 'translateY(16px)' }}
-      whileInView={{ opacity: 1, transform: 'translateY(0px)' }}
-      viewport={{ once: true, margin: '-60px' }}
-      transition={{ duration: 0.6, delay, ease: [0.23, 1, 0.32, 1] }}
+    <Tag
+      ref={ref}
+      className={cn('reveal', className)}
+      data-shown={shown || undefined}
+      style={delay ? { transitionDelay: `${delay}s` } : undefined}
     >
       {children}
-    </MotionTag>
+    </Tag>
   );
 }
 
@@ -140,38 +142,27 @@ function SectionHead({ eyebrow, title, body, center }) {
  * shadow and no border (lifted, never both).
  */
 function FloatCard({ icon: Icon, tone, title, body, className, delay }) {
-  const reduce = useReducedMotion();
-  const card = (
-    <div className="flex w-64 items-start gap-3 rounded-lg bg-plat-surface p-3.5 text-left shadow-flyout">
-      <span
-        className={cn(
-          'flex size-8 shrink-0 items-center justify-center rounded-md',
-          tone === 'ok' && 'bg-plat-ok/10 text-plat-ok',
-          tone === 'warn' && 'bg-plat-warn/10 text-plat-warn',
-          tone === 'accent' && 'bg-plat-mark text-plat-accent-soft',
-        )}
-      >
-        <Icon className="size-4" strokeWidth={2.25} />
-      </span>
-      <span className="min-w-0">
-        <span className="block text-sm font-semibold text-plat-text">{title}</span>
-        <span className="mt-0.5 block text-xs leading-snug text-plat-muted">{body}</span>
-      </span>
-    </div>
-  );
   return (
     <div aria-hidden="true" className={cn('absolute z-10 hidden lg:block', className)}>
-      {reduce ? (
-        card
-      ) : (
-        <motion.div
-          initial={{ opacity: 0, transform: 'translateY(12px) scale(0.97)' }}
-          animate={{ opacity: 1, transform: 'translateY(0px) scale(1)' }}
-          transition={{ duration: 0.5, delay, ease: [0.23, 1, 0.32, 1] }}
+      <div
+        className="float-in flex w-64 items-start gap-3 rounded-lg bg-plat-surface p-3.5 text-left shadow-flyout"
+        style={{ animationDelay: `${delay}s` }}
+      >
+        <span
+          className={cn(
+            'flex size-8 shrink-0 items-center justify-center rounded-md',
+            tone === 'ok' && 'bg-plat-ok/10 text-plat-ok',
+            tone === 'warn' && 'bg-plat-warn/10 text-plat-warn',
+            tone === 'accent' && 'bg-plat-mark text-plat-accent-soft',
+          )}
         >
-          {card}
-        </motion.div>
-      )}
+          <Icon className="size-4" strokeWidth={2.25} />
+        </span>
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold text-plat-text">{title}</span>
+          <span className="mt-0.5 block text-xs leading-snug text-plat-muted">{body}</span>
+        </span>
+      </div>
     </div>
   );
 }

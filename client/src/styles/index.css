@@ -696,10 +696,70 @@
     letter-spacing: -0.02em;
     line-height: inherit;
   }
+  /* Kelinto's controls in a business's colour: a door that belongs to a
+     business (its supplier portal sign-in) keeps Kelinto's type and form
+     components but takes the business's ramp, applied by `useBusinessTheme`.
+     Re-pointing the accent tokens here is what lets one component set serve
+     both, instead of a second copy of every field and button. */
+  .kelinto-business {
+    --color-plat-accent: var(--color-brand-700);
+    --color-plat-accent-dim: color-mix(in srgb, var(--color-brand-700) 82%, black);
+    --color-plat-accent-soft: var(--color-brand-700);
+    --color-plat-bright: var(--color-brand);
+    --color-plat-mark: var(--color-brand-100);
+  }
   .kelinto .eyebrow {
     font-family: var(--font-kelinto);
     font-weight: 600;
     letter-spacing: 0.08em;
+  }
+
+  /* kelinto.com's arrival motion: a short rise and fade, once.
+
+     CSS rather than Motion, and that is the whole point. Motion 11 runs
+     opacity and transform on the compositor (WAAPI) and only writes the final
+     value into the inline style after the animation reports finished, so for
+     one frame the element falls back to its `initial` style: every block on
+     the page reached full opacity, blinked to 0, and came back. A transition
+     animates towards the style that is already applied, so there is no
+     hand-off to miss. `data-shown` is set by `Reveal` when the block enters
+     the viewport; a delay arrives inline as `transition-delay` /
+     `animation-delay`. */
+  .reveal {
+    opacity: 0;
+    transform: translateY(16px);
+    transition:
+      opacity 600ms var(--ease-entrance),
+      transform 600ms var(--ease-entrance);
+  }
+  .reveal[data-shown] {
+    opacity: 1;
+    transform: none;
+  }
+  /* The hero's floating moments arrive on load, not on scroll. */
+  .float-in {
+    animation: float-in 500ms var(--ease-entrance) both;
+  }
+  /* The sign-in hub's signals (`SignInLayout`): a short dash running along
+     each spoke into the centre, then gone until its next turn. */
+  .sign-in-signal {
+    stroke-dasharray: 6 200;
+    stroke-dashoffset: 6;
+    opacity: 0;
+    animation: sign-in-signal 3.3s var(--ease-standard) infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sign-in-signal {
+      animation: none;
+    }
+    .reveal {
+      opacity: 1;
+      transform: none;
+      transition: none;
+    }
+    .float-in {
+      animation: none;
+    }
   }
 
   /* Guest price gate: the visual half of the rule. The authoritative half is the
@@ -756,6 +816,28 @@
    changes how long a wait is perceived to be, and a slow spinner makes an
    identical load feel like the app is struggling. Linear because a spinner
    that eases is a spinner that appears to stall twice per revolution. */
+@keyframes sign-in-signal {
+  10% {
+    opacity: 1;
+  }
+  70% {
+    stroke-dashoffset: -100;
+    opacity: 1;
+  }
+  75%,
+  100% {
+    stroke-dashoffset: -100;
+    opacity: 0;
+  }
+}
+
+@keyframes float-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.97);
+  }
+}
+
 @keyframes spinner {
   to {
     transform: rotate(360deg);

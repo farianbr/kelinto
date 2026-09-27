@@ -173,6 +173,8 @@ export function CartPanelFooter({
 }) {
   const openAccount = useUiStore((s) => s.openAccount);
   const saved = discount > 0;
+  // Saving empties the cart, so it asks first, as the cart page does (§3.0.1).
+  const [confirmingSave, setConfirmingSave] = useState(false);
 
   return (
     <div className="space-y-3 p-4">
@@ -234,11 +236,25 @@ export function CartPanelFooter({
           icon={Bookmark}
           disabled={!isApproved}
           loading={isSaving}
-          onClick={() => onSaveForLater()}
+          onClick={() => setConfirmingSave(true)}
         >
           Save for later
         </Button>
       </div>
+
+      <ConfirmDialog
+        open={confirmingSave}
+        onClose={() => setConfirmingSave(false)}
+        onConfirm={() => {
+          onSaveForLater();
+          setConfirmingSave(false);
+        }}
+        tone="info"
+        title="Save this cart and empty it?"
+        body="Everything in it moves to your saved carts, where you can restore it later. Your cart is left empty."
+        confirmLabel="Save and empty cart"
+        loading={isSaving}
+      />
 
       {isApproved && (
         <Link

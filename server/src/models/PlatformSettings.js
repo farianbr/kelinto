@@ -5,7 +5,7 @@ import mongoose from 'mongoose';
  *
  * The platform's logo and favicon are Kelinto's files, not any business's, so
  * they live beside tenants and plans rather than in a business database, and
- * their files sit under `platform/` in R2 (`storageService`). Empty means the
+ * their files sit under `kelinto/` in R2 (`storageService`). Empty means the
  * built-in wordmark and the bundled placeholder icon.
  */
 const platformSettingsSchema = new mongoose.Schema(

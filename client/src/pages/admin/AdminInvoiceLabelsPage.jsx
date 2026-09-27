@@ -265,8 +265,15 @@ function InvoiceLabelsBody({ creating = false, onCreatingChange }) {
       key: 'toggle',
       label: (label) => (label.isActive ? 'Retire' : 'Put back in the picker'),
       icon: Power,
+      confirm: (label) => ({
+        title: label.isActive ? `Retire ${label.name}?` : `Put ${label.name} back in the picker?`,
+        body: label.isActive
+          ? 'It stops being offered on invoices. Invoices that already carry it keep it.'
+          : 'It can be picked on invoices again.',
+        confirmLabel: label.isActive ? 'Retire' : 'Put back',
+      }),
       onSelect: (label) =>
-        updateInvoiceLabel.mutate({
+        updateInvoiceLabel.mutateAsync({
           id: label.id,
           name: label.name,
           colorToken: label.colorToken,

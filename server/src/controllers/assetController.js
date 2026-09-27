@@ -89,7 +89,7 @@ const discardForBusiness = asyncHandler(async (req, res) => {
 
 const discardPlatformAssets = asyncHandler(async (req, res) => {
   const urls = Array.isArray(req.body?.urls) ? req.body.urls.slice(0, 20).map(String) : [];
-  await storage.discard(urls, 'platform');
+  await storage.discard(urls, storage.KELINTO);
   res.status(204).end();
 });
 
@@ -97,7 +97,7 @@ const discardPlatformAssets = asyncHandler(async (req, res) => {
 const uploadPlatformAsset = asyncHandler(async (req, res) => {
   const kind = String(req.query.kind ?? '');
   if (!['logo', 'favicon'].includes(kind)) throw ApiError.badRequest('Unknown upload kind.', 'UPLOAD_KIND');
-  const stored = await storage.store({ owner: 'platform', kind, buffer: req.file?.buffer });
+  const stored = await storage.store({ owner: storage.KELINTO, kind, buffer: req.file?.buffer });
   res.status(201).json({ url: stored.url, poster: stored.poster });
 });
 
@@ -120,14 +120,14 @@ const updatePlatformBrand = asyncHandler(async (req, res) => {
   for (const field of ['logoUrl', 'faviconUrl']) {
     if (req.body?.[field] === undefined) continue;
     const value = String(req.body[field] ?? '').trim();
-    if (!storage.isAllowedUrl(value, 'platform')) {
+    if (!storage.isAllowedUrl(value, storage.KELINTO)) {
       throw ApiError.badRequest('Upload the file here rather than linking to another site.', 'ASSET_NOT_OURS');
     }
     // Kept as a key, so a new public address needs no rewrite.
     next[field] = storage.toKey(value);
   }
   const after = await PlatformSettings.findOneAndUpdate({ key: 'singleton' }, { $set: next }, { new: true, lean: true });
-  await storage.releaseReplaced([before.logoUrl, before.faviconUrl], [after.logoUrl, after.faviconUrl], 'platform');
+  await storage.releaseReplaced([before.logoUrl, before.faviconUrl], [after.logoUrl, after.faviconUrl], storage.KELINTO);
   invalidatePlatformIdentity();
   res.json({
     logoUrl: storage.urlOf(after.logoUrl ?? ''),

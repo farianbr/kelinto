@@ -300,6 +300,8 @@ function AdminQuoteDetailPage() {
    */
   const [pendingStatus, setPendingStatus] = useState(null);
   const [converting, setConverting] = useState(false);
+  // Converting creates an order from the quote, so it asks first (§3.0.1).
+  const [confirmingConvert, setConfirmingConvert] = useState(false);
   const [driftFromServer, setDriftFromServer] = useState(null);
 
   const { data, isLoading, error } = useAdminQuote(id);
@@ -367,6 +369,7 @@ function AdminQuoteDetailPage() {
       { id: quote.id, acknowledgeDrift, deliveryCode: 'ground' },
       {
         onSuccess: (payload) => {
+          setConfirmingConvert(false);
           setConverting(false);
           setDriftFromServer(null);
           if (payload?.order?.orderNumber) navigate('/admin/orders');
@@ -377,6 +380,7 @@ function AdminQuoteDetailPage() {
           // staff member decides to honour the quoted price, we never decide for
           // them and never apply it silently.
           if (err.code === 'QUOTE_PRICE_DRIFT' && err.fields?.drift) {
+            setConfirmingConvert(false);
             setDriftFromServer(err.fields.drift);
             setConverting(true);
           }
@@ -427,7 +431,7 @@ function AdminQuoteDetailPage() {
               </Button>
             )}
             {quote.storedStatus === 'accepted' && (
-              <Button icon={ArrowRight} onClick={() => runConvert(false)} loading={convertQuote.isPending}>
+              <Button icon={ArrowRight} onClick={() => setConfirmingConvert(true)} loading={convertQuote.isPending}>
                 Convert to order
               </Button>
             )}
@@ -730,6 +734,20 @@ function AdminQuoteDetailPage() {
           </div>
         </div>
       </Modal>
+
+      <ConfirmDialog
+        open={confirmingConvert}
+        onClose={() => setConfirmingConvert(false)}
+        onConfirm={() => runConvert(false)}
+        tone="warn"
+        title={`Convert ${quote.quoteNumber} into an order?`}
+        body="An order is created for the customer at the quoted prices, shipped by ground. If a price has moved since the quote, you are asked about it first."
+        confirmLabel="Convert to order"
+        confirmPhrase={quote.quoteNumber}
+        confirmPhraseLabel="the quote number"
+        loading={convertQuote.isPending}
+        error={convertQuote.error?.code === 'QUOTE_PRICE_DRIFT' ? null : convertQuote.error?.message}
+      />
 
       <ConfirmDialog
         open={Boolean(pendingStatus)}

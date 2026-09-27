@@ -1,11 +1,23 @@
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { AlertCircle, CheckCircle2, Send } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowLeft,
+  CheckCircle2,
+  ClipboardList,
+  FileText,
+  Handshake,
+  LogIn,
+  Store,
+  Tag,
+  Truck,
+} from 'lucide-react';
 import cn from '@/lib/cn';
-import { BUSINESS_INFO } from '@shared/business';
-import Panel from '@/components/ui/Panel';
-import Input from '@/components/ui/Input';
-import Button from '@/components/ui/Button';
+import BusinessMark from '@/components/layout/BusinessMark';
+import SignInLayout, { SignInHeading } from '@/components/layout/SignInLayout';
+import { PlatformButton } from '@/components/superadmin/PlatformUI';
+import { PlatformError, PlatformInput } from '@/components/superadmin/PlatformForm';
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 import { useSupplierPortalMutations } from '@/hooks/useSupplierPortal';
 import { pressable } from '@/lib/motion';
 
@@ -17,141 +29,138 @@ import { pressable } from '@/lib/motion';
  * emailed request link lands back on that request after signing in, instead of
  * having to find the email again.
  *
+ * **The same door as the ERP and the console** (`SignInLayout`): Kelinto's
+ * frame, fields and buttons, in the business's logo and colour
+ * (`tone="business"`). The portal lives at the business's website address and
+ * is that business's, so a supplier sees who they are supplying; the controls
+ * are the ones every other sign-in uses, so there is one standard, not two.
+ *
  * **One error for every failure.** Unknown address, wrong password, no portal
  * access yet: the server answers all three identically, and this page must not
  * undo that by guessing. Telling an outsider which addresses have accounts is
- * telling them who supplies Cellvix.
+ * telling them who supplies the business.
  */
-/**
- * @param businessName whose portal this is, resolved from the host by the
- *   shell. Falls back to `BUSINESS_INFO.name` for a deployment that has not
- *   pointed a host at a business yet - never to a hardcoded "Cellvix", which
- *   is what this page used to greet a CellShoppe supplier with.
- */
-export function SupplierLoginPage({ businessName = null }) {
-  /**
-   * Who is asking for the password: the business whose address this is. Every
-   * business has its own supplier portal, so there is no shared door and no
-   * reason to name anybody else.
-   */
-  const seller = businessName ?? BUSINESS_INFO.name;
+export function SupplierLoginPage() {
+  // Whose portal this is, from the website's own profile: the same record its
+  // header draws from, never a hardcoded name (which is what this page used to
+  // greet a CellShoppe supplier with).
+  const info = useBusinessInfo();
   const [forgot, setForgot] = useState(false);
   const { signIn, forgotPassword } = useSupplierPortalMutations();
 
-  const { register, handleSubmit } = useForm({ defaultValues: { email: '', password: '' } });
+  const form = useForm({ defaultValues: { email: '', password: '', remember: true } });
   const forgotForm = useForm({ defaultValues: { email: '' } });
 
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-surface-2 px-4 py-10">
-      <div className="w-full max-w-md">
-        <div className="mb-5 flex items-center gap-2.5">
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-brand-gradient-compact text-white">
-            <Send className="size-4.5" strokeWidth={2.25} aria-hidden="true" />
-          </span>
-          <div>
-            <h1 className="font-display text-xl font-bold leading-tight text-ink-900">
-              {seller} suppliers
-            </h1>
-            <p className="text-sm text-ink-500">
-              Price the requests we send you, in one place.
-            </p>
-          </div>
+    <SignInLayout
+      tone="business"
+      mark={
+        <div className="flex flex-col items-center gap-2 text-center">
+          <BusinessMark size="lg" className="h-12 max-w-full object-contain" />
+          <span className="text-xs font-semibold uppercase tracking-wider text-plat-dim">Supplier portal</span>
         </div>
-
-        {forgot ? (
-          <Panel>
-            {forgotPassword.isSuccess ? (
-              <>
-                <p className="flex items-start gap-2 text-sm text-ok">
-                  <CheckCircle2 className="mt-0.5 size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
-                  {/* Says "if" on purpose: the server answers the same way for an
-                      address it has never seen, and the copy has to match or it
-                      leaks what the endpoint refused to. */}
-                  If that address has portal access, a reset link is on its way.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setForgot(false)}
-                  className={cn(pressable, 'mt-4 text-sm font-semibold text-brand hover:underline')}
-                >
-                  Back to sign in
-                </button>
-              </>
-            ) : (
-              <form
-                onSubmit={forgotForm.handleSubmit((values) => forgotPassword.mutate(values))}
-                className="space-y-3"
-              >
-                <p className="text-sm text-ink-500">
-                  Enter the address we send your requests to and we will email a reset link.
-                </p>
-                <Input
-                  label="Email"
-                  type="email"
-                  required
-                  autoComplete="email"
-                  {...forgotForm.register('email')}
-                />
-                <div className="flex items-center gap-2">
-                  <Button type="submit" loading={forgotPassword.isPending}>
-                    Email me a link
-                  </Button>
-                  <Button type="button" variant="ghost" onClick={() => setForgot(false)}>
-                    Cancel
-                  </Button>
-                </div>
-              </form>
-            )}
-          </Panel>
-        ) : (
-          <Panel>
-            <form
-              onSubmit={handleSubmit((values) => signIn.mutate(values))}
-              className="space-y-3"
-            >
-              {signIn.isError && (
-                <p className="flex items-start gap-2 rounded-md bg-danger-50 px-3 py-2.5 text-sm text-danger">
-                  <AlertCircle className="mt-0.5 size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
-                  {signIn.error.message}
-                </p>
-              )}
-
-              <Input
+      }
+      art={{
+        centre: { icon: Store, image: info.faviconUrl || null },
+        // Orders, prices, paperwork, delivery, the agreement: the kinds of
+        // work, not the portal's screen names.
+        nodes: [ClipboardList, Tag, FileText, Truck, Handshake],
+        title: 'Every order we send you, in one place.',
+        body: 'From the first quote to the final delivery.',
+      }}
+    >
+      {forgot ? (
+        <>
+          <SignInHeading title="Reset your password">We will email you a link to set a new one.</SignInHeading>
+          {forgotPassword.isSuccess ? (
+            <p className="mt-6 flex items-start gap-2 text-sm text-plat-ok">
+              <CheckCircle2 className="mt-0.5 size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+              {/* Says "if" on purpose: the server answers the same way for an
+                  address it has never seen, and the copy has to match or it
+                  leaks what the endpoint refused to. */}
+              If that address has portal access, a reset link is on its way.
+            </p>
+          ) : (
+            <form onSubmit={forgotForm.handleSubmit((values) => forgotPassword.mutate(values))} className="mt-6">
+              <PlatformInput
                 label="Email"
                 type="email"
+                autoComplete="username"
                 required
-                autoComplete="email"
-                {...register('email')}
+                {...forgotForm.register('email', { required: 'Enter your email.' })}
+                error={forgotForm.formState.errors.email?.message}
               />
-              <Input
-                label="Password"
-                type="password"
-                required
-                autoComplete="current-password"
-                {...register('password')}
-              />
+              <PlatformButton variant="primary" type="submit" className="mt-6 w-full" loading={forgotPassword.isPending}>
+                Email me a link
+              </PlatformButton>
+            </form>
+          )}
+          <button
+            type="button"
+            onClick={() => setForgot(false)}
+            className={cn(pressable, 'mt-5 inline-flex items-center gap-1.5 rounded text-sm font-medium text-plat-accent-soft')}
+          >
+            <ArrowLeft className="size-4" strokeWidth={2} aria-hidden="true" />
+            Back to sign in
+          </button>
+        </>
+      ) : (
+        <>
+          <SignInHeading>Welcome back. Sign in to see your orders.</SignInHeading>
 
-              <Button type="submit" fullWidth loading={signIn.isPending}>
-                Sign in
-              </Button>
+          {signIn.isError && (
+            <div className="mt-6">
+              <PlatformError>
+                <AlertCircle className="mt-0.5 size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+                {signIn.error.message}
+              </PlatformError>
+            </div>
+          )}
 
+          <form onSubmit={form.handleSubmit((values) => signIn.mutate(values))} className="mt-6">
+            <PlatformInput
+              label="Email"
+              type="email"
+              autoComplete="username"
+              required
+              {...form.register('email', { required: 'Enter your email.' })}
+              error={form.formState.errors.email?.message}
+            />
+            <PlatformInput
+              label="Password"
+              type="password"
+              autoComplete="current-password"
+              required
+              className="mt-3"
+              {...form.register('password', { required: 'Enter your password.' })}
+              error={form.formState.errors.password?.message}
+            />
+
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <label className="flex items-center gap-2 text-sm text-plat-muted">
+                <input
+                  type="checkbox"
+                  className="size-4 rounded border-plat-line accent-plat-accent"
+                  {...form.register('remember')}
+                />
+                Remember me
+              </label>
               <button
                 type="button"
                 onClick={() => setForgot(true)}
-                className={cn(pressable, 'block text-sm font-semibold text-brand hover:underline')}
+                className={cn(pressable, 'rounded text-sm font-medium text-plat-accent-soft')}
               >
-                I forgot my password
+                Forgot password?
               </button>
-            </form>
-          </Panel>
-        )}
+            </div>
 
-        <p className="mt-4 text-center text-xs leading-relaxed text-ink-400">
-          Supply {seller} and have no login? Reply to any email from our purchasing team
-          and we will send you one.
-        </p>
-      </div>
-    </div>
+            <PlatformButton variant="primary" type="submit" icon={LogIn} className="mt-4 w-full" loading={signIn.isPending}>
+              Sign in
+            </PlatformButton>
+          </form>
+        </>
+      )}
+    </SignInLayout>
   );
 }
 

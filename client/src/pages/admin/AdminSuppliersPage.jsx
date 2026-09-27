@@ -724,14 +724,26 @@ export function AdminSuppliersPage() {
       icon: Power,
       tone: 'danger',
       hidden: (row) => !row.isActive,
-      onSelect: (row) => toggleSupplier.mutate(row.id),
+      confirm: (row) => ({
+        title: `Deactivate ${row.name}?`,
+        body: 'They can no longer be added to purchase orders, and their supplier portal login stops working.',
+        confirmLabel: 'Deactivate supplier',
+        confirmPhrase: row.name,
+        confirmPhraseLabel: "the supplier's name",
+      }),
+      onSelect: (row) => toggleSupplier.mutateAsync(row.id),
     },
     {
       key: 'reactivate',
       label: 'Reactivate',
       icon: Power,
       hidden: (row) => row.isActive,
-      onSelect: (row) => toggleSupplier.mutate(row.id),
+      confirm: (row) => ({
+        title: `Reactivate ${row.name}?`,
+        body: 'They can be added to purchase orders again, and their portal login works again.',
+        confirmLabel: 'Reactivate supplier',
+      }),
+      onSelect: (row) => toggleSupplier.mutateAsync(row.id),
     },
   ];
 

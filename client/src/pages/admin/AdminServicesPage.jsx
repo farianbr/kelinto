@@ -375,8 +375,15 @@ export function AdminServicesPage() {
       key: 'toggle',
       label: (service) => (service.isActive ? 'Deactivate' : 'Reactivate'),
       icon: Power,
+      confirm: (service) => ({
+        title: service.isActive ? `Deactivate ${service.name}?` : `Reactivate ${service.name}?`,
+        body: service.isActive
+          ? 'It stops being offered on new tickets and estimates. Records that already carry it keep it.'
+          : 'It is offered on new tickets and estimates again.',
+        confirmLabel: service.isActive ? 'Deactivate' : 'Reactivate',
+      }),
       onSelect: (service) =>
-        updateService.mutate({ id: service.id, isActive: !service.isActive }),
+        updateService.mutateAsync({ id: service.id, isActive: !service.isActive }),
     },
     {
       key: 'delete',

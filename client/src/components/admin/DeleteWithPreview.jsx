@@ -74,6 +74,11 @@ export function DeleteWithPreview({
       confirmLabel={blocked ? null : confirmLabel}
       cancelLabel={blocked ? 'Close' : 'Cancel'}
       tone="danger"
+      // A delete is critical (§3.0.1): the record's own name is typed back.
+      // Not asked while the preview loads or when the delete is blocked, since
+      // there is nothing to arm.
+      confirmPhrase={blocked || isLoading ? undefined : name}
+      confirmPhraseLabel={`the ${typeLabel} name`}
       body={
         <span className="block space-y-3">
           {isLoading ? (

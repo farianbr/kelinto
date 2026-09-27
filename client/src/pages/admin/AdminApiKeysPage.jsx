@@ -6,6 +6,7 @@ import Panel from '@/components/ui/Panel';
 import Input from '@/components/ui/Input';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import PageHeader from '@/components/admin/PageHeader';
 import { ADMIN_ROUTES } from '@/lib/adminRoutes';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
@@ -34,6 +35,9 @@ function ProviderCard({ provider }) {
   const [values, setValues] = useState({});
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState(null);
+  // Removing stored keys stops the provider working at once: a delete, so it
+  // confirms twice (§3.0.1).
+  const [confirmingClear, setConfirmingClear] = useState(false);
   const { saveCredentials, clearCredentials } = useAdminMutations();
 
   const dirty = Object.values(values).some((value) => value !== undefined);
@@ -62,6 +66,7 @@ function ProviderCard({ provider }) {
     try {
       await clearCredentials.mutateAsync(provider.provider);
       setValues({});
+      setConfirmingClear(false);
     } catch (err) {
       setError(err.message);
     }
@@ -86,7 +91,7 @@ function ProviderCard({ provider }) {
         provider.fields.some((field) => field.source === 'stored') && (
           <button
             type="button"
-            onClick={clearAll}
+            onClick={() => setConfirmingClear(true)}
             className={cn(pressable, 'inline-flex h-8 items-center gap-1.5 rounded-md border border-line px-2.5 text-sm font-medium text-ink-500 hover:border-danger hover:bg-danger-50 hover:text-danger')}
           >
             <Trash2 className="size-3.5" strokeWidth={2.25} aria-hidden="true" />
@@ -181,6 +186,18 @@ function ProviderCard({ provider }) {
           </div>
         )}
       </form>
+      <ConfirmDialog
+        open={confirmingClear}
+        onClose={() => setConfirmingClear(false)}
+        onConfirm={clearAll}
+        title={`Remove the stored ${provider.label} keys?`}
+        body={`${provider.label} stops working for this business until new keys are saved. The removed keys cannot be shown again.`}
+        confirmLabel="Remove keys"
+        confirmPhrase={provider.label}
+        confirmPhraseLabel="the provider's name"
+        loading={clearCredentials.isPending}
+        error={error}
+      />
     </Panel>
   );
 }

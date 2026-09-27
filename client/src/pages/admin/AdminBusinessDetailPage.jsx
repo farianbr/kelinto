@@ -37,6 +37,9 @@ export function AdminBusinessDetailPage() {
   const { data: business, isLoading } = useAdminBusiness(id);
   const { setDefaultBusiness } = useAdminMutations();
   const { permissions } = useAuth();
+  // Moving the default changes which business answers every host that names
+  // none, so it asks first (§3.0.1).
+  const [confirmingDefault, setConfirmingDefault] = useState(false);
   const editable = canEdit(permissions, 'business');
 
   // The breadcrumb is a sibling of this page, not a child, so the record name
@@ -75,7 +78,7 @@ export function AdminBusinessDetailPage() {
           editable && (
             <div className="flex gap-2">
               {!business.isDefault && business.status === 'active' && (
-                <Button variant="outline" size="sm" onClick={() => setDefaultBusiness.mutate(business.id)}>
+                <Button variant="outline" size="sm" onClick={() => setConfirmingDefault(true)}>
                   <Star className="size-4" strokeWidth={2} aria-hidden="true" />
                   Make default
                 </Button>
@@ -186,6 +189,22 @@ export function AdminBusinessDetailPage() {
           </Panel>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmingDefault}
+        onClose={() => setConfirmingDefault(false)}
+        onConfirm={() =>
+          setDefaultBusiness.mutate(business.id, { onSuccess: () => setConfirmingDefault(false) })
+        }
+        tone="warn"
+        title={`Make ${business.name} the default business?`}
+        body="Every address that names no business, localhost included, starts serving this business in place of the current default."
+        confirmLabel="Make default"
+        confirmPhrase={business.name}
+        confirmPhraseLabel="the business name"
+        loading={setDefaultBusiness.isPending}
+        error={setDefaultBusiness.error?.message}
+      />
     </div>
   );
 }

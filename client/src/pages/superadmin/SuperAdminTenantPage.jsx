@@ -369,6 +369,7 @@ function SubscriptionSection({ tenant }) {
         onClose={() => setConfirm(null)}
         title={`Move ${tenant.name} to ${planName(plan)}?`}
         confirmLabel="Change plan"
+        confirmPhrase={tenant.name}
         isPending={updateTenant.isPending}
         error={updateTenant.error?.message}
         changes={[{ label: 'Plan', from: tenant.plan?.name ?? 'No plan', to: planName(plan) }]}

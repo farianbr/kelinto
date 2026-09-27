@@ -387,11 +387,14 @@ export function CreditRepaymentForm({ id, user }) {
                   names ? `Settled against ${names}.` : 'The balance has been updated.',
                 );
                 reset();
+                setPending(null);
               },
-              onError: (error) => toast.error('Nothing was recorded', error.message),
+              onError: (error) => {
+                setPending(null);
+                toast.error('Nothing was recorded', error.message);
+              },
             },
           );
-          setPending(null);
         }}
         loading={recordCreditPayment.isPending}
         title={`Record ${money(Number(pending?.amountDollars ?? 0) * 100)} from ${user.displayName}?`}

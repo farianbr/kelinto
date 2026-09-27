@@ -167,7 +167,7 @@ export function AuditLogScreen({ kind, page: meta, notice }) {
             */}
             {row.actorKind === 'superadmin' && (
               <Badge tone="warn" size="sm" className="mt-0.5">
-                Platform support
+                Kelinto support
               </Badge>
             )}
             {row.actorName && (

@@ -45,6 +45,19 @@ const superAdminSchema = new mongoose.Schema(
     isActive: { type: Boolean, default: true, index: true },
 
     lastLoginAt: Date,
+
+    /**
+     * A password reset in flight: the sha256 of the emailed token and when it
+     * stops working. The link is the only copy of the secret, as for `User`.
+     */
+    resetTokenHash: { type: String, select: false },
+    resetTokenAt: { type: Date, select: false },
+
+    /**
+     * Sessions issued before this moment are refused. Set by a password reset,
+     * so taking back a stolen password also ends the sessions it opened.
+     */
+    sessionsValidFrom: Date,
   },
   { timestamps: true },
 );

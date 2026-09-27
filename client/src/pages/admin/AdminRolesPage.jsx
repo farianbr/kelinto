@@ -696,6 +696,8 @@ export function AdminRolesPage() {
         title={`Delete ${confirming?.name ?? 'role'}?`}
         body="Staff holding this role must be reassigned before it can be removed."
         confirmLabel="Delete role"
+        confirmPhrase={confirming?.name}
+        confirmPhraseLabel="the role name"
         loading={deleteRole.isPending}
         error={error}
       />

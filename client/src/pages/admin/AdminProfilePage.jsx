@@ -8,7 +8,7 @@ import PageHeader from '@/components/admin/PageHeader';
 import { ADMIN_ROUTES } from '@/lib/adminRoutes';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { useAdminProfile } from '@/hooks/useAdmin';
-import { useAuth } from '@/hooks/useAuth';
+import { useSignOut } from '@/hooks/useAuth';
 import { date, dateTime } from '@/lib/format';
 import { pressable } from '@/lib/motion';
 
@@ -51,7 +51,8 @@ function initials(name) {
 
 export function AdminProfilePage() {
   const { data, isLoading } = useAdminProfile();
-  const { signOut } = useAuth();
+  // The confirmed sign-out every other button uses (`SignOutConfirm`, §3.0.1).
+  const signOut = useSignOut();
 
   if (isLoading) return <p className="text-sm text-ink-500">Loading profile…</p>;
 

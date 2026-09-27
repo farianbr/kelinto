@@ -537,6 +537,8 @@ export function AdminTicketDetailPage() {
         // building, which is the tone rule exactly (see ConfirmDialog).
         tone={movingStage?.channels?.length === 0 ? 'info' : 'warn'}
         confirmLabel="Set status"
+        confirmPhrase={movingStage?.channels?.length === 0 ? undefined : ticket.ticketNumber}
+        confirmPhraseLabel="the ticket number"
         loading={setTicketStatus.isPending}
         error={setTicketStatus.error?.message}
       />
@@ -585,6 +587,8 @@ export function AdminTicketDetailPage() {
         body={`${money(removingDeposit?.amount ?? 0)} taken by ${removingDeposit?.method ?? 'cash'} will no longer be held against this ticket. Use this only for a deposit recorded in error.`}
         tone="danger"
         confirmLabel="Remove deposit"
+        confirmPhrase={ticket.ticketNumber}
+        confirmPhraseLabel="the ticket number"
         loading={removeTicketDeposit.isPending}
         error={removeTicketDeposit.error?.message}
       />
@@ -635,6 +639,8 @@ export function AdminTicketDetailPage() {
         body="The job stops and the ticket closes. Any deposit stays recorded - refund it separately."
         tone="danger"
         confirmLabel="Cancel ticket"
+        confirmPhrase={ticket.ticketNumber}
+        confirmPhraseLabel="the ticket number"
         loading={setTicketStatus.isPending}
         error={setTicketStatus.error?.message}
       />

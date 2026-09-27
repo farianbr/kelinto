@@ -19,7 +19,7 @@ import {
   suggestSlug,
 } from '../../../shared/hosts.js';
 import { hashResetToken } from './authService.js';
-import { sendPasswordResetEmail } from './welcomeMail.js';
+import { sendPasswordResetEmail, sendConsoleResetEmail } from './welcomeMail.js';
 import { panelOrigin } from './linkOrigins.js';
 
 /**
@@ -65,8 +65,13 @@ import { DEFAULT_BUSINESS_COLOR } from '../../../shared/businessPalette.js';
 
 const SUPERADMIN_COOKIE = `${env.COOKIE_NAME}_superadmin`;
 /** Deliberately shorter than the 30-day supplier session: this account can
- *  reconfigure every tenant, so a forgotten browser is a bigger problem. */
+ *  reconfigure every tenant, so a forgotten browser is a bigger problem. It is
+ *  also the most "remember me" buys here. */
 const SESSION_DAYS = 7;
+/** Without "remember me": a working day, in a cookie that dies with the browser. */
+const SESSION_HOURS = 12;
+/** How long a console reset link works. The same hour the ERP's does. */
+const RESET_TTL_MS = 60 * 60 * 1000;
 
 /**
  * How long an owner's invitation stays usable.
@@ -83,18 +88,23 @@ const SIGN_IN_FAILED = [
   'SUPERADMIN_CREDENTIALS_INVALID',
 ];
 
-function issueSession(res, admin) {
+/**
+ * Signs the operator in. **Remember me** keeps the cookie for seven days;
+ * without it the cookie is a browser-session cookie and the token lasts twelve
+ * hours, so a console left open on a shared machine does not outlive the day.
+ */
+function issueSession(res, admin, remember = false) {
   const token = jwt.sign(
     { sub: admin._id.toString(), kind: 'superadmin' },
     env.JWT_SECRET,
-    { expiresIn: `${SESSION_DAYS}d` },
+    { expiresIn: remember ? `${SESSION_DAYS}d` : `${SESSION_HOURS}h` },
   );
 
   res.cookie(SUPERADMIN_COOKIE, token, {
     httpOnly: true,
     sameSite: 'lax',
     secure: env.isProd,
-    maxAge: SESSION_DAYS * 24 * 60 * 60 * 1000,
+    ...(remember ? { maxAge: SESSION_DAYS * 24 * 60 * 60 * 1000 } : {}),
     path: '/',
   });
 }
@@ -105,7 +115,7 @@ function clearSuperAdminSession(res) {
 
 // ---- session ----------------------------------------------------------------
 
-async function login({ email, password }, res) {
+async function login({ email, password, remember = false }, res) {
   const admin = await SuperAdmin.findOne({ email: String(email).toLowerCase().trim() }).select(
     '+passwordHash',
   );
@@ -121,7 +131,70 @@ async function login({ email, password }, res) {
   admin.lastLoginAt = new Date();
   await admin.save();
 
-  issueSession(res, admin);
+  issueSession(res, admin, remember);
+  return { admin: admin.toPublic() };
+}
+
+/** Where the console answers, for the link in a reset email. */
+function consoleOrigin(origin) {
+  if (env.SUPERADMIN_HOST) return env.originFor(env.SUPERADMIN_HOST);
+  return origin || env.publicOrigin;
+}
+
+/**
+ * Emails a reset link to an operator, if the address is one.
+ *
+ * **Always answers the same**, whatever the address: the reply must not say
+ * which addresses are operators. The mail is Kelinto's own, since an operator
+ * belongs to no business. A deactivated operator is sent nothing.
+ */
+async function forgotPassword({ email }, { origin } = {}) {
+  const admin = await SuperAdmin.findOne({ email: String(email).toLowerCase().trim() });
+  if (!admin?.isActive) return;
+
+  const token = crypto.randomBytes(32).toString('base64url');
+  admin.resetTokenHash = hashResetToken(token);
+  admin.resetTokenAt = new Date(Date.now() + RESET_TTL_MS);
+  await admin.save();
+
+  await sendConsoleResetEmail({
+    admin,
+    token,
+    origin: consoleOrigin(origin),
+    expiresMinutes: Math.round(RESET_TTL_MS / 60000),
+  });
+}
+
+/**
+ * Completes a console reset and signs the operator in (not remembered).
+ *
+ * The token is the whole authorisation: it must hash to a stored value and be
+ * in date, and it dies on use. Every session opened before the reset ends.
+ */
+async function resetPassword({ token, password }, res) {
+  const admin = await SuperAdmin.findOne({ resetTokenHash: hashResetToken(token) }).select(
+    '+resetTokenHash +resetTokenAt',
+  );
+  const invalid = ApiError.badRequest('That reset link is no longer valid. Request a new one.', 'RESET_TOKEN_INVALID');
+
+  if (!admin || !admin.isActive) throw invalid;
+  if (!admin.resetTokenAt || admin.resetTokenAt.getTime() < Date.now()) {
+    admin.resetTokenHash = undefined;
+    admin.resetTokenAt = undefined;
+    await admin.save();
+    throw invalid;
+  }
+
+  admin.passwordHash = await bcrypt.hash(String(password), 10);
+  admin.resetTokenHash = undefined;
+  admin.resetTokenAt = undefined;
+  // Whole seconds, because a JWT's iat is: the session issued just below must
+  // not count as older than this.
+  admin.sessionsValidFrom = new Date(Math.floor(Date.now() / 1000) * 1000);
+  admin.lastLoginAt = new Date();
+  await admin.save();
+
+  issueSession(res, admin, false);
   return { admin: admin.toPublic() };
 }
 
@@ -1179,6 +1252,8 @@ async function listPlansWithUsage() {
 
 export {
   SUPERADMIN_COOKIE,
+  forgotPassword,
+  resetPassword,
   assignBusiness,
   clearSuperAdminSession,
   createBusiness,

@@ -410,7 +410,7 @@ export function ConversationsPanel({
  * an audit row.
  */
 
-export function NotesPanel({ notes = [], onAdd, onDelete, isPending }) {
+export function NotesPanel({ notes = [], onAdd, onDelete, isPending, isDeleting }) {
   const [body, setBody] = useState('');
   // The delete control only appears on hover and sits a few pixels from the
   // note's own text, so it asks before removing what a colleague wrote.
@@ -481,10 +481,8 @@ export function NotesPanel({ notes = [], onAdd, onDelete, isPending }) {
       <ConfirmDialog
         open={Boolean(deleting)}
         onClose={() => setDeleting(null)}
-        onConfirm={() => {
-          onDelete(deleting.id);
-          setDeleting(null);
-        }}
+        // Open until the delete lands, so the button can say it is working.
+        onConfirm={() => onDelete(deleting.id, () => setDeleting(null))}
         title="Delete this note?"
         body={
           deleting
@@ -492,7 +490,9 @@ export function NotesPanel({ notes = [], onAdd, onDelete, isPending }) {
             : ''
         }
         confirmLabel="Delete note"
-        loading={isPending}
+        confirmPhrase="delete"
+        confirmPhraseLabel="the word delete"
+        loading={isDeleting}
       />
     </Panel>
   );

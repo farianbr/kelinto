@@ -20,6 +20,8 @@ import useAuth from '@/hooks/useAuth';
 import AdminServiceQuotesPage from '@/pages/admin/AdminServiceQuotesPage';
 import useCreateParam from '@/hooks/useCreateParam';
 import { money, date, count as formatCount } from '@/lib/format';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import { toast } from '@/store/toastStore';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
 import Modal from '@/components/ui/Modal';
 import Input from '@/components/ui/Input';
@@ -327,6 +329,9 @@ function AdminWholesaleQuotesPage() {
   // Only loaded while the builder is open - the catalogue is 400+ rows.
   const { data: inventoryData } = useAdminInventory({}, creating);
   const [selected, setSelected] = useState([]);
+  // The bulk action waiting on its confirmation, and whether it is running.
+  const [bulkAction, setBulkAction] = useState(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const { createQuote, setQuoteStatus, deleteQuote } = useAdminMutations();
 
   const quotes = data?.quotes ?? [];
@@ -379,11 +384,14 @@ function AdminWholesaleQuotesPage() {
 
     const skipped = rows.length - eligible.length;
     if (skipped > 0) {
-      window.alert(
+      toast.error(
+        `${formatCount(eligible.length)} ${action === 'accept' ? 'accepted' : 'deleted'}, ${formatCount(skipped)} skipped`,
         action === 'accept'
-          ? `${eligible.length} accepted. ${skipped} skipped - only a sent quote that has not expired can be accepted.`
-          : `${eligible.length} deleted. ${skipped} skipped - a converted quote cannot be deleted without orphaning the order it became.`,
+          ? 'Only a sent quote that has not expired can be accepted.'
+          : 'A converted quote cannot be deleted without orphaning the order it became.',
       );
+    } else if (eligible.length > 0) {
+      toast.ok(`${formatCount(eligible.length)} ${action === 'accept' ? 'accepted' : 'deleted'}`, 'Done.');
     }
   }
 
@@ -478,14 +486,24 @@ function AdminWholesaleQuotesPage() {
       // The server enforces the ladder regardless; this is a courtesy, never
       // the control (invariant 13).
       disabled: (quote) => quote.storedStatus !== 'draft',
-      onSelect: (quote) => setQuoteStatus.mutate({ id: quote.id, status: 'sent' }),
+      confirm: (quote) => ({
+        title: `Mark ${quote.quoteNumber} as sent?`,
+        body: 'It is recorded as sent to the customer. Nothing is emailed from here.',
+        confirmLabel: 'Mark as sent',
+      }),
+      onSelect: (quote) => setQuoteStatus.mutateAsync({ id: quote.id, status: 'sent' }),
     },
     {
       key: 'accept',
       label: 'Mark as accepted',
       icon: CheckCircle2,
       disabled: (quote) => quote.storedStatus !== 'sent' || quote.expired,
-      onSelect: (quote) => setQuoteStatus.mutate({ id: quote.id, status: 'accepted' }),
+      confirm: (quote) => ({
+        title: `Mark ${quote.quoteNumber} as accepted?`,
+        body: 'It is recorded as accepted by the customer, ready to be turned into work.',
+        confirmLabel: 'Mark as accepted',
+      }),
+      onSelect: (quote) => setQuoteStatus.mutateAsync({ id: quote.id, status: 'accepted' }),
     },
   ];
 
@@ -614,7 +632,7 @@ function AdminWholesaleQuotesPage() {
           variant="outline"
           icon={ThumbsUp}
           loading={setQuoteStatus.isPending}
-          onClick={() => runBulk('accept')}
+          onClick={() => setBulkAction('accept')}
         >
           Accept
         </Button>
@@ -623,11 +641,41 @@ function AdminWholesaleQuotesPage() {
           variant="outline"
           icon={Trash2}
           loading={deleteQuote.isPending}
-          onClick={() => runBulk('delete')}
+          onClick={() => setBulkAction('delete')}
         >
           Delete
         </Button>
       </BulkBar>
+
+      {/* Bulk writes confirm like single ones; a bulk delete is typed back (§3.0.1). */}
+      <ConfirmDialog
+        open={Boolean(bulkAction)}
+        onClose={bulkBusy ? () => {} : () => setBulkAction(null)}
+        onConfirm={async () => {
+          setBulkBusy(true);
+          try {
+            await runBulk(bulkAction);
+            setBulkAction(null);
+          } finally {
+            setBulkBusy(false);
+          }
+        }}
+        tone={bulkAction === 'delete' ? 'danger' : 'warn'}
+        title={
+          bulkAction === 'delete'
+            ? `Delete ${formatCount(selected.length)} selected ${selected.length === 1 ? 'quote' : 'quotes'}?`
+            : `Mark ${formatCount(selected.length)} selected ${selected.length === 1 ? 'quote' : 'quotes'} as accepted?`
+        }
+        body={
+          bulkAction === 'delete'
+            ? 'Deleted quotes cannot be recovered. A quote that became an order is skipped, so the order keeps its source.'
+            : 'Only sent quotes that have not expired are accepted; the rest are skipped and listed afterwards.'
+        }
+        confirmLabel={bulkAction === 'delete' ? 'Delete quotes' : 'Accept quotes'}
+        confirmPhrase={bulkAction === 'delete' ? 'delete' : undefined}
+        confirmPhraseLabel="the word delete"
+        loading={bulkBusy}
+      />
 
       <Modal
         open={creating}

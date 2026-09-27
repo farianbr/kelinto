@@ -5,6 +5,7 @@ import cn from '@/lib/cn';
 import useOnClickOutside from '@/hooks/useOnClickOutside';
 import useAnchoredPosition from '@/hooks/useAnchoredPosition';
 import { pressable } from '@/lib/motion';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
 
 /**
  * The `···` overflow menu, as its own component.
@@ -15,7 +16,15 @@ import { pressable } from '@/lib/motion';
  * implementation of "the actions that did not earn a button", which matters
  * because it is the thing a staff member learns once and expects everywhere.
  *
- * `items` are `{ key, label, icon, tone, disabled, hidden, hint, onSelect }`.
+ * `items` are `{ key, label, icon, tone, disabled, hidden, hint, confirm, onSelect }`.
+ *
+ * **`confirm` puts a `ConfirmDialog` in front of `onSelect`** (§3.0.1): an object,
+ * or a function of the row, holding the dialog's `title`, `body`, `confirmLabel`,
+ * `tone` and, for a critical write, `confirmPhrase` / `confirmPhraseLabel`. The
+ * menu owns the dialog, so a row action cannot be added without deciding what
+ * it asks. When `onSelect` returns a promise (pass `mutateAsync`), the dialog
+ * stays open with its button loading until the write lands, and shows the
+ * error in place if it fails.
  * `disabled`, `hidden` and `hint` accept a value **or** a predicate, so
  * `DataTable` can
  * keep passing row-aware functions while a page passes plain booleans.
@@ -26,6 +35,10 @@ import { pressable } from '@/lib/motion';
  */
 export function ActionMenu({ items = [], context, label = 'More actions', trigger, align = 'right', className }) {
   const [open, setOpen] = useState(false);
+  // The item waiting on its confirmation, and the state of its write.
+  const [asking, setAsking] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
   const containerRef = useRef(null);
   const buttonRef = useRef(null);
   const panelRef = useRef(null);
@@ -56,6 +69,21 @@ export function ActionMenu({ items = [], context, label = 'More actions', trigge
   const usable = items.filter((item) => !resolve(item.hidden));
   if (!usable.length) return null;
 
+  const question = asking ? resolve(asking.confirm) : null;
+
+  async function runConfirmed() {
+    setBusy(true);
+    setError(null);
+    try {
+      await asking.onSelect?.(context);
+      setAsking(null);
+    } catch (caught) {
+      setError(caught?.message ?? 'That did not work. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const panel = open && (
     <div
       ref={panelRef}
@@ -84,7 +112,12 @@ export function ActionMenu({ items = [], context, label = 'More actions', trigge
             disabled={disabled}
             onClick={() => {
               setOpen(false);
-              item.onSelect?.(context);
+              if (item.confirm) {
+                setError(null);
+                setAsking(item);
+              } else {
+                item.onSelect?.(context);
+              }
             }}
             className={cn(
               pressable,
@@ -133,6 +166,22 @@ export function ActionMenu({ items = [], context, label = 'More actions', trigge
       </button>
 
       {typeof document !== 'undefined' && createPortal(panel, document.body)}
+
+      {question && (
+        <ConfirmDialog
+          open
+          onClose={busy ? () => {} : () => setAsking(null)}
+          onConfirm={runConfirmed}
+          tone={question.tone ?? (asking.tone === 'danger' ? 'danger' : 'warn')}
+          title={question.title}
+          body={question.body}
+          confirmLabel={question.confirmLabel ?? 'Confirm'}
+          confirmPhrase={question.confirmPhrase}
+          confirmPhraseLabel={question.confirmPhraseLabel}
+          loading={busy}
+          error={error}
+        />
+      )}
     </div>
   );
 }

@@ -21,6 +21,7 @@ import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import Skeleton from '@/components/ui/Skeleton';
 import ActionMenu from '@/components/ui/ActionMenu';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { useTableClasses } from '@/components/admin/DataTable';
 import { toast } from '@/store/toastStore';
 import { apiUrl } from '@/lib/api';
@@ -552,6 +553,12 @@ export function PurchaseBidsPanel({ order }) {
   const [expanded, setExpanded] = useState(null);
   const [revising, setRevising] = useState(null);
   const [error, setError] = useState(null);
+  // One-click writes, each held here until its dialog is confirmed (§3.0.1).
+  // All three are critical: sending emails every supplier, accepting a
+  // proforma rewrites the order's lines, and removing a supplier withdraws them.
+  const [confirmingSend, setConfirmingSend] = useState(false);
+  const [accepting, setAccepting] = useState(null);
+  const [removing, setRemoving] = useState(null);
 
   const board = data;
   const bids = board?.bids ?? [];
@@ -576,13 +583,15 @@ export function PurchaseBidsPanel({ order }) {
     sendPurchaseOrder.mutate(
       { id: order.id },
       {
-        onSuccess: (result) =>
+        onSuccess: (result) => {
+          setConfirmingSend(false);
           toast.ok(
             'Sent',
             result.mailed === result.total
               ? `All ${formatCount(result.total)} supplier(s) were emailed.`
               : `${formatCount(result.mailed)} of ${formatCount(result.total)} were emailed - check the addresses on the rest.`,
-          ),
+          );
+        },
         onError: (err) => setError(err.message),
       },
     );
@@ -610,7 +619,7 @@ export function PurchaseBidsPanel({ order }) {
                   icon={Send}
                   loading={sendPurchaseOrder.isPending}
                   disabled={!bids.length}
-                  onClick={send}
+                  onClick={() => setConfirmingSend(true)}
                 >
                   Send to {formatCount(bids.length)}
                 </Button>
@@ -652,32 +661,11 @@ export function PurchaseBidsPanel({ order }) {
                   setExpanded((current) => (current === bid.id ? null : bid.id))
                 }
                 proformaBusy={acceptProforma.isPending}
-                onAcceptProforma={() =>
-                  acceptProforma.mutate(
-                    { id: order.id, supplierId: bid.supplier.id },
-                    {
-                      onSuccess: (result) => {
-                        const changed = result?.diff?.changed ?? 0;
-                        toast.ok(
-                          'Proforma confirmed',
-                          changed
-                            ? `The order now matches it - ${changed} line${changed === 1 ? '' : 's'} updated.`
-                            : 'The order already matched it line for line.',
-                        );
-                      },
-                      onError: (err) => setError(err.message),
-                    },
-                  )
-                }
+                onAcceptProforma={() => setAccepting(bid)}
                 onRequestRevision={() => setRevising(bid)}
                 onNegotiate={() => setNegotiating(bid)}
                 onConfirm={() => setConfirming(bid)}
-                onRemove={() =>
-                  removePoSupplier.mutate(
-                    { id: order.id, supplierId: bid.supplier.id },
-                    { onError: (err) => setError(err.message) },
-                  )
-                }
+                onRemove={() => setRemoving(bid)}
               />
             ))}
           </ul>
@@ -744,6 +732,69 @@ export function PurchaseBidsPanel({ order }) {
         order={order}
         onClose={() => setConfirming(null)}
         confirm={confirmPoSupplier}
+      />
+
+      <ConfirmDialog
+        open={confirmingSend}
+        onClose={() => setConfirmingSend(false)}
+        onConfirm={send}
+        tone="warn"
+        title={`Send ${order.poNumber} to ${formatCount(bids.length)} supplier${bids.length === 1 ? '' : 's'}?`}
+        body={`${bids.map((bid) => bid.supplier.name).join(', ')} will each be emailed a link to price it. An email cannot be recalled.`}
+        confirmLabel="Send order"
+        confirmPhrase={order.poNumber}
+        confirmPhraseLabel="the order number"
+        loading={sendPurchaseOrder.isPending}
+        error={error}
+      />
+
+      <ConfirmDialog
+        open={Boolean(accepting)}
+        onClose={() => setAccepting(null)}
+        onConfirm={() =>
+          acceptProforma.mutate(
+            { id: order.id, supplierId: accepting.supplier.id },
+            {
+              onSuccess: (result) => {
+                setAccepting(null);
+                const changed = result?.diff?.changed ?? 0;
+                toast.ok(
+                  'Proforma confirmed',
+                  changed
+                    ? `The order now matches it - ${changed} line${changed === 1 ? '' : 's'} updated.`
+                    : 'The order already matched it line for line.',
+                );
+              },
+              onError: (err) => setError(err.message),
+            },
+          )
+        }
+        tone="warn"
+        title={`Accept ${accepting?.supplier.name}'s proforma for ${order.poNumber}?`}
+        body="The order's lines are rewritten to match the proforma, and the supplier sees it as accepted."
+        confirmLabel="Accept proforma"
+        confirmPhrase={order.poNumber}
+        confirmPhraseLabel="the order number"
+        loading={acceptProforma.isPending}
+        error={error}
+      />
+
+      <ConfirmDialog
+        open={Boolean(removing)}
+        onClose={() => setRemoving(null)}
+        onConfirm={() =>
+          removePoSupplier.mutate(
+            { id: order.id, supplierId: removing.supplier.id },
+            { onSuccess: () => setRemoving(null), onError: (err) => setError(err.message) },
+          )
+        }
+        title={`Remove ${removing?.supplier.name} from ${order.poNumber}?`}
+        body="They are taken off this order, and any price they gave on it is discarded."
+        confirmLabel="Remove supplier"
+        confirmPhrase={removing?.supplier.name}
+        confirmPhraseLabel="the supplier's name"
+        loading={removePoSupplier.isPending}
+        error={error}
       />
 
       <RevisionModal

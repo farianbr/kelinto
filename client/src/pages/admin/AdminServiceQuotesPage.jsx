@@ -90,6 +90,9 @@ export function AdminServiceQuotesPage() {
   // The estimate awaiting a typed number before it is destroyed.
   const [deleting, setDeleting] = useState(null);
   const [selected, setSelected] = useState([]);
+  // The bulk action waiting on its confirmation, and whether it is running.
+  const [bulkAction, setBulkAction] = useState(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const status = searchParams.get('status') ?? 'all';
 
@@ -247,14 +250,24 @@ export function AdminServiceQuotesPage() {
       icon: Send,
       // The server enforces this regardless; the menu is a courtesy.
       disabled: (quote) => quote.storedStatus !== 'draft',
-      onSelect: (quote) => setServiceQuoteStatus.mutate({ id: quote.id, status: 'sent' }),
+      confirm: (quote) => ({
+        title: `Mark ${quote.quoteNumber} as sent?`,
+        body: 'It is recorded as sent to the customer. Nothing is emailed from here.',
+        confirmLabel: 'Mark as sent',
+      }),
+      onSelect: (quote) => setServiceQuoteStatus.mutateAsync({ id: quote.id, status: 'sent' }),
     },
     {
       key: 'accept',
       label: 'Mark as accepted',
       icon: CheckCircle2,
       disabled: (quote) => quote.storedStatus !== 'sent' || quote.expired,
-      onSelect: (quote) => setServiceQuoteStatus.mutate({ id: quote.id, status: 'accepted' }),
+      confirm: (quote) => ({
+        title: `Mark ${quote.quoteNumber} as accepted?`,
+        body: 'It is recorded as accepted by the customer, ready to be turned into work.',
+        confirmLabel: 'Mark as accepted',
+      }),
+      onSelect: (quote) => setServiceQuoteStatus.mutateAsync({ id: quote.id, status: 'accepted' }),
     },
     {
       key: 'convert',
@@ -403,7 +416,7 @@ export function AdminServiceQuotesPage() {
           variant="outline"
           icon={CheckCircle2}
           loading={setServiceQuoteStatus.isPending}
-          onClick={() => runBulk('accept')}
+          onClick={() => setBulkAction('accept')}
         >
           Accept
         </Button>
@@ -412,11 +425,41 @@ export function AdminServiceQuotesPage() {
           variant="outline"
           icon={Trash2}
           loading={deleteServiceQuote.isPending}
-          onClick={() => runBulk('delete')}
+          onClick={() => setBulkAction('delete')}
         >
           Delete
         </Button>
       </BulkBar>
+
+      {/* Bulk writes confirm like single ones; a bulk delete is typed back (§3.0.1). */}
+      <ConfirmDialog
+        open={Boolean(bulkAction)}
+        onClose={bulkBusy ? () => {} : () => setBulkAction(null)}
+        onConfirm={async () => {
+          setBulkBusy(true);
+          try {
+            await runBulk(bulkAction);
+            setBulkAction(null);
+          } finally {
+            setBulkBusy(false);
+          }
+        }}
+        tone={bulkAction === 'delete' ? 'danger' : 'warn'}
+        title={
+          bulkAction === 'delete'
+            ? `Delete ${formatCount(selected.length)} selected ${selected.length === 1 ? 'quote' : 'quotes'}?`
+            : `Mark ${formatCount(selected.length)} selected ${selected.length === 1 ? 'quote' : 'quotes'} as accepted?`
+        }
+        body={
+          bulkAction === 'delete'
+            ? 'Deleted quotes cannot be recovered. A quote that became a ticket is skipped, so the ticket keeps its source.'
+            : 'Only sent quotes that have not expired are accepted; the rest are skipped and listed afterwards.'
+        }
+        confirmLabel={bulkAction === 'delete' ? 'Delete quotes' : 'Accept quotes'}
+        confirmPhrase={bulkAction === 'delete' ? 'delete' : undefined}
+        confirmPhraseLabel="the word delete"
+        loading={bulkBusy}
+      />
 
       {/*
         Converting starts work and creates a second record, so it names the

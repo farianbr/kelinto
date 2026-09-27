@@ -301,7 +301,14 @@ export function AdminProductsPage() {
       key: 'toggle',
       label: (product) => (product.isActive ? 'Hide from website' : 'List on website'),
       icon: Eye,
-      onSelect: (product) => toggleProduct.mutate(product.id),
+      confirm: (product) => ({
+        title: product.isActive ? `Hide ${product.name} from the website?` : `List ${product.name} on the website?`,
+        body: product.isActive
+          ? 'Customers stop seeing it in the catalogue and cannot order it. Its stock and history stay.'
+          : 'Customers can see it in the catalogue and order it again.',
+        confirmLabel: product.isActive ? 'Hide product' : 'List product',
+      }),
+      onSelect: (product) => toggleProduct.mutateAsync(product.id),
     },
   ];
 

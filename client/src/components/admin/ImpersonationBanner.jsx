@@ -5,6 +5,7 @@ import cn from '@/lib/cn';
 import { pressable } from '@/lib/motion';
 import { useSuperAdminMutations } from '@/hooks/useSuperAdmin';
 import { superAdminUrl } from '@/lib/surface';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
 
 /**
  * "You are inside somebody else's business" (SAAS_PLATFORM §4.5).
@@ -54,6 +55,8 @@ function remaining(expiresAt) {
 export function ImpersonationBanner({ impersonation }) {
   const { leaveBusiness } = useSuperAdminMutations();
   const left = useCountdown(impersonation?.expiresAt);
+  // Leaving ends the support session, like a sign-out, so it asks first (§3.0.1).
+  const [confirming, setConfirming] = useState(false);
 
   if (!impersonation) return null;
 
@@ -92,7 +95,7 @@ export function ImpersonationBanner({ impersonation }) {
 
       <button
         type="button"
-        onClick={leave}
+        onClick={() => setConfirming(true)}
         disabled={leaveBusiness.isPending}
         className={cn(
           pressable,
@@ -102,6 +105,17 @@ export function ImpersonationBanner({ impersonation }) {
       >
         {leaveBusiness.isPending ? 'Leaving…' : 'Leave'}
       </button>
+
+      <ConfirmDialog
+        open={confirming}
+        onClose={() => setConfirming(false)}
+        onConfirm={leave}
+        tone="info"
+        title={`Leave ${impersonation.businessName}?`}
+        body="Your support session ends now. Getting back in means starting a new one, with a new reason."
+        confirmLabel="Leave business"
+        loading={leaveBusiness.isPending}
+      />
     </div>
   );
 }

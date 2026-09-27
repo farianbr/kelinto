@@ -1,4 +1,4 @@
-import { DeleteObjectsCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { CopyObjectCommand, DeleteObjectsCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import env from '../config/env.js';
 import ApiError from '../utils/ApiError.js';
 import { controlModels } from '../db/models.js';
@@ -15,7 +15,11 @@ import { newId, processUpload, SIBLINGS } from './mediaProcessor.js';
  * touching anybody else's:
  *
  *   businesses/<business code>/<kind>/<random>.<ext>   a business's own files
- *   platform/<kind>/<random>.<ext>                     Kelinto's own files
+ *   kelinto/<kind>/<random>.<ext>                      Kelinto's own files
+ *
+ * Kelinto's folder was `platform/` until 2026-09-27. Keys under it still
+ * resolve and still count as Kelinto's, so a record nobody has migrated keeps
+ * rendering; `npm run backfill -- kelinto-naming` moves them across.
  *
  * The name is random, never the uploader's filename: a filename is typed by a
  * person and can carry anything, and a new name per upload means a replaced
@@ -38,6 +42,10 @@ import { newId, processUpload, SIBLINGS } from './mediaProcessor.js';
  * one is swept (`sweepAbandoned`), and a saved record that stops using a file
  * deletes it (`releaseReplaced`).
  */
+
+/** The owner for Kelinto's own files (console › Brand), as opposed to a business code. */
+const KELINTO = 'kelinto';
+const LEGACY_KELINTO_FOLDER = 'platform';
 
 /** What each upload slot accepts, and how large an INPUT may be. */
 const KINDS = {
@@ -115,7 +123,7 @@ function publicUrl(key) {
  * later - is an edit to `R2_PUBLIC_URL` and a restart, with nothing stored to
  * rewrite. Order and cart lines snapshot the key for the same reason.
  */
-const KEY_PATTERN = /^(?:businesses\/[a-z0-9_-]+|platform)\/[a-z-]+\/[0-9a-f-]{36}(?:-[a-z0-9]+)?\.[a-z0-9]+$/i;
+const KEY_PATTERN = /^(?:businesses\/[a-z0-9_-]+|kelinto|platform)\/[a-z-]+\/[0-9a-f-]{36}(?:-[a-z0-9]+)?\.[a-z0-9]+$/i;
 
 /** The key behind a stored key or one of OUR public URLs, or null for anything else. */
 function keyOf(value) {
@@ -146,7 +154,7 @@ function urlOf(value) {
  * `businesses/000002/`.
  */
 function ownerPrefix(owner) {
-  if (owner === 'platform') return 'platform';
+  if (owner === KELINTO) return 'kelinto';
   const folder = String(owner ?? '').replace(/^#/, '');
   if (!/^[a-z0-9_-]+$/i.test(folder)) throw ApiError.badRequest('No business to store this for.', 'NO_BUSINESS');
   return `businesses/${folder}`;
@@ -155,7 +163,10 @@ function ownerPrefix(owner) {
 /** Is this key one of `owner`'s? Never throws, for the cleanup paths. */
 function ownsKey(key, owner) {
   try {
-    return Boolean(key) && key.startsWith(`${ownerPrefix(owner)}/`);
+    if (!key) return false;
+    // Kelinto's files written before the folder was renamed are still its own.
+    if (owner === KELINTO && key.startsWith(`${LEGACY_KELINTO_FOLDER}/`)) return true;
+    return key.startsWith(`${ownerPrefix(owner)}/`);
   } catch {
     return false;
   }
@@ -200,7 +211,7 @@ async function deleteKeys(keys) {
  * Check, optimise and store one upload. Returns the public URL the record will
  * point at, plus `poster` for a video.
  *
- * @param owner `'platform'`, or a business's `code`.
+ * @param owner `KELINTO`, or a business's `code`.
  * @param kind one of `KINDS`.
  * @param buffer the file's bytes.
  */
@@ -352,6 +363,36 @@ async function dataUriOf(url) {
 }
 
 /**
+ * Move a stored file, with its thumbnail or poster, to a new key. For
+ * migrations only: a live upload never moves, it is replaced by a new key.
+ * Copies everything first and deletes only once every copy has landed, so a
+ * failure part-way leaves the original intact. Returns the new key.
+ */
+async function moveKey(fromKey, toKey) {
+  if (!isConfigured()) throw new Error('R2 is not configured');
+  const from = keysWithSiblings(fromKey);
+  const to = keysWithSiblings(toKey);
+  for (let i = 0; i < from.length; i += 1) {
+    try {
+      await s3().send(
+        new CopyObjectCommand({
+          Bucket: env.R2_BUCKET,
+          CopySource: `${env.R2_BUCKET}/${encodeURIComponent(from[i]).replace(/%2F/g, '/')}`,
+          Key: to[i],
+          // The default: content type and cache headers travel with the copy.
+          MetadataDirective: 'COPY',
+        }),
+      );
+    } catch (error) {
+      // A sibling that was never written (an older upload) is not a failure.
+      if (i === 0 || error.name !== 'NoSuchKey') throw error;
+    }
+  }
+  await deleteKeys(from);
+  return toKey;
+}
+
+/**
  * After a save: claim what the record now uses, and delete what it stopped
  * using. Every save that takes uploaded URLs calls this and nothing else.
  */
@@ -387,6 +428,8 @@ const storage = {
   toKey,
   urlOf,
   dataUriOf,
+  moveKey,
+  KELINTO,
 };
 
 export {
@@ -405,5 +448,7 @@ export {
   toKey,
   urlOf,
   dataUriOf,
+  moveKey,
+  KELINTO,
 };
 export default storage;

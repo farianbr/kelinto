@@ -785,6 +785,8 @@ export function SupplierPurchaseOrderPage() {
         title={`Tell us you cannot supply ${order.poNumber}?`}
         body="We will stop chasing you for a price on this order."
         confirmLabel="Yes, I cannot supply this"
+        confirmPhrase={order.poNumber}
+        confirmPhraseLabel="the order number"
         loading={declineQuote.isPending}
       />
     </>

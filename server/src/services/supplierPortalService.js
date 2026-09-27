@@ -42,7 +42,10 @@ import { storefrontOrigin } from './linkOrigins.js';
  */
 
 const SUPPLIER_COOKIE = `${env.COOKIE_NAME}_supplier`;
+/** "Remember me": thirty days. Without it, a browser-session cookie and a
+ *  twelve-hour token, as the ERP and the console do. */
 const SESSION_DAYS = 30;
+const SESSION_HOURS = 12;
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const TOKEN_TTL_DAYS = Math.round(TOKEN_TTL_MS / (24 * 60 * 60 * 1000));
 
@@ -61,11 +64,11 @@ function portalOrigin(businessId = currentBusinessId()) {
   return storefrontOrigin(businessId);
 }
 
-function issueSession(res, supplier, businessId) {
+function issueSession(res, supplier, businessId, remember = false) {
   const token = jwt.sign(
     { sub: supplier._id.toString(), kind: 'supplier', biz: String(businessId) },
     env.JWT_SECRET,
-    { expiresIn: `${SESSION_DAYS}d` },
+    { expiresIn: remember ? `${SESSION_DAYS}d` : `${SESSION_HOURS}h` },
   );
 
   // Host-only (no `domain`), so the cookie belongs to this business's address
@@ -74,7 +77,7 @@ function issueSession(res, supplier, businessId) {
     httpOnly: true,
     sameSite: 'lax',
     secure: env.isProd,
-    maxAge: SESSION_DAYS * 24 * 60 * 60 * 1000,
+    ...(remember ? { maxAge: SESSION_DAYS * 24 * 60 * 60 * 1000 } : {}),
     path: '/',
   });
 }
@@ -168,7 +171,7 @@ async function invitePortal(supplierId) {
  * every record with a password is tried; the first whose password matches is
  * the one signed in.
  */
-async function login({ email, password }, res) {
+async function login({ email, password, remember = false }, res) {
   const businessId = currentBusinessId();
   const candidates = businessId
     ? await db()
@@ -193,7 +196,7 @@ async function login({ email, password }, res) {
   match.portalLastLoginAt = new Date();
   await match.save();
 
-  issueSession(res, match, businessId);
+  issueSession(res, match, businessId, remember);
   return { ok: true };
 }
 

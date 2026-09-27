@@ -146,11 +146,15 @@ function UnsubscribesModal({ open, onClose }) {
   const [error, setError] = useState(null);
   const { data, isLoading } = useMarketingUnsubscribes({ limit: 100 });
   const { resubscribe } = useAdminMutations();
+  // Recording consent for somebody who withdrew it is a legal act under
+  // CASL, so it is typed back, not clicked through (§3.0.1).
+  const [resubscribing, setResubscribing] = useState(null);
 
   async function handleResubscribe(row) {
     setError(null);
     try {
       await resubscribe.mutateAsync(row.id);
+      setResubscribing(null);
     } catch (err) {
       setError(err.message);
     }
@@ -199,8 +203,7 @@ function UnsubscribesModal({ open, onClose }) {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => handleResubscribe(row)}
-                  loading={resubscribe.isPending}
+                  onClick={() => setResubscribing(row)}
                 >
                   <Undo2 className="size-3.5" strokeWidth={2.25} aria-hidden="true" />
                   Re-subscribe
@@ -210,6 +213,20 @@ function UnsubscribesModal({ open, onClose }) {
           </ul>
         )}
       </div>
+
+      <ConfirmDialog
+        open={Boolean(resubscribing)}
+        onClose={() => setResubscribing(null)}
+        onConfirm={() => handleResubscribe(resubscribing)}
+        tone="warn"
+        title={`Put ${resubscribing?.displayName ?? resubscribing?.email} back on the mailing list?`}
+        body="A new consent dated today is recorded, and they receive marketing email again. Only do this if they asked you to."
+        confirmLabel="Re-subscribe"
+        confirmPhrase={resubscribing?.email}
+        confirmPhraseLabel="their email address"
+        loading={resubscribe.isPending}
+        error={error}
+      />
     </Modal>
   );
 }
@@ -224,6 +241,10 @@ function UnsubscribesModal({ open, onClose }) {
 function SendDialog({ campaign, audience, open, onClose, onSent }) {
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  // A campaign mails every consenting customer at once: the dialog is the
+  // first confirmation and the campaign's name, typed back, is the second.
+  const [typed, setTyped] = useState('');
+  const armed = typed.trim().toLowerCase() === (campaign?.name ?? '').trim().toLowerCase();
   const { sendCampaign } = useAdminMutations();
 
   async function handleSend() {
@@ -240,6 +261,7 @@ function SendDialog({ campaign, audience, open, onClose, onSent }) {
   function handleClose() {
     setResult(null);
     setError(null);
+    setTyped('');
     onClose();
   }
 
@@ -341,6 +363,15 @@ function SendDialog({ campaign, audience, open, onClose, onSent }) {
             </p>
           )}
 
+          {(audience?.eligible ?? 0) > 0 && (
+            <Input
+              label={`Type the campaign name, ${campaign?.name ?? ''}, to send it`}
+              value={typed}
+              onChange={(event) => setTyped(event.target.value)}
+              autoComplete="off"
+            />
+          )}
+
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={handleClose}>
               Cancel
@@ -348,7 +379,7 @@ function SendDialog({ campaign, audience, open, onClose, onSent }) {
             <Button
               onClick={handleSend}
               loading={sendCampaign.isPending}
-              disabled={(audience?.eligible ?? 0) === 0}
+              disabled={(audience?.eligible ?? 0) === 0 || !armed}
               data-autofocus
             >
               <Send className="size-4" strokeWidth={2} aria-hidden="true" />
@@ -633,6 +664,8 @@ export function AdminEmailPage() {
         title={`Delete ${deleting?.name ?? 'campaign'}?`}
         body="It has not been sent, so nothing has gone out."
         confirmLabel="Delete campaign"
+        confirmPhrase={deleting?.name}
+        confirmPhraseLabel="the campaign name"
         loading={deleteCampaign.isPending}
         error={error}
       />

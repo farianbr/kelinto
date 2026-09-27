@@ -240,6 +240,8 @@ export function AccountAddressesPage() {
             : ''
         }
         confirmLabel="Delete address"
+        confirmPhrase={removing?.label}
+        confirmPhraseLabel="the address label"
         loading={removeAddress.isPending}
         error={removeAddress.error?.message}
       />

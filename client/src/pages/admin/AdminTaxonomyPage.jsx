@@ -234,9 +234,10 @@ function EditDialog({ node, onClose }) {
         type="taxonomy"
         record={confirmingDelete ? node : null}
         onClose={() => setConfirmingDelete(false)}
+        // Open until the delete answers, so its button shows the wait.
         onConfirm={async () => {
-          setConfirmingDelete(false);
           await remove();
+          setConfirmingDelete(false);
         }}
         confirmLabel="Delete"
         loading={deleteTaxonomyNode.isPending}

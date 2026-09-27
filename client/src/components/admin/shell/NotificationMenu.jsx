@@ -5,6 +5,7 @@ import cn from '@/lib/cn';
 import useOnClickOutside from '@/hooks/useOnClickOutside';
 import { relativeTime } from '@/lib/format';
 import Modal from '@/components/ui/Modal';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import ApproveClientForm from '@/components/admin/ApproveClientForm';
 import {
   useNotifications,
@@ -169,6 +170,8 @@ function NotificationRow({ entry, onOpen, onAct, acting = false }) {
 export function NotificationMenu() {
   const [open, setOpen] = useState(false);
   const [approving, setApproving] = useState(null);
+  // Clearing removes alerts for good, so it confirms twice (§3.0.1).
+  const [confirmingClear, setConfirmingClear] = useState(false);
   const ref = useRef(null);
   const navigate = useNavigate();
   useOnClickOutside(ref, () => setOpen(false));
@@ -319,7 +322,7 @@ export function NotificationMenu() {
               </p>
               <button
                 type="button"
-                onClick={() => clearAll.mutate()}
+                onClick={() => setConfirmingClear(true)}
                 // Disabled on *clearable* rows, not on the total. A panel
                 // showing nothing but standing conditions has a full list and
                 // nothing to clear, and an enabled button there is one that can
@@ -411,6 +414,19 @@ export function NotificationMenu() {
         </div>
         </>
       )}
+
+      <ConfirmDialog
+        open={confirmingClear}
+        onClose={() => setConfirmingClear(false)}
+        onConfirm={() => clearAll.mutate(undefined, { onSuccess: () => setConfirmingClear(false) })}
+        title={`Clear ${clearable} ${clearable === 1 ? 'alert' : 'alerts'}?`}
+        body="They are removed from this list for good. Alerts about a condition that still holds stay until it clears."
+        confirmLabel="Clear alerts"
+        confirmPhrase="clear"
+        confirmPhraseLabel="the word clear"
+        loading={clearAll.isPending}
+        error={clearAll.error?.message}
+      />
 
       <Modal
         open={Boolean(approving)}

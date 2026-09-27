@@ -133,6 +133,8 @@ import {
   supplierProformaSchema,
   supplierDeliverySchema,
   superAdminLoginSchema,
+  superAdminForgotSchema,
+  superAdminResetSchema,
   tenantSchema,
   tenantSlotsSchema,
   superAdminBusinessSchema,
@@ -248,7 +250,7 @@ router.get('/health', (req, res) =>
 router.get('/platform/plans', superAdminController.listPublicPlans);
 // Kelinto's own logo and favicon, for the landing page and the ERP sign-in.
 router.get('/platform/brand', assetController.platformBrand);
-// ...and where the console sets them. Files go to R2 under `platform/`.
+// ...and where the console sets them. Files go to R2 under `kelinto/`.
 router.post('/superadmin/assets', requireSuperAdmin, assetController.acceptFile, assetController.uploadPlatformAsset);
 router.patch('/superadmin/brand', requireSuperAdmin, assetController.updatePlatformBrand);
 router.post('/superadmin/assets/discard', requireSuperAdmin, assetController.discardPlatformAssets);
@@ -674,6 +676,9 @@ router.post('/admin/suppliers/:id/portal-invite', ...admin, requirePermission('p
 // is a deliberate limit (§4.5) and not an omission.
 router.post('/superadmin/login', authLimiter, validate(superAdminLoginSchema), superAdminController.login);
 router.post('/superadmin/logout', superAdminController.logout);
+// A reset path for operators, Kelinto-sent (2026-09-28; there was none).
+router.post('/superadmin/forgot-password', authLimiter, validate(superAdminForgotSchema), superAdminController.forgotPassword);
+router.post('/superadmin/reset-password', authLimiter, validate(superAdminResetSchema), superAdminController.resetPassword);
 // Not `requireSuperAdmin`: signed out is a valid answer, as it is for `/auth/me`.
 router.get('/superadmin/me', superAdminController.me);
 

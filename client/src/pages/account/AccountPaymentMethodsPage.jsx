@@ -249,6 +249,8 @@ export function AccountPaymentMethodsPage() {
             : ''
         }
         confirmLabel="Remove card"
+        confirmPhrase={removing?.last4}
+        confirmPhraseLabel="the last four digits"
         loading={removePaymentMethod.isPending}
         error={removePaymentMethod.error?.message}
       />

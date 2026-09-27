@@ -173,6 +173,8 @@ export function AdminServiceQuoteDetailPage() {
   const [converting, setConverting] = useState(false);
   // The estimate awaiting a typed number before it is destroyed.
   const [deleting, setDeleting] = useState(false);
+  // "Mark as sent" is a status change fired from one button (§3.0.1).
+  const [confirmingSent, setConfirmingSent] = useState(false);
 
   const { data, isLoading, error } = useAdminServiceQuote(id);
   const { setServiceQuoteStatus, convertServiceQuote, deleteServiceQuote } = useAdminMutations();
@@ -250,12 +252,7 @@ export function AdminServiceQuoteDetailPage() {
               <Button
                 icon={Send}
                 loading={setServiceQuoteStatus.isPending}
-                onClick={() =>
-                  setServiceQuoteStatus.mutate(
-                    { id: quote.id, status: 'sent' },
-                    { onSuccess: () => toast.ok('Marked as sent') },
-                  )
-                }
+                onClick={() => setConfirmingSent(true)}
               >
                 Mark as sent
               </Button>
@@ -439,6 +436,28 @@ export function AdminServiceQuoteDetailPage() {
           )}
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmingSent}
+        onClose={() => setConfirmingSent(false)}
+        onConfirm={() =>
+          setServiceQuoteStatus.mutate(
+            { id: quote.id, status: 'sent' },
+            {
+              onSuccess: () => {
+                setConfirmingSent(false);
+                toast.ok('Marked as sent');
+              },
+            },
+          )
+        }
+        tone="warn"
+        title={`Mark ${quote.quoteNumber} as sent?`}
+        body={`It is recorded as sent to ${quote.customerName}. Nothing is emailed from here.`}
+        confirmLabel="Mark as sent"
+        loading={setServiceQuoteStatus.isPending}
+        error={setServiceQuoteStatus.error?.message}
+      />
 
       {/* Converting creates a second record, so it names the quote and says
           exactly what will exist afterwards - the same dialog the list uses. */}

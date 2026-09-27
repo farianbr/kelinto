@@ -37,17 +37,21 @@ export default function CustomerPortalLink({ id }) {
   const [confirmingRotate, setConfirmingRotate] = useState(false);
   const portalLink = useCustomerPortalLink(id);
 
-  function reveal(rotate = false) {
+  function reveal(rotate = false, onDone) {
     portalLink.mutate(
       { rotate },
       {
         onSuccess: (result) => {
+          onDone?.();
           setLink(result.url);
           setCopied(false);
           if (rotate)
             toast.ok('New portal link issued', 'The previous one no longer works.');
         },
-        onError: (error) => toast.error(error.message),
+        onError: (error) => {
+          onDone?.();
+          toast.error(error.message);
+        },
       },
     );
   }
@@ -141,10 +145,9 @@ export default function CustomerPortalLink({ id }) {
       <ConfirmDialog
         open={confirmingRotate}
         onClose={() => setConfirmingRotate(false)}
-        onConfirm={() => {
-          setConfirmingRotate(false);
-          reveal(true);
-        }}
+        // Open until the new link exists, so the button shows the wait.
+        onConfirm={() => reveal(true, () => setConfirmingRotate(false))}
+        loading={portalLink.isPending}
         title="Issue a new portal link?"
         body="The current link stops working the moment this is done, and the old one cannot be restored."
         confirmPhrase="NEW LINK"

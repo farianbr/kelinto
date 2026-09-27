@@ -6,6 +6,7 @@ import cn from '@/lib/cn';
 import { date, dateTime, count as formatCount, titleize } from '@/lib/format';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
 import Badge from '@/components/ui/Badge';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import Pagination from '@/components/ui/Pagination';
@@ -63,6 +64,8 @@ export function AdminWebQuotesPage() {
   // The enquiry being read. A message is prose, and prose does not belong in a
   // table cell - the row shows its first line and the sheet shows all of it.
   const [reading, setReading] = useState(null);
+  // A status move waiting on its confirmation, from the row menu or the drawer.
+  const [moving, setMoving] = useState(null);
 
   const status = searchParams.get('status') ?? 'all';
   const page = Math.max(1, Number(searchParams.get('page') ?? 1));
@@ -102,11 +105,22 @@ export function AdminWebQuotesPage() {
 
   /** One status move, reported the same way wherever it was started. */
   function move(row, status, title) {
-    setWebQuoteStatus.mutate(
-      { id: row.id, status },
-      { onSuccess: () => toast.ok(title, `Enquiry from ${row.name}.`) },
-    );
+    return setWebQuoteStatus
+      .mutateAsync({ id: row.id, status })
+      .then(() => toast.ok(title, `Enquiry from ${row.name}.`));
   }
+
+  /** What each move asks before it runs (§3.0.1). */
+  const MOVES = {
+    read: { label: 'Mark as read', done: 'Marked as read', body: 'It leaves the New filter and stays in the queue.' },
+    closed: { label: 'Close', done: 'Closed', body: 'It stops showing as outstanding. It can be reopened.' },
+    reopen: { label: 'Reopen', done: 'Back in the queue', body: 'It shows as outstanding again.' },
+  };
+  const ask = (row, kind) => ({
+    title: `${MOVES[kind].label} the enquiry from ${row.name}?`,
+    body: MOVES[kind].body,
+    confirmLabel: MOVES[kind].label,
+  });
 
   /**
    * The bridge to a real quote.
@@ -139,7 +153,8 @@ export function AdminWebQuotesPage() {
       label: 'Mark as read',
       icon: Mail,
       hidden: (row) => row.status !== 'new',
-      onSelect: (row) => move(row, 'read', 'Marked as read'),
+      confirm: (row) => ask(row, 'read'),
+      onSelect: (row) => move(row, 'read', MOVES.read.done),
     },
     {
       key: 'convert',
@@ -153,14 +168,16 @@ export function AdminWebQuotesPage() {
       label: 'Close',
       icon: CheckCheck,
       hidden: (row) => row.status === 'closed',
-      onSelect: (row) => move(row, 'closed', 'Closed'),
+      confirm: (row) => ask(row, 'closed'),
+      onSelect: (row) => move(row, 'closed', MOVES.closed.done),
     },
     {
       key: 'reopen',
       label: 'Reopen',
       icon: Undo2,
       hidden: (row) => row.status !== 'closed',
-      onSelect: (row) => move(row, 'read', 'Back in the queue'),
+      confirm: (row) => ask(row, 'reopen'),
+      onSelect: (row) => move(row, 'read', MOVES.reopen.done),
     },
   ];
 
@@ -381,7 +398,7 @@ export function AdminWebQuotesPage() {
                   variant="outline"
                   icon={Mail}
                   onClick={() => {
-                    move(reading, 'read', 'Marked as read');
+                    setMoving({ row: reading, kind: 'read', status: 'read' });
                     setReading(null);
                   }}
                 >
@@ -391,17 +408,10 @@ export function AdminWebQuotesPage() {
               <Button
                 variant="outline"
                 onClick={() => {
-                  setWebQuoteStatus.mutate(
-                    { id: reading.id, status: reading.status === 'closed' ? 'read' : 'closed' },
-                    {
-                      onSuccess: () =>
-                        toast.ok(
-                          reading.status === 'closed' ? 'Reopened' : 'Closed',
-                          reading.status === 'closed'
-                            ? 'It is back in the queue.'
-                            : 'It will not show as outstanding.',
-                        ),
-                    },
+                  setMoving(
+                    reading.status === 'closed'
+                      ? { row: reading, kind: 'reopen', status: 'read' }
+                      : { row: reading, kind: 'closed', status: 'closed' },
                   );
                   setReading(null);
                 }}
@@ -415,6 +425,18 @@ export function AdminWebQuotesPage() {
           </div>
         )}
       </Modal>
+
+      <ConfirmDialog
+        open={Boolean(moving)}
+        onClose={() => setMoving(null)}
+        onConfirm={() =>
+          move(moving.row, moving.status, MOVES[moving.kind].done).then(() => setMoving(null), () => {})
+        }
+        tone="warn"
+        {...(moving ? ask(moving.row, moving.kind) : {})}
+        loading={setWebQuoteStatus.isPending}
+        error={setWebQuoteStatus.error?.message}
+      />
     </>
   );
 }

@@ -219,8 +219,15 @@ export function AdminExpenseCategoriesPage() {
       key: 'toggle',
       label: (category) => (category.isActive ? 'Deactivate' : 'Reactivate'),
       icon: Power,
+      confirm: (category) => ({
+        title: category.isActive ? `Deactivate ${category.name}?` : `Reactivate ${category.name}?`,
+        body: category.isActive
+          ? 'It stops being offered on new expenses. Expenses already filed under it keep it.'
+          : 'It is offered on new expenses again.',
+        confirmLabel: category.isActive ? 'Deactivate' : 'Reactivate',
+      }),
       onSelect: (category) =>
-        updateExpenseCategory.mutate({
+        updateExpenseCategory.mutateAsync({
           id: category.id,
           name: category.name,
           colorToken: category.colorToken,

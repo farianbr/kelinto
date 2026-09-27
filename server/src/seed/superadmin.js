@@ -37,11 +37,14 @@ const PLANS = [
     includedSlots: 3,
   },
   {
-    name: 'Platform',
-    slug: 'platform',
+    name: 'Unlimited',
+    slug: 'unlimited',
     description: 'Unlimited businesses and every feature switched on.',
     priceCents: 39900,
     includedSlots: 25,
+    // Named "Platform" until 2026-09-27 (`backfill -- kelinto-naming`). Looked
+    // up by the old slug too, so an unmigrated database does not get a second one.
+    legacySlugs: ['platform'],
   },
 ];
 
@@ -51,8 +54,8 @@ async function seedSuperAdmin({ quiet = false } = {}) {
   // ---- plans ---------------------------------------------------------------
 
   let plansAdded = 0;
-  for (const plan of PLANS) {
-    const existing = await Plan.findOne({ slug: plan.slug });
+  for (const { legacySlugs = [], ...plan } of PLANS) {
+    const existing = await Plan.findOne({ slug: { $in: [plan.slug, ...legacySlugs] } });
     if (existing) continue;
     await Plan.create(plan);
     plansAdded += 1;
@@ -89,7 +92,7 @@ async function seedSuperAdmin({ quiet = false } = {}) {
 
   if (!admin) {
     admin = await SuperAdmin.create({
-      name: 'Platform Staff member',
+      name: 'Kelinto Staff member',
       email: SUPER_ADMIN_EMAIL,
       passwordHash: await bcrypt.hash(DEMO_PASSWORD, 10),
       isActive: true,

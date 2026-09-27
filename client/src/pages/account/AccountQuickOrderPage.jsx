@@ -265,6 +265,8 @@ export function AccountQuickOrderPage() {
             : ''
         }
         confirmLabel="Delete saved cart"
+        confirmPhrase={deletingCart?.name}
+        confirmPhraseLabel="the cart name"
         loading={deleteSavedCart.isPending}
         error={deleteSavedCart.error?.message}
       />

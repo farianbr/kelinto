@@ -6,18 +6,25 @@ import {
   ArrowLeft,
   ArrowUpRight,
   Building2,
+  CalendarDays,
   CheckCircle2,
+  FileText,
   LogIn,
   LogOut,
+  MessageSquare,
+  Package,
   RefreshCw,
+  Users,
+  Wallet,
 } from 'lucide-react';
 import KelintoLogo from '@/components/platform/KelintoLogo';
+import SignInLayout, { SignInHeading } from '@/components/layout/SignInLayout';
 import { useAuth } from '@/hooks/useAuth';
 import api from '@/lib/api';
 import cn from '@/lib/cn';
 import { pressable } from '@/lib/motion';
 import { PlatformButton } from '@/components/superadmin/PlatformUI';
-import { PlatformError, PlatformInput } from '@/components/superadmin/PlatformForm';
+import { PlatformConfirm, PlatformError, PlatformInput } from '@/components/superadmin/PlatformForm';
 import RouteFallback from '@/components/layout/RouteFallback';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { panelBusiness, surface } from '@/lib/surface';
@@ -114,143 +121,142 @@ export function PanelSignInPage() {
   }
 
   return (
-    <div className="kelinto flex min-h-dvh items-center justify-center bg-plat-bg px-4 py-10">
-      <div className="w-full max-w-sm">
-        {/* A business's own ERP domain greets its staff by the business's
-            name; the shared one is Kelinto's front door, so it wears the
-            wordmark. Either way the second word is "ERP", what they sign in to. */}
-        <div className="mb-8">
-          {panelBusiness ? (
-            <span className="inline-flex items-center gap-3">
-              <span className="text-2xl font-bold leading-none tracking-tight text-plat-text">{panelBusiness}</span>
-              <span className="border-l border-plat-line pl-3 text-xs font-semibold uppercase tracking-wider text-plat-dim">
-                ERP
-              </span>
-            </span>
-          ) : (
-            <KelintoLogo size="md" subtitle="ERP" />
+    <SignInLayout
+      art={{
+        centre: { icon: Building2 },
+        // People, money, stock, paperwork, messages, time: the kinds of work,
+        // not the features, which change release to release.
+        nodes: [Users, Wallet, Package, FileText, MessageSquare, CalendarDays],
+        // kelinto.com's own lines, not new claims.
+        title: 'Run your entire business from one place.',
+        body: 'Everyone works in the same system, so nothing is typed twice.',
+      }}
+      mark={
+        // A business's own ERP domain greets its staff by the business's
+        // name; the shared one is Kelinto's front door, so it wears the
+        // wordmark. Either way it is centred, with "ERP", what they sign in
+        // to, underneath.
+        panelBusiness ? (
+          <span className="flex flex-col items-center gap-2 text-center">
+            <span className="text-3xl font-bold leading-none tracking-tight text-plat-text">{panelBusiness}</span>
+            <span className="text-xs font-semibold uppercase tracking-wider text-plat-dim">ERP</span>
+          </span>
+        ) : (
+          <KelintoLogo size="lg" subtitle="ERP" stacked />
+        )
+      }
+    >
+      {authError && !user ? (
+        <SessionUnknown onRetry={() => retryAuth()} retrying={isRetryingAuth} />
+      ) : user ? (
+        <NotForThisPanel user={user} onSignOut={signOut} websiteUrl={websiteUrlFor(storefrontOrigin)} />
+      ) : view === 'forgot' ? (
+        <ForgotPassword onBack={() => setView('sign-in')} />
+      ) : choice ? (
+        <>
+          <h1 className="text-xl font-semibold leading-tight text-plat-text">
+            Which business?
+          </h1>
+          <p className="mt-1 text-sm leading-normal text-plat-muted">
+            {choice.values.email} has an account at each of these.
+          </p>
+
+          {error && (
+            <div className="mt-4">
+              <PlatformError>{error}</PlatformError>
+            </div>
           )}
-        </div>
 
-        <div className="rounded-xl border border-plat-line bg-plat-surface p-6">
-          {authError && !user ? (
-            <SessionUnknown onRetry={() => retryAuth()} retrying={isRetryingAuth} />
-          ) : user ? (
-            <NotForThisPanel user={user} onSignOut={signOut} websiteUrl={websiteUrlFor(storefrontOrigin)} />
-          ) : view === 'forgot' ? (
-            <ForgotPassword onBack={() => setView('sign-in')} />
-          ) : choice ? (
-            <>
-              <h1 className="text-xl font-semibold leading-tight text-plat-text">
-                Which business?
-              </h1>
-              <p className="mt-1 text-sm leading-normal text-plat-muted">
-                {choice.values.email} has an account at each of these.
-              </p>
-
-              {error && (
-                <div className="mt-4">
-                  <PlatformError>{error}</PlatformError>
-                </div>
-              )}
-
-              <ul className="mt-4 space-y-2">
-                {choice.choices.map((business) => (
-                  <li key={business.id}>
-                    <PlatformButton
-                      icon={Building2}
-                      className="w-full justify-start"
-                      loading={choosing === business.id}
-                      disabled={Boolean(choosing) && choosing !== business.id}
-                      onClick={() => pick(business)}
-                    >
-                      {business.name}
-                    </PlatformButton>
-                  </li>
-                ))}
-              </ul>
-
-              <BackLink
-                onClick={() => {
-                  setChoice(null);
-                  setError(null);
-                }}
-              >
-                Use a different email
-              </BackLink>
-            </>
-          ) : (
-            <>
-              <h1 className="text-xl font-semibold leading-tight text-plat-text">
-                {panelBusiness ? 'Sign in' : 'Sign in to your business'}
-              </h1>
-              <p className="mt-1 text-sm leading-normal text-plat-muted">
-                {panelBusiness
-                  ? `For ${panelBusiness} owners and staff.`
-                  : 'For owners and staff. Customers sign in on their store’s own website.'}
-              </p>
-
-              {error && (
-                <div className="mt-4">
-                  <PlatformError>
-                    <AlertCircle className="mt-0.5 size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
-                    {error}
-                  </PlatformError>
-                </div>
-              )}
-
-              <form onSubmit={form.handleSubmit(attempt)} className="mt-4">
-                <PlatformInput
-                  label="Email"
-                  type="email"
-                  autoComplete="username"
-                  required
-                  {...form.register('email', { required: 'Enter your email.' })}
-                  error={form.formState.errors.email?.message}
-                />
-                <PlatformInput
-                  label="Password"
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  className="mt-3"
-                  {...form.register('password', { required: 'Enter your password.' })}
-                  error={form.formState.errors.password?.message}
-                />
-
-                <div className="mt-3 flex items-center justify-between gap-3">
-                  <label className="flex items-center gap-2 text-sm text-plat-muted">
-                    <input
-                      type="checkbox"
-                      className="size-4 rounded border-plat-line accent-plat-accent"
-                      {...form.register('remember')}
-                    />
-                    Remember me
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setView('forgot')}
-                    className={cn(pressable, 'rounded text-sm font-medium text-plat-accent-soft')}
-                  >
-                    Forgot password?
-                  </button>
-                </div>
-
+          <ul className="mt-4 space-y-2">
+            {choice.choices.map((business) => (
+              <li key={business.id}>
                 <PlatformButton
-                  variant="primary"
-                  type="submit"
-                  icon={LogIn}
-                  className="mt-4 w-full"
-                  loading={form.formState.isSubmitting}
+                  icon={Building2}
+                  className="w-full justify-start"
+                  loading={choosing === business.id}
+                  disabled={Boolean(choosing) && choosing !== business.id}
+                  onClick={() => pick(business)}
                 >
-                  Sign in
+                  {business.name}
                 </PlatformButton>
-              </form>
-            </>
+              </li>
+            ))}
+          </ul>
+
+          <BackLink
+            onClick={() => {
+              setChoice(null);
+              setError(null);
+            }}
+          >
+            Use a different email
+          </BackLink>
+        </>
+      ) : (
+        <>
+          <SignInHeading>
+            {panelBusiness ? `Welcome back to ${panelBusiness}.` : 'Welcome back. Sign in to your business.'}
+          </SignInHeading>
+
+          {error && (
+            <div className="mt-6">
+              <PlatformError>
+                <AlertCircle className="mt-0.5 size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+                {error}
+              </PlatformError>
+            </div>
           )}
-        </div>
-      </div>
-    </div>
+
+          <form onSubmit={form.handleSubmit(attempt)} className="mt-6">
+            <PlatformInput
+              label="Email"
+              type="email"
+              autoComplete="username"
+              required
+              {...form.register('email', { required: 'Enter your email.' })}
+              error={form.formState.errors.email?.message}
+            />
+            <PlatformInput
+              label="Password"
+              type="password"
+              autoComplete="current-password"
+              required
+              className="mt-3"
+              {...form.register('password', { required: 'Enter your password.' })}
+              error={form.formState.errors.password?.message}
+            />
+
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <label className="flex items-center gap-2 text-sm text-plat-muted">
+                <input
+                  type="checkbox"
+                  className="size-4 rounded border-plat-line accent-plat-accent"
+                  {...form.register('remember')}
+                />
+                Remember me
+              </label>
+              <button
+                type="button"
+                onClick={() => setView('forgot')}
+                className={cn(pressable, 'rounded text-sm font-medium text-plat-accent-soft')}
+              >
+                Forgot password?
+              </button>
+            </div>
+
+            <PlatformButton
+              variant="primary"
+              type="submit"
+              icon={LogIn}
+              className="mt-4 w-full"
+              loading={form.formState.isSubmitting}
+            >
+              Sign in
+            </PlatformButton>
+          </form>
+        </>
+      )}
+    </SignInLayout>
   );
 }
 
@@ -273,7 +279,7 @@ function BackLink({ onClick, children }) {
 /**
  * Signed in, but not somebody the panel is for. Saying which is what lets them
  * act: staff with no role need an administrator, a customer needs a different
- * website. Sign-out here is the reason they came back, so it is not asked twice.
+ * website. Signing out still asks first, like every sign-out (§3.0.1).
  *
  * A customer is given the website as well, first: it is where they meant to
  * be, and signing out of the account they are holding would only make them
@@ -282,6 +288,18 @@ function BackLink({ onClick, children }) {
 function NotForThisPanel({ user, onSignOut, websiteUrl }) {
   const isCustomer = user.role !== 'staff';
   const offerWebsite = isCustomer && websiteUrl;
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function signOutNow() {
+    setBusy(true);
+    try {
+      await onSignOut();
+      setConfirming(false);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <>
@@ -305,10 +323,20 @@ function NotForThisPanel({ user, onSignOut, websiteUrl }) {
         variant={offerWebsite ? 'secondary' : 'primary'}
         icon={LogOut}
         className={cn('w-full', offerWebsite ? 'mt-2' : 'mt-4')}
-        onClick={onSignOut}
+        onClick={() => setConfirming(true)}
       >
         Sign out and use another account
       </PlatformButton>
+      <PlatformConfirm
+        open={confirming}
+        onClose={() => setConfirming(false)}
+        onConfirm={signOutNow}
+        title={`Sign out of ${user.email}?`}
+        confirmLabel="Sign out"
+        isPending={busy}
+      >
+        <p>You will need your email and password to sign back in.</p>
+      </PlatformConfirm>
     </>
   );
 }

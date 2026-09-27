@@ -286,6 +286,8 @@ export function AdminDevicesPage() {
   const [adding, setAdding] = useState(null);
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
+  // Retiring or restoring a device changes what tickets can offer (§3.0.1).
+  const [toggling, setToggling] = useState(null);
 
   // Everything, including retired rows: this is the screen where a retired
   // device is brought back, so hiding them would hide the thing being managed.
@@ -338,9 +340,7 @@ export function AdminDevicesPage() {
                 depth={0}
                 onAdd={(parent) => setAdding({ parent })}
                 onEdit={setEditing}
-                onToggle={(target) =>
-                  updateDevice.mutate({ id: target.id, isActive: !target.isActive })
-                }
+                onToggle={setToggling}
                 onDelete={setDeleting}
               />
             ))}
@@ -411,11 +411,34 @@ export function AdminDevicesPage() {
         }
         confirmLabel="Delete device"
         tone="danger"
+        confirmPhrase={deleting?.name}
+        confirmPhraseLabel="the device name"
         loading={deleteDevice.isPending}
         error={deleteDevice.error?.message}
         onConfirm={() =>
           deleteDevice.mutate(deleting.id, { onSuccess: () => setDeleting(null) })
         }
+      />
+
+      <ConfirmDialog
+        open={Boolean(toggling)}
+        onClose={() => setToggling(null)}
+        onConfirm={() =>
+          updateDevice.mutate(
+            { id: toggling.id, isActive: !toggling.isActive },
+            { onSuccess: () => setToggling(null) },
+          )
+        }
+        tone="warn"
+        title={toggling?.isActive ? `Deactivate ${toggling?.name}?` : `Reactivate ${toggling?.name}?`}
+        body={
+          toggling?.isActive
+            ? 'It stops being offered on new tickets and estimates. Records that already name it keep it.'
+            : 'It is offered on new tickets and estimates again.'
+        }
+        confirmLabel={toggling?.isActive ? 'Deactivate' : 'Reactivate'}
+        loading={updateDevice.isPending}
+        error={updateDevice.error?.message}
       />
     </>
   );

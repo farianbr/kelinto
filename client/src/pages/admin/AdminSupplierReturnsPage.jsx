@@ -482,8 +482,13 @@ export function AdminSupplierReturnsPage() {
       // The server enforces the ladder regardless; hiding the entry is a
       // courtesy, never the control (invariant 13).
       hidden: (row) => !NEXT_STATUS[row.status],
+      confirm: (row) => ({
+        title: `${NEXT_LABEL[row.status] ?? 'Advance'} on ${row.returnNumber}?`,
+        body: `The return moves from ${row.status} to ${NEXT_STATUS[row.status]}. Steps are not taken back.`,
+        confirmLabel: NEXT_LABEL[row.status] ?? 'Advance',
+      }),
       onSelect: (row) =>
-        setSupplierReturnStatus.mutate({ id: row.id, status: NEXT_STATUS[row.status] }),
+        setSupplierReturnStatus.mutateAsync({ id: row.id, status: NEXT_STATUS[row.status] }),
     },
     {
       key: 'credit',

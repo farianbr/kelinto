@@ -47,6 +47,35 @@ function BrandBlock({ compact }) {
   const { business } = useSupplierSession();
   const name = business?.name ?? info.name;
 
+  /**
+   * The business's own logo and favicon, uploaded in the ERP (Settings ›
+   * Business info), exactly as the ERP sidebar shows them: the logo on a white
+   * tile, since the rail is near-black and most logos are drawn for a light
+   * ground; the favicon on the icon rail; the lettered square only when the
+   * business has uploaded neither. The same business looks the same in its
+   * website, its ERP and its supplier portal.
+   */
+  if (info.logoUrl && !compact) {
+    return (
+      <div className="flex flex-col items-center gap-2 border-b border-white/10 px-4 py-4 text-center">
+        <span className="flex w-full items-center justify-center rounded-md bg-white px-3 py-2">
+          <img src={info.logoUrl} alt="" className="h-10 w-auto max-w-full object-contain" decoding="async" />
+        </span>
+        <span className="sr-only">{name}</span>
+        <span className="eyebrow block text-ink-200">Supplier portal</span>
+      </div>
+    );
+  }
+  if (compact && info.faviconUrl) {
+    return (
+      <div className="flex justify-center border-b border-white/10 py-4">
+        <span className="flex size-9 items-center justify-center rounded-md bg-white p-1">
+          <img src={info.faviconUrl} alt={name} className="size-full object-contain" decoding="async" />
+        </span>
+      </div>
+    );
+  }
+
   return (
     <div
       // The ERP sidebar's brand block, matched exactly (`AdminSidebar`): the

@@ -20,6 +20,17 @@ const logout = asyncHandler(async (_req, res) => {
   res.json(superAdminService.logout(res));
 });
 
+/** 204 whatever the address: the reply must not say who is an operator. */
+const forgotPassword = asyncHandler(async (req, res) => {
+  await superAdminService.forgotPassword(req.body, { origin: req.get('origin') });
+  res.status(204).end();
+});
+
+/** Sets the new password from the emailed link and signs the operator in. */
+const resetPassword = asyncHandler(async (req, res) => {
+  res.json(await superAdminService.resetPassword(req.body, res));
+});
+
 /** Who is signed in. `null` rather than a 401 - the shell asks on every load. */
 const me = asyncHandler(async (req, res) => {
   res.json({ admin: req.superAdmin ? req.superAdmin.toPublic() : null });
@@ -213,6 +224,8 @@ const createPlan = asyncHandler(async (req, res) => {
 });
 
 export {
+  forgotPassword,
+  resetPassword,
   assignBusiness,
   createBusiness,
   createOwner,

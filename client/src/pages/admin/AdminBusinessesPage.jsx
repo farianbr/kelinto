@@ -391,6 +391,8 @@ export function AdminBusinessesPage() {
         title={`Delete ${confirming?.name ?? 'business'}?`}
         body="This removes the business permanently. Staff assigned to it must be moved first."
         confirmLabel="Delete business"
+        confirmPhrase={confirming?.name}
+        confirmPhraseLabel="the business name"
         loading={deleteBusiness.isPending}
         error={error}
       />

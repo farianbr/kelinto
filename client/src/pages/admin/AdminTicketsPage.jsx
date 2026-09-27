@@ -731,6 +731,8 @@ export function AdminTicketsPage() {
         title={`Delete ${deleting?.ticketNumber ?? 'ticket'}?`}
         body="The repair history for the device goes with it."
         confirmLabel="Delete ticket"
+        confirmPhrase={deleting?.ticketNumber}
+        confirmPhraseLabel="the ticket number"
         loading={deleteTicket.isPending}
         error={deleteTicket.error?.message}
       />

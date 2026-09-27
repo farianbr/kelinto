@@ -115,6 +115,17 @@ export function useSuperAdminMutations() {
         invalidate();
       },
     }),
+    // The console's own reset path: a link from Kelinto, then a new password.
+    forgotPassword: useMutation({
+      mutationFn: (body) => api.post('/superadmin/forgot-password', body),
+    }),
+    resetPassword: useMutation({
+      mutationFn: (body) => api.post('/superadmin/reset-password', body),
+      onSuccess: (result) => {
+        queryClient.setQueryData(ME, { admin: result.admin });
+        invalidate();
+      },
+    }),
     signOut: useMutation({
       mutationFn: () => api.post('/superadmin/logout', {}),
       onSuccess: () => {

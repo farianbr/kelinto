@@ -478,5 +478,76 @@ async function sendPasswordResetEmail({ user, token, origin, business = null, ex
  * its own radii is a second design, and the two drift the first time either is
  * touched. This is the closest thing mail has to a stylesheet.
  */
-export { generatePassword, sendWelcomeEmail, sendPasswordResetEmail, MAIL, escapeHtml };
+/**
+ * A console operator's reset link.
+ *
+ * **Sent by Kelinto, not by a business**: an operator belongs to none, so this
+ * is the one reset mail that carries Kelinto's name and teal rather than a
+ * business's (`sendingBusiness` would answer with whichever business happened
+ * to be in context, which is exactly the wrong sender here).
+ */
+async function sendConsoleResetEmail({ admin, token, origin, expiresMinutes = 60 }) {
+  if (!admin?.email || !token) return { delivered: false, via: null, error: 'No email address or token.' };
+
+  try {
+    const link = `${origin || env.publicOrigin}/superadmin/reset?token=${encodeURIComponent(token)}`;
+    const { display, body, ink900, ink500, ink300, line, surface2 } = MAIL;
+    const teal = '#0f5e62';
+
+    const html = `<!doctype html>
+<html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /></head>
+<body style="margin:0;padding:0;background:${surface2};">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">
+    Choose a new console password. The link expires in ${expiresMinutes} minutes.
+  </div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${surface2};">
+    <tr><td align="center" style="padding:32px 16px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border:1px solid ${line};border-radius:${MAIL.radiusCard};overflow:hidden;">
+      <tr><td style="height:3px;line-height:3px;font-size:0;background:${teal};">&nbsp;</td></tr>
+      <tr><td style="padding:36px 36px 8px;">
+        <div style="font:700 ${MAIL.micro}/1 ${display};letter-spacing:0.14em;text-transform:uppercase;color:${ink300};">Kelinto console</div>
+      </td></tr>
+      <tr><td style="padding:12px 36px 0;">
+        <h1 style="margin:0;font:700 22px/1.25 ${display};color:${ink900};">Reset your console password</h1>
+      </td></tr>
+      <tr><td style="padding:14px 36px 0;font:400 15px/1.6 ${body};color:${ink500};">
+        Somebody asked to reset the password for <strong style="color:${ink900};">${escapeHtml(admin.email)}</strong>.
+        If it was you, choose a new one below.
+      </td></tr>
+      <tr><td style="padding:24px 36px 8px;">
+        <a href="${link}" style="display:inline-block;background:${teal};color:#ffffff;text-decoration:none;font:600 15px/1 ${body};padding:14px 22px;border-radius:999px;">Choose a new password</a>
+      </td></tr>
+      <tr><td style="padding:16px 36px 36px;font:400 13px/1.6 ${body};color:${ink300};">
+        This link expires in ${expiresMinutes} minutes and can only be used once. If you did not ask for it,
+        ignore this email: your password stays as it is.
+      </td></tr>
+    </table>
+  </td></tr></table>
+</body></html>`;
+
+    const text = [
+      'Reset your Kelinto console password',
+      '',
+      `Somebody asked to reset the password for ${admin.email}.`,
+      `Open this link within ${expiresMinutes} minutes to choose a new one:`,
+      '',
+      `  ${link}`,
+      '',
+      'If you did not ask for this, ignore this email - your password stays as it is.',
+    ].join('\n');
+
+    return await sendMail({
+      to: admin.email,
+      from: env.MAIL_FROM_ADMIN,
+      subject: 'Reset your Kelinto console password',
+      html,
+      text,
+    });
+  } catch (error) {
+    console.error(`  Mail: console reset email for ${admin?.email} could not be built - ${error.message}`);
+    return { delivered: false, via: null, error: error.message };
+  }
+}
+
+export { generatePassword, sendWelcomeEmail, sendPasswordResetEmail, sendConsoleResetEmail, MAIL, escapeHtml };
 export default sendWelcomeEmail;

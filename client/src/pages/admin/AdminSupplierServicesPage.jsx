@@ -491,7 +491,12 @@ export function AdminSupplierServicesPage({ mode = 'service' }) {
       label: 'Reactivate',
       icon: RotateCcw,
       hidden: (row) => !row.cancelled,
-      onSelect: (row) => cancelSupplierService.mutate({ id: row.id, cancelled: false }),
+      confirm: (row) => ({
+        title: `Reactivate ${row.name}?`,
+        body: 'Its cancellation is undone and it shows as active again.',
+        confirmLabel: 'Reactivate',
+      }),
+      onSelect: (row) => cancelSupplierService.mutateAsync({ id: row.id, cancelled: false }),
     },
     {
       key: 'delete',

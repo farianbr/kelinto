@@ -263,6 +263,8 @@ export function AdminProductArticlesPage() {
             : ''
         }
         confirmLabel="Delete article"
+        confirmPhrase={deleting ? 'delete' : undefined}
+        confirmPhraseLabel="the word delete"
         tone="danger"
         loading={deleteProductArticle.isPending}
         onConfirm={async () => {

@@ -892,6 +892,8 @@ export function AdminClientProfilePage() {
   const [notice, setNotice] = useState(null);
   const [approving, setApproving] = useState(false);
   const [sendingPortal, setSendingPortal] = useState(false);
+  // A tier picked in either select waits here for its confirmation (§3.0.1).
+  const [pendingTier, setPendingTier] = useState(null);
   /**
    * Whether the referral link was just copied.
    *
@@ -1544,7 +1546,7 @@ export function AdminClientProfilePage() {
                   <SelectMenu
                     srLabel="Membership tier"
                     value={user.tier}
-                    onChange={(next) => setTier.mutate({ id, tier: next })}
+                    onChange={(next) => next !== user.tier && setPendingTier(next)}
                     options={MEMBERSHIP_TIERS.map((item) => ({
                       value: item.value,
                       label:
@@ -1633,7 +1635,8 @@ export function AdminClientProfilePage() {
             notes={notes}
             isPending={addInternalNote.isPending}
             onAdd={(body, done) => addInternalNote.mutate({ id, body }, { onSuccess: done })}
-            onDelete={(noteId) => deleteInternalNote.mutate({ id, noteId })}
+            onDelete={(noteId, done) => deleteInternalNote.mutate({ id, noteId }, { onSuccess: done })}
+            isDeleting={deleteInternalNote.isPending}
           />
         </div>
 
@@ -1909,7 +1912,8 @@ export function AdminClientProfilePage() {
           notes={notes}
           isPending={addInternalNote.isPending}
           onAdd={(body, done) => addInternalNote.mutate({ id, body }, { onSuccess: done })}
-          onDelete={(noteId) => deleteInternalNote.mutate({ id, noteId })}
+          onDelete={(noteId, done) => deleteInternalNote.mutate({ id, noteId }, { onSuccess: done })}
+            isDeleting={deleteInternalNote.isPending}
         />
       )}
 
@@ -1921,7 +1925,7 @@ export function AdminClientProfilePage() {
               tier={user.tier}
               warrantyBonus={settingsData?.financial?.warrantyBonusByTier?.[user.tier] ?? 0}
               isPending={setTier.isPending}
-              onChange={(next) => setTier.mutate({ id, tier: next })}
+              onChange={(next) => next !== user.tier && setPendingTier(next)}
             />
           </div>
 
@@ -2359,17 +2363,18 @@ export function AdminClientProfilePage() {
         open={sendingPortal}
         onClose={() => setSendingPortal(false)}
         onConfirm={() => {
-          setSendingPortal(false);
           emailPortalLink.mutate(undefined, {
-            onSuccess: (result) =>
-              result.sent
+            onSuccess: (result) => {
+              setSendingPortal(false);
+              return result.sent
                 ? toast.ok('Portal link sent', `${result.to} has it.`)
                 : // The mailer's own answer, not a confirmation of it: a
                   // `.example` address fails on purpose in development, and
                   // nothing here reports a send that did not happen.
                   toast.error(
                     `Could not send to ${result.to}${result.error ? ` - ${result.error}` : '.'}`,
-                  ),
+                  );
+            },
             onError: (error) => toast.error(error.message),
           });
         }}
@@ -2381,6 +2386,24 @@ export function AdminClientProfilePage() {
         body={user.email ? undefined : 'Add one to this customer before sending a link.'}
         confirmLabel="Send link"
         tone="info"
+        // Mail to a customer is critical: typed back, not clicked through.
+        confirmPhrase={user.email || undefined}
+        confirmPhraseLabel="their email address"
+        loading={emailPortalLink.isPending}
+      />
+
+      <ConfirmDialog
+        open={Boolean(pendingTier)}
+        onClose={() => setPendingTier(null)}
+        onConfirm={() =>
+          setTier.mutate({ id, tier: pendingTier }, { onSuccess: () => setPendingTier(null) })
+        }
+        tone="warn"
+        title={`Move ${user.displayName} to ${MEMBERSHIP_TIERS.find((item) => item.value === pendingTier)?.label ?? pendingTier}?`}
+        body={`From ${MEMBERSHIP_TIERS.find((item) => item.value === user.tier)?.label ?? user.tier}. The warranty bonus on their next repairs follows the new tier.`}
+        confirmLabel="Change tier"
+        loading={setTier.isPending}
+        error={setTier.error?.message}
       />
     </>
   );

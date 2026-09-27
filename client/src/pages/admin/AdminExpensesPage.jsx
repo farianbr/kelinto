@@ -593,6 +593,8 @@ export function AdminExpensesPage() {
         title="Delete this expense?"
         body={deleting ? `${deleting.description}, ${money(deleting.amount)}.` : ''}
         confirmLabel="Delete expense"
+        confirmPhrase={deleting ? 'delete' : undefined}
+        confirmPhraseLabel="the word delete"
         loading={deleteExpense.isPending}
         error={deleteExpense.error?.message}
         onConfirm={() =>

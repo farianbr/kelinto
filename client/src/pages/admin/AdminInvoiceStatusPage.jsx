@@ -306,6 +306,9 @@ export function InvoiceMessagesBody({ adding = false, onAddingChange }) {
   const [error, setError] = useState(null);
   // The trash icon used to delete on the click itself.
   const [deleting, setDeleting] = useState(null);
+  // A real run mails customers, so it is typed back, not clicked (§3.0.1).
+  // The dry run sends nothing and needs no dialog.
+  const [confirmingRun, setConfirmingRun] = useState(false);
 
   const rules = data?.rules ?? [];
   const triggers = data?.triggers ?? [];
@@ -324,6 +327,7 @@ export function InvoiceMessagesBody({ adding = false, onAddingChange }) {
     setResult(null);
     try {
       setResult(await runInvoiceRules.mutateAsync(dryRun));
+      setConfirmingRun(false);
     } catch (err) {
       setError(err.message);
     }
@@ -381,7 +385,7 @@ export function InvoiceMessagesBody({ adding = false, onAddingChange }) {
             <Button variant="outline" onClick={() => run(true)} loading={runInvoiceRules.isPending}>
               Dry run
             </Button>
-            <Button onClick={() => run(false)} disabled={!activeCount || runInvoiceRules.isPending}>
+            <Button onClick={() => setConfirmingRun(true)} disabled={!activeCount || runInvoiceRules.isPending}>
               <Play className="size-4" strokeWidth={2} aria-hidden="true" />
               {activeCount ? 'Send now' : 'Nothing switched on'}
             </Button>
@@ -481,6 +485,19 @@ export function InvoiceMessagesBody({ adding = false, onAddingChange }) {
         }
         confirmLabel="Delete message"
         loading={deleteInvoiceRule.isPending}
+      />
+      <ConfirmDialog
+        open={confirmingRun}
+        onClose={() => setConfirmingRun(false)}
+        onConfirm={() => run(false)}
+        tone="warn"
+        title={`Send the ${activeCount} switched-on ${activeCount === 1 ? 'message' : 'messages'} now?`}
+        body="Every invoice that is due one is emailed to its customer now. Email cannot be recalled; a dry run shows who would receive what."
+        confirmLabel="Send now"
+        confirmPhrase="send"
+        confirmPhraseLabel="the word send"
+        loading={runInvoiceRules.isPending}
+        error={error}
       />
     </>
   );

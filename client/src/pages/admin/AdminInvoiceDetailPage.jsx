@@ -927,6 +927,8 @@ export function AdminInvoiceDetailPage() {
           </div>
         }
         confirmLabel="Confirm change"
+        confirmPhrase={statusMove?.sendsWarrantyEmail && !invoice.labelEmailSentAt && invoice.status === 'paid' ? invoice.number : undefined}
+        confirmPhraseLabel="the invoice number"
         loading={setInvoiceLabel.isPending}
         error={setInvoiceLabel.error?.message}
         onConfirm={() =>
@@ -960,6 +962,8 @@ export function AdminInvoiceDetailPage() {
           invoice.dueDate ? ` and was due ${date(invoice.dueDate)}` : ''
         }. The invoice document is not attached - they already have it.`}
         confirmLabel="Send reminder"
+        confirmPhrase={invoice.number}
+        confirmPhraseLabel="the invoice number"
         loading={remindInvoice.isPending}
         error={remindInvoice.error?.message}
         onConfirm={() =>
@@ -1013,6 +1017,8 @@ export function AdminInvoiceDetailPage() {
         body={`The invoice document goes to ${invoice.email ?? account} - the same page the print view renders.`}
         tone="info"
         confirmLabel="Send invoice"
+        confirmPhrase={invoice.number}
+        confirmPhraseLabel="the invoice number"
         loading={emailInvoice.isPending}
       />
 
@@ -1040,6 +1046,8 @@ export function AdminInvoiceDetailPage() {
         body="A reversing entry is added. The original stays on the history, struck through."
         tone="danger"
         confirmLabel="Reverse payment"
+        confirmPhrase={invoice.number}
+        confirmPhraseLabel="the invoice number"
         loading={reverseInvoicePayment.isPending}
       />
 

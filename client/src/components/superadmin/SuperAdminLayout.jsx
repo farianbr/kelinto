@@ -1,4 +1,4 @@
-import { Suspense, useEffect } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import {
   Building2,
@@ -17,6 +17,7 @@ import useDocumentTitle from '@/hooks/useDocumentTitle';
 import { pressable } from '@/lib/motion';
 import { useSuperAdminSession, useSuperAdminMutations } from '@/hooks/useSuperAdmin';
 import { PlatformPageSkeleton } from '@/components/superadmin/PlatformUI';
+import { PlatformConfirm } from '@/components/superadmin/PlatformForm';
 import { usePlatformPulse } from '@/components/superadmin/platformData';
 import SuperAdminLoginPage from '@/pages/superadmin/SuperAdminLoginPage';
 import KelintoLogo from '@/components/platform/KelintoLogo';
@@ -157,6 +158,8 @@ export function SuperAdminLayout() {
   const { signOut } = useSuperAdminMutations();
   const { pathname } = useLocation();
   const nav = useNav();
+  // Signing out asks first, like every other door's (§3.0.1).
+  const [confirmingSignOut, setConfirmingSignOut] = useState(false);
 
   // A new page starts at its top. The console scrolls the window, and without
   // this a record opened from far down a list opened scrolled past its header.
@@ -176,7 +179,13 @@ export function SuperAdminLayout() {
 
   if (!admin) return <SuperAdminLoginPage />;
 
-  const signOutNow = () => signOut.mutate(undefined, { onSuccess: () => navigate('/superadmin') });
+  const signOutNow = () =>
+    signOut.mutate(undefined, {
+      onSuccess: () => {
+        setConfirmingSignOut(false);
+        navigate('/superadmin');
+      },
+    });
   const flat = nav.flatMap((section) => section.items);
 
   return (
@@ -213,7 +222,7 @@ export function SuperAdminLayout() {
             </span>
             <button
               type="button"
-              onClick={signOutNow}
+              onClick={() => setConfirmingSignOut(true)}
               aria-label="Sign out"
               className={cn(pressable, 'rounded-md p-1.5 text-plat-dim transition-colors duration-fast hover:bg-plat-text/5 hover:text-plat-text')}
             >
@@ -232,7 +241,7 @@ export function SuperAdminLayout() {
             <Wordmark />
             <button
               type="button"
-              onClick={signOutNow}
+              onClick={() => setConfirmingSignOut(true)}
               aria-label="Sign out"
               className={cn(pressable, 'rounded-md p-2 text-plat-dim hover:text-plat-text')}
             >
@@ -268,6 +277,18 @@ export function SuperAdminLayout() {
           </div>
         </main>
       </div>
+
+      <PlatformConfirm
+        open={confirmingSignOut}
+        onClose={() => setConfirmingSignOut(false)}
+        onConfirm={signOutNow}
+        title="Sign out of the console?"
+        confirmLabel="Sign out"
+        isPending={signOut.isPending}
+        error={signOut.error?.message}
+      >
+        <p>You are signed in as {admin.email}. You will need your email and password to sign back in.</p>
+      </PlatformConfirm>
     </div>
   );
 }

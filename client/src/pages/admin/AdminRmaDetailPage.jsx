@@ -640,6 +640,8 @@ export function AdminRmaDetailPage() {
         body={`${rma.rmaNumber} closes with no credit to the customer and nothing back into stock.`}
         tone="danger"
         confirmLabel="Reject return"
+        confirmPhrase={rma.rmaNumber}
+        confirmPhraseLabel="the return number"
         loading={setRmaStatus.isPending}
         error={setRmaStatus.error?.message}
       />

@@ -914,6 +914,8 @@ export function AdminPurchaseOrderDetailPage() {
         body={`${order.poNumber} to ${order.supplier.name} closes as cancelled. Nothing on it has been received.`}
         tone="danger"
         confirmLabel="Cancel order"
+        confirmPhrase={order.poNumber}
+        confirmPhraseLabel="the order number"
         cancelLabel="Keep it open"
         loading={setPurchaseOrderStatus.isPending}
         error={setPurchaseOrderStatus.error?.message}
@@ -940,6 +942,8 @@ export function AdminPurchaseOrderDetailPage() {
         title={`Mark ${order.poNumber} paid?`}
         body={`${money(order.total)} to ${order.supplier.name}, by ${quickMethod}.`}
         confirmLabel="Mark paid"
+        confirmPhrase={order.poNumber}
+        confirmPhraseLabel="the order number"
         tone="warn"
       />
     </div>

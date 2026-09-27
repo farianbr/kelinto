@@ -13,6 +13,7 @@ import {
 } from '@/hooks/useSupplierPortal';
 import SupplierLoginPage from '@/pages/supplier/SupplierLoginPage';
 import useBusinessTheme from '@/hooks/useBusinessTheme';
+import useBusinessInfo from '@/hooks/useBusinessInfo';
 import SupplierSidebar from './SupplierSidebar';
 
 /**
@@ -54,7 +55,10 @@ export function SupplierPortalLayout() {
    * conditionally - and it is wanted on every branch anyway: the loading
    * skeleton, the sign-in page and the portal proper.
    */
-  const theme = useBusinessTheme(business?.colorToken);
+  // The website's own profile as the fallback: the same record the website's
+  // header and colours come from, so the portal cannot drift from it.
+  const info = useBusinessInfo();
+  const theme = useBusinessTheme(business?.colorToken ?? info.colorToken);
   const { signOut } = useSupplierPortalMutations();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
@@ -78,7 +82,7 @@ export function SupplierPortalLayout() {
   if (!supplier) {
     return (
       <div style={theme} data-business-theme="supplier" className="contents">
-        <SupplierLoginPage businessName={business?.name ?? null} />
+        <SupplierLoginPage />
       </div>
     );
   }
