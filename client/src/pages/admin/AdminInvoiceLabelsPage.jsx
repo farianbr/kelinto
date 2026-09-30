@@ -17,11 +17,12 @@ import DataTable, { CountLine } from '@/components/admin/DataTable';
 import { ADMIN_ROUTES } from '@/lib/adminRoutes';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { LABEL_COLOR_OPTIONS, invoiceLabelSchema } from '@shared/schemas/admin.js';
-import { useAdminInvoiceLabels, useAdminMutations } from '@/hooks/useAdmin';
+import { useAdminInvoiceLabels, useAdminInvoiceRules, useAdminMutations } from '@/hooks/useAdmin';
+import ActiveSwitch from '@/components/admin/ActiveSwitch';
 import { pressable } from '@/lib/motion';
 import cn from '@/lib/cn';
 import TabRow from '@/components/ui/TabRow';
-import { InvoiceMessagesBody } from '@/pages/admin/AdminInvoiceStatusPage';
+import { InvoiceMessagesBody, MessageFields } from '@/pages/admin/AdminInvoiceStatusPage';
 
 /**
  * The manual invoice status list.
@@ -37,14 +38,13 @@ import { InvoiceMessagesBody } from '@/pages/admin/AdminInvoiceStatusPage';
  * So the list is data, edited here, rather than an enum that would need a deploy
  * per phrase per tenant.
  *
- * ## The one row that is not cosmetic
+ * ## The part that is not cosmetic
  *
- * **"Sends the warranty email" arms an automatic email to a customer.** Every
- * other field on this form changes how a pill looks; that one makes the system
- * write to somebody outside the building the first time the label lands on a
- * paid invoice. It is therefore called out on the form, shown as its own column
- * in the table, and named in the confirmation - a staff member should never
- * discover it from a customer's reply.
+ * **A status's message reaches a customer.** Everything else on the form
+ * changes how a pill looks. The message is off until somebody switches it on,
+ * and it is the only thing a status sends: a fixed warranty and review email a
+ * status could arm with a tick was removed on 2026-10-01 (client request), so
+ * the owner writes that message here in their own words.
  *
  * ## Delete versus retire
  *
@@ -78,12 +78,31 @@ const PILL_TONE = {
   danger: 'danger',
 };
 
-function LabelForm({ label, onSubmit, onCancel, isPending, error }) {
+const CHANNEL_LABELS = { email: 'Email', sms: 'SMS', whatsapp: 'WhatsApp' };
+
+/** "2 days after the status is set" - the timing, in words. */
+function statusTimingText(delayDays) {
+  const days = Math.max(Number(delayDays) || 0, 0);
+  if (!days) return 'As soon as the status is set';
+  return `${days} ${days === 1 ? 'day' : 'days'} after the status is set`;
+}
+
+/**
+ * One manual status: its pill, and the message it sends.
+ *
+ * Laid out like a scheduled message (2026-10-01, client request) because it
+ * now is one: a delay, a channel, a subject and a body, run by the same pass.
+ * The only difference is what the delay counts from - the day this status is
+ * set on an invoice, rather than a date the invoice carries - so "Counting
+ * from" is shown fixed rather than offered as a choice that has one answer.
+ */
+function LabelForm({ label, onSubmit, onCancel, isPending, error, tokens, channels }) {
   const {
     register,
     handleSubmit,
     control,
     watch,
+    setValue,
     formState: { errors },
   } = useAdminForm({
     /*
@@ -99,9 +118,14 @@ function LabelForm({ label, onSubmit, onCancel, isPending, error }) {
     defaultValues: {
       name: label?.name ?? '',
       colorToken: label?.colorToken ?? 'ink',
-      sendsWarrantyEmail: label?.sendsWarrantyEmail ?? false,
       isActive: label?.isActive ?? true,
       order: label?.order ?? 0,
+      delayDays: label?.delayDays ?? 0,
+      channel: label?.channel ?? 'email',
+      subject: label?.subject ?? '',
+      message: label?.message ?? '',
+      // Off until somebody switches it on, like every message here.
+      messageActive: label?.messageActive ?? false,
     },
   });
 
@@ -109,7 +133,16 @@ function LabelForm({ label, onSubmit, onCancel, isPending, error }) {
   // reason to show it is to answer "what will this look like" before saving.
   const name = watch('name');
   const colorToken = watch('colorToken');
-  const sends = watch('sendsWarrantyEmail');
+  const delayDays = watch('delayDays');
+  const messageActive = watch('messageActive');
+
+  // `MessageFields` speaks a plain object and a patch function, the shape the
+  // scheduled-message card uses, so it is bridged onto the form here.
+  const messageForm = { channel: watch('channel'), subject: watch('subject'), message: watch('message') };
+  const setMessage = (patch) =>
+    Object.entries(patch).forEach(([key, value]) =>
+      setValue(key, value, { shouldDirty: true, shouldValidate: key === 'message' && Boolean(errors.message) }),
+    );
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
@@ -120,29 +153,22 @@ function LabelForm({ label, onSubmit, onCancel, isPending, error }) {
         </p>
       )}
 
-      <Input
-        label="Name"
-        placeholder="Thanks for Support"
-        required
-        error={errors.name?.message}
-        {...register('name')}
-      />
-
+      {/* No sort order field (client request, 2026-10-01): the list and the
+          picker sort by name among equals, and an existing status keeps the
+          order it was saved with. */}
       <div className="grid gap-3 sm:grid-cols-2">
+        <Input
+          label="Name"
+          placeholder="Thanks for Support"
+          required
+          error={errors.name?.message}
+          {...register('name')}
+        />
         <SelectField
           control={control}
           name="colorToken"
           label="Colour"
           options={LABEL_COLOR_OPTIONS}
-        />
-        <Input
-          label="Sort order"
-          type="number"
-          min="0"
-          placeholder="0"
-          hint="Lower numbers come first in the picker."
-          error={errors.order?.message}
-          {...register('order')}
         />
       </div>
 
@@ -160,24 +186,40 @@ function LabelForm({ label, onSubmit, onCancel, isPending, error }) {
         )}
       </div>
 
-      {/* The consequence is spelled out in the label, not left to the field
-          name: this is the one control here that reaches a customer. */}
-      <Checkbox
-        label="Sends the warranty and review email, once, the first time this is set on a paid invoice"
-        {...register('sendsWarrantyEmail')}
+      <div className="grid gap-4 border-t border-line pt-4 sm:grid-cols-[minmax(0,120px)_minmax(0,1fr)]">
+        <Input
+          type="number"
+          min="0"
+          max="365"
+          label="Days"
+          suffix="days"
+          hint="After it is set."
+          error={errors.delayDays?.message}
+          {...register('delayDays')}
+        />
+        <div>
+          <Input label="Counting from" value="The date this status is set" readOnly disabled />
+          <span className="mt-1.5 block text-sm text-ink-400">{statusTimingText(delayDays)}.</span>
+        </div>
+      </div>
+
+      <MessageFields
+        form={messageForm}
+        set={setMessage}
+        tokens={tokens}
+        channels={channels}
+        messageError={errors.message?.message}
       />
-      {sends && (
-        <p className="flex items-start gap-2 rounded-md bg-warn-50 px-3 py-2.5 text-xs text-warn">
-          <Mail className="mt-0.5 size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
-          Choosing this status on a paid invoice emails the customer their warranty and a review
-          link. It sends once per invoice, so clearing the status and setting it again will not
-          send a second one.
-        </p>
-      )}
 
-      <Checkbox label="Active - offered in the status picker" {...register('isActive')} />
+      <ActiveSwitch
+        checked={Boolean(messageActive)}
+        onChange={(next) => setValue('messageActive', next, { shouldDirty: true })}
+        detail="Sends this message to each invoice carrying this status, once, the next time the messages are run."
+      />
 
-      <div className="flex justify-end gap-2">
+      <Checkbox label="Offered in the status picker" {...register('isActive')} />
+
+      <div className="flex justify-end gap-2 border-t border-line pt-4">
         <Button type="button" variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
@@ -197,6 +239,9 @@ function InvoiceLabelsBody({ creating = false, onCreatingChange }) {
   // `all`, because this is the one screen where a retired status must be
   // visible - it is where somebody comes to bring one back.
   const { data, isLoading } = useAdminInvoiceLabels({ status: 'all' });
+  // The scheduled messages' own list carries the placeholders and which
+  // channels can deliver; a status's message uses the same of both.
+  const { data: ruleData } = useAdminInvoiceRules();
   const { createInvoiceLabel, updateInvoiceLabel, deleteInvoiceLabel } = useAdminMutations();
 
   const labels = data?.labels ?? [];
@@ -205,47 +250,69 @@ function InvoiceLabelsBody({ creating = false, onCreatingChange }) {
     return {
       name: values.name,
       colorToken: values.colorToken,
-      sendsWarrantyEmail: Boolean(values.sendsWarrantyEmail),
       isActive: Boolean(values.isActive),
       order: Number(values.order) || 0,
+      delayDays: Math.max(Number(values.delayDays) || 0, 0),
+      channel: values.channel || 'email',
+      subject: values.subject ?? '',
+      message: values.message ?? '',
+      messageActive: Boolean(values.messageActive),
     };
   }
 
+  /*
+    The same columns as Scheduled Messages, in the same order (client request,
+    2026-10-01): name with its timing under it, channel, sending. A status
+    carries a message now, so the two lists are read the same way. "In picker"
+    stays last because only a status can be retired. Rows come back from the
+    server by stored order, then name.
+  */
+  const hasMessage = (label) => Boolean(label.message?.trim());
   const columns = [
     {
       key: 'name',
       header: 'Status',
       priority: 1,
       render: (label) => (
-        <span className="flex items-center gap-2">
-          <span
-            className={`size-2.5 shrink-0 rounded-full ${SWATCH[label.colorToken] ?? SWATCH.ink}`}
-            aria-hidden="true"
-          />
-          <span className="truncate text-sm text-ink-900">{label.name}</span>
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className="flex items-center gap-2">
+            <span
+              className={`size-2.5 shrink-0 rounded-full ${SWATCH[label.colorToken] ?? SWATCH.ink}`}
+              aria-hidden="true"
+            />
+            <span className="truncate text-sm text-ink-900">{label.name}</span>
+          </span>
+          <span className="truncate text-xs text-ink-500">
+            {hasMessage(label) ? statusTimingText(label.delayDays) : 'No message'}
+          </span>
         </span>
       ),
     },
     {
-      key: 'sendsWarrantyEmail',
-      header: 'Warranty email',
-      priority: 1,
+      key: 'channel',
+      header: 'Channel',
+      priority: 2,
       render: (label) =>
-        label.sendsWarrantyEmail ? (
-          <Badge tone="warn" size="sm" icon={Mail}>
-            sends once
+        hasMessage(label) ? (
+          <Badge tone={label.channel === 'email' ? 'info' : 'warn'} size="sm">
+            {CHANNEL_LABELS[label.channel] ?? label.channel}
           </Badge>
         ) : (
           <span className="text-xs text-ink-400">–</span>
         ),
     },
     {
-      key: 'order',
-      header: 'Order',
-      priority: 3,
-      align: 'right',
-      className: 'tnum',
-      render: (label) => <span className="text-sm text-ink-500">{label.order}</span>,
+      key: 'messageActive',
+      header: 'Sending',
+      priority: 1,
+      render: (label) =>
+        hasMessage(label) ? (
+          <Badge tone={label.messageActive ? 'ok' : 'neutral'} size="sm">
+            {label.messageActive ? 'on' : 'off'}
+          </Badge>
+        ) : (
+          <span className="text-xs text-ink-400">–</span>
+        ),
     },
     {
       key: 'isActive',
@@ -272,13 +339,13 @@ function InvoiceLabelsBody({ creating = false, onCreatingChange }) {
           : 'It can be picked on invoices again.',
         confirmLabel: label.isActive ? 'Retire' : 'Put back',
       }),
+      // The whole record goes back, message included: the route's schema fills
+      // absent fields with defaults, so a partial body would switch the
+      // status's message off and clear its text.
       onSelect: (label) =>
         updateInvoiceLabel.mutateAsync({
           id: label.id,
-          name: label.name,
-          colorToken: label.colorToken,
-          sendsWarrantyEmail: label.sendsWarrantyEmail,
-          order: label.order,
+          ...toPayload(label),
           isActive: !label.isActive,
         }),
     },
@@ -293,7 +360,8 @@ function InvoiceLabelsBody({ creating = false, onCreatingChange }) {
       <p className="mb-3 rounded-md bg-surface-2 px-3.5 py-2.5 text-sm text-ink-500">
         These sit beside an invoice's payment status, they do not replace it. Whether an invoice is
         paid is worked out from its payments and cannot be set by hand; these are for where it has
-        got to with the customer.
+        got to with the customer. A status can also send a message a set number of days after it
+        is set; those go out with the scheduled messages, when that tab&rsquo;s Run now is pressed.
       </p>
 
       <Panel flush>
@@ -310,13 +378,14 @@ function InvoiceLabelsBody({ creating = false, onCreatingChange }) {
           columns={columns}
           rows={labels}
           rowKey={(label) => label.id}
+          // A click opens the status, the same as Scheduled Messages.
+          onRowClick={setEditing}
           rowMenu={rowMenu}
           loading={isLoading}
-          defaultSort={{ key: 'order', direction: 'asc' }}
           empty={
             <PanelEmpty
               icon={Tag}
-              title="No statuses yet"
+              title="No after sales statuses yet"
               body="Add the ones your shop uses - “Thanks for Support”, “Picked up”, whatever you say to customers."
               action={
                 <Button onClick={() => setCreating(true)} icon={Plus} size="sm">
@@ -331,13 +400,15 @@ function InvoiceLabelsBody({ creating = false, onCreatingChange }) {
       <Modal
         open={creating}
         onClose={() => setCreating(false)}
-        title="Add a status"
-        size="md"
+        title="Add an after sales status"
+        size="lg"
         align="top"
       >
         {creating && (
           <LabelForm
             isPending={createInvoiceLabel.isPending}
+            tokens={ruleData?.tokens}
+            channels={ruleData?.channels}
             error={createInvoiceLabel.error?.message}
             onCancel={() => setCreating(false)}
             onSubmit={(values) =>
@@ -352,14 +423,16 @@ function InvoiceLabelsBody({ creating = false, onCreatingChange }) {
       <Modal
         open={Boolean(editing)}
         onClose={() => setEditing(null)}
-        title="Edit status"
-        size="md"
+        title="Edit after sales status"
+        size="lg"
         align="top"
       >
         {editing && (
           <LabelForm
             label={editing}
             isPending={updateInvoiceLabel.isPending}
+            tokens={ruleData?.tokens}
+            channels={ruleData?.channels}
             error={updateInvoiceLabel.error?.message}
             onCancel={() => setEditing(null)}
             onSubmit={(values) =>
@@ -444,8 +517,11 @@ export function AdminInvoiceLabelsPage() {
       <TabRow
         className="mb-4"
         tabs={[
-          { key: 'statuses', label: 'Statuses', icon: Tag },
-          { key: 'messages', label: 'Messages', icon: Mail },
+          // Renamed 2026-10-01 at the client's request: "Statuses" and
+          // "Messages" did not say which half is set by hand and which runs
+          // on a clock, and a manual status now sends a message too.
+          { key: 'statuses', label: 'Manual Status', icon: Tag },
+          { key: 'messages', label: 'Scheduled Messages', icon: Mail },
         ]}
         value={tab}
         onChange={(next) => {

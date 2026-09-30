@@ -75,7 +75,9 @@ async function charge({ amount, method, orderNumber, poNumber, deliveryNotes }) 
 
   return {
     // Buying on terms does not move money now - the invoice does that later.
-    status: method === 'terms' ? 'pending' : 'paid',
+    // Nor does an order paid at the counter: a person takes that money in the
+    // shop, and it is recorded against the invoice when they do.
+    status: method === 'terms' || method === 'counter' ? 'pending' : 'paid',
     reference: `mock_${method}_${orderNumber}_${Date.now().toString(36)}`,
     processedAt: new Date(),
   };

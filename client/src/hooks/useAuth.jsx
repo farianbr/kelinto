@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import useUiStore from '@/store/uiStore';
-import { setBusiness } from '@/store/businessStore';
+import { getBusiness, setBusiness } from '@/store/businessStore';
+import { endKioskShopping, isKioskShopping } from '@/lib/kioskShopping';
 
 const AuthContext = createContext(null);
 
@@ -212,12 +213,27 @@ export function useSignOut() {
  * Signing out from inside /account or /admin would otherwise leave the viewer
  * staring at that area's own access wall, so it always drops back to the shop.
  */
+/** The kiosk's address, carrying the business where the host does not name it. */
+export function kioskPath(business = getBusiness()) {
+  return business ? `/kiosk?business=${encodeURIComponent(business)}` : '/kiosk';
+}
+
 export function useConfirmedSignOut() {
   const { signOut } = useAuth();
   const navigate = useNavigate();
 
   return useCallback(async () => {
+    // Read before signing out, which clears it: on a host that does not name
+    // the business (localhost), the kiosk needs it back in its own URL.
+    const business = getBusiness();
     await signOut();
+    // A customer shopping from the in-store kiosk goes back to the kiosk, not
+    // to the website's homepage: the tablet has to be ready for the next one.
+    if (isKioskShopping()) {
+      endKioskShopping();
+      navigate(kioskPath(business));
+      return;
+    }
     navigate('/');
   }, [signOut, navigate]);
 }

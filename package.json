@@ -30,6 +30,7 @@
     "seed:tickets": "npm run seed:tickets --workspace server",
     "seed:bids": "npm run seed:bids --workspace server",
     "seed:storefront": "npm run seed:storefront --workspace server",
+    "seed:website": "npm run seed:website --workspace server",
     "drop:pictureless": "npm run drop:pictureless --workspace server",
     "seed:agreements": "npm run seed:agreements --workspace server",
     "seed:superadmin": "npm run seed:superadmin --workspace server",

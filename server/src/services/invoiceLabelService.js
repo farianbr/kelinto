@@ -14,11 +14,9 @@ import ApiError from '../utils/ApiError.js';
  * payment state and is derived from the payment rows. Setting a label moves no
  * balance, changes no total and does not settle anything.
  *
- * **The warranty email goes out once per invoice, ever.** A label may be
- * configured to send it the first time it lands on a paid invoice;
- * `Invoice.labelEmailSentAt` is the guard, so clearing the label and re-setting
- * it sends nothing. See `models/InvoiceLabel.js` for why that lives on the
- * invoice rather than on the label.
+ * **Setting a label sends nothing by itself.** A status's own message goes out
+ * with the scheduled messages (`invoiceStatusService.run`), once per invoice.
+ * The fixed warranty email a label could arm was removed on 2026-10-01.
  */
 
 function isObjectId(value) {
@@ -32,10 +30,28 @@ function shapeLabel(label) {
     id: String(label._id),
     name: label.name,
     colorToken: label.colorToken ?? 'ink',
-    sendsWarrantyEmail: label.sendsWarrantyEmail === true,
     isActive: label.isActive !== false,
     order: label.order ?? 0,
+    delayDays: label.delayDays ?? 0,
+    channel: label.channel ?? 'email',
+    subject: label.subject ?? '',
+    message: label.message ?? '',
+    messageActive: label.messageActive === true,
   };
+}
+
+/**
+ * The message half of a status, from a request body (2026-10-01). Only the
+ * keys the body carries, so a partial update leaves the rest alone.
+ */
+function messageFields(body = {}) {
+  const out = {};
+  if (body.delayDays !== undefined) out.delayDays = Math.max(Number(body.delayDays) || 0, 0);
+  if (body.channel !== undefined) out.channel = body.channel || 'email';
+  if (body.subject !== undefined) out.subject = String(body.subject ?? '').trim();
+  if (body.message !== undefined) out.message = String(body.message ?? '').trim();
+  if (body.messageActive !== undefined) out.messageActive = Boolean(body.messageActive);
+  return out;
 }
 
 /**
@@ -64,9 +80,9 @@ async function createLabel(body = {}, actor) {
     const label = await db().InvoiceLabel.create({
       name,
       colorToken: body.colorToken || 'ink',
-      sendsWarrantyEmail: Boolean(body.sendsWarrantyEmail),
       isActive: body.isActive !== false,
       order: Number(body.order) || 0,
+      ...messageFields(body),
       createdBy: actor ?? null,
     });
 
@@ -93,11 +109,9 @@ async function updateLabel(id, body = {}) {
     label.name = name;
   }
   if (body.colorToken !== undefined) label.colorToken = body.colorToken || 'ink';
-  if (body.sendsWarrantyEmail !== undefined) {
-    label.sendsWarrantyEmail = Boolean(body.sendsWarrantyEmail);
-  }
   if (body.isActive !== undefined) label.isActive = Boolean(body.isActive);
   if (body.order !== undefined) label.order = Number(body.order) || 0;
+  Object.assign(label, messageFields(body));
 
   try {
     await label.save();
@@ -145,12 +159,8 @@ async function deleteLabel(id) {
 /**
  * Set or clear the manual status on one invoice.
  *
- * Returns `{ invoice, emailed }` so the screen can say whether the warranty
- * email actually went - a side effect the person clicking cannot otherwise see.
- *
- * `labelId` of `null` clears it. Clearing does **not** reset
- * `labelEmailSentAt`: the email either went to that customer or it did not, and
- * forgetting that is how they receive it twice.
+ * `labelId` of `null` clears it. `labelSetAt` is what a status's message
+ * counts its days from.
  */
 async function setInvoiceLabel(number, { labelId } = {}) {
   const invoice = await db().Invoice.findOne({ number });
@@ -160,7 +170,7 @@ async function setInvoiceLabel(number, { labelId } = {}) {
     invoice.label = null;
     invoice.labelSetAt = null;
     await invoice.save();
-    return { cleared: true, emailed: false, label: null };
+    return { cleared: true, label: null };
   }
 
   if (!isObjectId(labelId)) throw ApiError.notFound('Status not found.', 'LABEL_NOT_FOUND');
@@ -170,44 +180,12 @@ async function setInvoiceLabel(number, { labelId } = {}) {
   invoice.label = label._id;
   invoice.labelSetAt = new Date();
 
-  /**
-   * The warranty email, at most once per invoice.
-   *
-   * Three conditions, all of them load-bearing:
-   *
-   *   - the label is configured to send it - which label means "finished with
-   *     this customer" differs per shop, so it is data rather than a phrase in
-   *     a conditional;
-   *   - the invoice is **paid** - thanking somebody for support while they
-   *     still owe money reads as a dunning letter with the wrong words on it;
-   *   - it has never been sent for this invoice.
-   */
-  const shouldSend =
-    label.sendsWarrantyEmail === true && invoice.status === 'paid' && !invoice.labelEmailSentAt;
-
-  let emailed = false;
-  if (shouldSend) {
-    try {
-      const { sendWarrantyEmail } = await import('./invoiceWarrantyMail.js');
-      const result = await sendWarrantyEmail(invoice);
-      emailed = result.delivered === true;
-      // Stamped only on a real send. Stamping on a failure would burn the one
-      // chance this invoice has to reach the customer.
-      if (emailed) invoice.labelEmailSentAt = new Date();
-    } catch {
-      // A mail failure must not fail the status change - the same rule the
-      // ticket notifier follows. The caller is told through `emailed`.
-      emailed = false;
-    }
-  }
-
   await invoice.save();
 
   // The shaped label goes back so the screen can repaint the pill without a
-  // second round trip; `emailed` is the half it could not work out for itself.
+  // second round trip.
   return {
     cleared: false,
-    emailed,
     labelName: label.name,
     label: shapeLabel(label),
     labelSetAt: invoice.labelSetAt,

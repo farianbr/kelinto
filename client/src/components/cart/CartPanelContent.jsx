@@ -6,6 +6,7 @@ import Button from '@/components/ui/Button';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import CartLine from './CartLine';
 import CartBundleLine from './CartBundleLine';
+import CartPreownedLine from './CartPreownedLine';
 import useUiStore from '@/store/uiStore';
 import { useSavedCarts, useAccountMutations } from '@/hooks/useAccount';
 import { pressable } from '@/lib/motion';
@@ -107,8 +108,8 @@ function SavedCartsPicker({ onClose }) {
   );
 }
 
-export function CartPanelBody({ items, bundles = [], onQtyChange, onRemove, onRemoveBundle, onClose, isApproved }) {
-  if (items.length === 0 && bundles.length === 0) {
+export function CartPanelBody({ items, bundles = [], preowned = [], onQtyChange, onRemove, onRemoveBundle, onRemovePreowned, onClose, isApproved }) {
+  if (items.length === 0 && bundles.length === 0 && preowned.length === 0) {
     return (
       <>
         <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
@@ -147,6 +148,9 @@ export function CartPanelBody({ items, bundles = [], onQtyChange, onRemove, onRe
     <ul className="divide-y divide-line">
       {bundles.map((bundle) => (
         <CartBundleLine key={bundle.offerId} bundle={bundle} onRemove={onRemoveBundle} compact />
+      ))}
+      {preowned.map((line) => (
+        <CartPreownedLine key={line.deviceId} line={line} onRemove={onRemovePreowned} compact />
       ))}
       {items.map((item) => (
         <CartLine

@@ -11,7 +11,7 @@ const DESKTOP = '(min-width: 1024px)';
 export const useUiStore = create((set) => ({
   megaMenuOpen: false,
   mobileNavOpen: false,
-  mobileNavTab: 'menu', // menu | categories
+  mobileNavTab: 'menu', // menu | account
   cartFlyoutOpen: false,
   accountMenuOpen: false,
   accountPopupOpen: false,
@@ -43,8 +43,8 @@ export const useUiStore = create((set) => ({
       accountMenuOpen: false,
     })),
 
-  // `tab` lets the bottom bar's Categories button land on the drill-down
-  // directly rather than on the site links.
+  // `tab` picks which of the drawer's two tabs opens: `menu` (the site) or
+  // `account` (the account's own menu, or a way to sign in).
   openMobileNav: (tab = 'menu') =>
     set({ mobileNavOpen: true, mobileNavTab: tab, cartFlyoutOpen: false, accountMenuOpen: false }),
   closeMobileNav: () => set({ mobileNavOpen: false }),

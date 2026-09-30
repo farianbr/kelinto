@@ -46,10 +46,9 @@ function pagesByCategory(features) {
      * see `components/admin/settings/SettingsTabs.jsx`.
      *
      * `parent` is for a page that lives here. `settingsTab` lends one that
-     * lives elsewhere: Services is in the Sales nav because the counter uses
-     * it daily, and it is a Financial setting all the same. Reading only
-     * `parent` here is what left it in the tab row but off this grid, so the
-     * map and the tabs disagreed about what Financial contains.
+     * lives elsewhere (Services did, until it moved to Purchase on
+     * 2026-09-30). Reading only `parent` here is what left a lent page in the
+     * tab row but off this grid, so the map and the tabs disagreed.
      */
     const key = meta.parent?.startsWith('settings:')
       ? meta.parent.slice('settings:'.length)

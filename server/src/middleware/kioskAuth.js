@@ -18,25 +18,28 @@ import { KIOSK_COOKIE } from '../services/kioskService.js';
  * sets no `req.user`, and everything behind it is limited to what a customer
  * standing at a counter may write.
  */
-export function requireKiosk(req, res, next) {
+export function readKioskSession(req) {
   const token = req.cookies?.[KIOSK_COOKIE];
-  if (!token) {
-    return next(ApiError.unauthorized('This kiosk is locked.', 'KIOSK_LOCKED'));
-  }
-
+  if (!token) return null;
   try {
     const payload = jwt.verify(token, env.JWT_SECRET);
-    if (payload.kind !== 'kiosk') {
-      // A valid token of the wrong kind. Refused as locked rather than as
-      // forbidden: the tablet's only remedy is the PIN screen either way.
-      return next(ApiError.unauthorized('This kiosk is locked.', 'KIOSK_LOCKED'));
-    }
-
-    req.kiosk = { businessId: payload.sub };
-    return next();
+    // A valid token of the wrong kind is no session at all.
+    return payload.kind === 'kiosk' ? payload : null;
   } catch {
+    return null;
+  }
+}
+
+export function requireKiosk(req, res, next) {
+  const payload = readKioskSession(req);
+  if (!payload) {
+    // Refused as locked rather than as forbidden, whatever was wrong with the
+    // token: the tablet's only remedy is the PIN screen either way.
     return next(ApiError.unauthorized('This kiosk is locked.', 'KIOSK_LOCKED'));
   }
+
+  req.kiosk = { businessId: payload.sub };
+  return next();
 }
 
 export default requireKiosk;

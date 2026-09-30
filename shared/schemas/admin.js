@@ -2,7 +2,10 @@ import { z } from 'zod';
 // The one password rule, shared rather than restated: an account an admin opens
 // must not be allowed a weaker password than one a business opens for itself.
 import { passwordSchema } from './auth.js';
+import { MESSAGE_BODY_MAX } from '../messageHtml.js';
 import { DEFAULT_COUNTRY } from '../countries.js';
+import { KIOSK_CLOCKS } from '../kiosk.js';
+import { isMapEmbedUrl, mapEmbedSrc } from '../mapEmbed.js';
 import { PROVINCES } from './checkout.js';
 import { isValidPostal, postalExampleFor } from '../regions.js';
 import { businessSlugProblem, customDomainProblem, normaliseDomain } from '../hosts.js';
@@ -603,11 +606,8 @@ const ADMIN_NAV = [
       // Enquiries from the storefront's contact form, before anybody has priced
       // them. Under Quotes because that is what they usually become.
       { key: 'web-quotes', label: 'Web Quote', to: '/admin/web-quotes', icon: 'Globe' },
-      // The labour price list. Under Sales rather than Settings because it is
-      // what the quote and ticket forms pick from every day, not something
-      // configured once - and a price list buried two menus deep is a price
-      // list that goes stale.
-      { key: 'services', label: 'Services', to: '/admin/services', icon: 'Wrench' },
+      // Services (the labour price list) moved to Purchase on 2026-09-30, at
+      // the client's request. The quote and ticket pickers still read it.
     ],
   },
   {
@@ -652,9 +652,13 @@ const ADMIN_NAV = [
         icon: 'CalendarClock',
       },
       {
-        key: 'supplier-services',
-        label: 'Service Products',
-        to: '/admin/supplier-services',
+        // One row, two tabs (2026-09-30): the labour price list a quote and a
+        // ticket charge from, and Service Products, what is bought in. It used
+        // to be a Sales row, a Financial settings tab and a separate Purchase
+        // row; the client asked for Services to live in Purchase only.
+        key: 'services',
+        label: 'Services',
+        to: '/admin/services',
         icon: 'Wrench',
       },
       { key: 'expenses', label: 'Expenses', to: '/admin/expenses', icon: 'Receipt' },
@@ -672,6 +676,17 @@ const ADMIN_NAV = [
           'products out of stock or running low',
         ],
         badgeFilter: 'stock=attention',
+      },
+      {
+        // Phones bought from customers at the kiosk: the requests waiting to
+        // be priced, and the stock they became. One screen, two tabs.
+        key: 'preowned',
+        label: 'Pre-owned',
+        to: '/admin/preowned',
+        icon: 'Smartphone',
+        badge: 'pendingBuybacks',
+        badgeLabel: 'waiting to be priced',
+        badgePhrase: ['phone waiting to be priced', 'phones waiting to be priced'],
       },
     ],
   },
@@ -850,6 +865,8 @@ const ADMIN_LEGACY_REDIRECTS = {
   // sibling settings screens with near-identical names meant reading the menu
   // twice to find either. The old path keeps working for a bookmark.
   '/admin/settings/invoice-status': '/admin/settings/invoice-labels',
+  // Service Products became a tab on Purchase › Services on 2026-09-30.
+  '/admin/supplier-services': '/admin/services?tab=products',
 };
 
 /**
@@ -2023,7 +2040,7 @@ const CONDITION_PARTS = [
   { key: 'screen', label: 'Screen' },
   { key: 'battery', label: 'Battery' },
   { key: 'chargingPort', label: 'Charging Port' },
-  { key: 'backGlass', label: 'BackGlass' },
+  { key: 'backGlass', label: 'Back Glass' },
   { key: 'frontCamera', label: 'Front Camera' },
   { key: 'backCamera', label: 'Back Camera' },
   { key: 'loudSpeaker', label: 'Loud Speaker' },
@@ -2407,7 +2424,7 @@ const messageTemplateSchema = z.object({
    */
   status: z.string().trim().max(60).optional().or(z.literal('')),
   subject: z.string().trim().max(200).optional(),
-  body: z.string().trim().min(1, 'Write the message.').max(5000),
+  body: z.string().trim().min(1, 'Write the message.').max(MESSAGE_BODY_MAX, 'That message is too long.'),
   isActive: z.boolean().default(true),
 });
 
@@ -2515,6 +2532,16 @@ const businessInfoSchema = z.object({
     .optional()
     .or(z.literal('')),
   mapUrl: z.string().trim().url('Enter a valid URL.').optional().or(z.literal('')),
+
+  // Google's "Embed a map" link, or the whole `<iframe>` it hands out: only the
+  // `src` is kept (`shared/mapEmbed.js`). Optional, so a client that predates it
+  // sends nothing and the saved map is left alone.
+  mapEmbedUrl: z
+    .preprocess(
+      mapEmbedSrc,
+      z.string().max(2000).refine(isMapEmbedUrl, 'Paste the link from Google Maps › Share › Embed a map.'),
+    )
+    .optional(),
 
   /**
    * Opening hours, printed rather than computed.
@@ -2936,7 +2963,7 @@ const invoiceStatusRuleSchema = z.object({
     .default(0),
   channel: z.enum(MESSAGE_CHANNELS).default('email'),
   subject: z.string().trim().max(200).optional(),
-  message: z.string().trim().min(1, 'Write the message.').max(5000),
+  message: z.string().trim().min(1, 'Write the message.').max(MESSAGE_BODY_MAX, 'That message is too long.'),
   isActive: z.boolean().default(false),
 });
 
@@ -2963,19 +2990,38 @@ const LABEL_COLOR_OPTIONS = [
 /**
  * One entry on the manual invoice status list (Sales § Invoice).
  *
- * **`sendsWarrantyEmail` is the field to be careful with.** Ticking it arms an
- * automatic email to a customer the first time this label lands on a paid
- * invoice, so the form has to say so plainly and the route needs `full` on
- * settings rather than on sales. Defaults to false: a label that mails somebody
- * the moment it is picked from a menu is a side effect nobody asked for.
+ * The status's own message is the only thing it sends. It used to carry a
+ * `sendsWarrantyEmail` tick that fired a fixed warranty and review email;
+ * removed 2026-10-01 at the client's request, since the message on the status
+ * says whatever the owner writes, warranty included.
  */
-const invoiceLabelSchema = z.object({
-  name: z.string().trim().min(1, 'Name this status.').max(60),
-  colorToken: z.enum(LABEL_COLOR_TOKENS).default('ink'),
-  sendsWarrantyEmail: z.boolean().default(false),
-  isActive: z.boolean().default(true),
-  order: z.coerce.number().int().min(0).max(999).default(0),
-});
+const invoiceLabelSchema = z
+  .object({
+    name: z.string().trim().min(1, 'Name this status.').max(60),
+    colorToken: z.enum(LABEL_COLOR_TOKENS).default('ink'),
+    isActive: z.boolean().default(true),
+    order: z.coerce.number().int().min(0).max(999).default(0),
+
+    // The message the status sends once it has been set (2026-10-01). Counted
+    // from the day it is set, so never negative: nothing goes out before the
+    // status exists. Optional as a whole - a status may send nothing.
+    delayDays: z.coerce
+      .number()
+      .int()
+      .min(0, 'Counted from the day it is set, so it cannot be before.')
+      .max(365, 'That is more than a year after.')
+      .default(0),
+    channel: z.enum(['email', 'sms', 'whatsapp']).default('email'),
+    subject: z.string().trim().max(200).optional().or(z.literal('')),
+    message: z.string().trim().max(MESSAGE_BODY_MAX, 'That message is too long.').optional().or(z.literal('')),
+    messageActive: z.boolean().default(false),
+  })
+  .superRefine((value, ctx) => {
+    // A message switched on with nothing written would "send" an empty email.
+    if (value.messageActive && !value.message?.trim()) {
+      ctx.addIssue({ code: 'custom', path: ['message'], message: 'Write the message, or switch it off.' });
+    }
+  });
 
 /**
  * Setting the manual status on one invoice, or clearing it.
@@ -3314,31 +3360,181 @@ const deviceCatalogUpdateSchema = deviceCatalogSchema
  * The phone number is the one exception: it is where every status update goes,
  * and a check-in nobody can be told about is a device that sits uncollected.
  */
-const kioskCheckInSchema = z.object({
-  firstName: z.string().trim().min(1, 'Enter your first name.').max(60),
-  lastName: z.string().trim().max(60).or(z.literal('')).optional(),
-  phone: z.string().trim().min(7, 'Enter a phone number we can reach you on.').max(40),
-  email: z.string().trim().toLowerCase().email().or(z.literal('')).optional(),
+const optionalText = (max) => z.string().trim().max(max).or(z.literal('')).optional();
 
-  category: z.string().trim().max(60).or(z.literal('')).optional(),
-  brand: z.string().trim().max(60).or(z.literal('')).optional(),
-  series: z.string().trim().max(120).or(z.literal('')).optional(),
-  model: z.string().trim().max(120).or(z.literal('')).optional(),
+const kioskCheckInSchema = z
+  .object({
+    /**
+     * A returning customer, found by `POST /kiosk/lookup` and confirmed with
+     * "Yes, that's me". A signed token rather than an account id, so a check-in
+     * can only attach to an account this tablet actually looked up and the
+     * customer actually claimed.
+     */
+    customerToken: z.string().trim().max(1000).or(z.literal('')).optional(),
+    /**
+     * The account the customer said was NOT them. Carried so a new customer
+     * typing the same number is not quietly filed under the stranger they just
+     * refused.
+     */
+    rejectedToken: z.string().trim().max(1000).or(z.literal('')).optional(),
 
-  problem: z.string().trim().max(500).or(z.literal('')).optional(),
-  passcode: z.string().trim().max(60).or(z.literal('')).optional(),
-  serial: z.string().trim().max(80).or(z.literal('')).optional(),
+    // A new customer only. A returning one is who their account says they are.
+    firstName: optionalText(60),
+    lastName: optionalText(60),
+    phone: optionalText(40),
+    email: z.string().trim().toLowerCase().email().or(z.literal('')).optional(),
+    /**
+     * A number to reach them on for THIS repair, when they do not have the
+     * phone on the account with them - usually because it is the phone being
+     * repaired. It goes on the ticket; the account keeps its own number.
+     */
+    alternatePhone: optionalText(40),
+    /** The channels they agreed to hear about the repair on. Empty is a refusal. */
+    contactChannels: z.array(z.enum(CONSENT_CHANNELS)).max(4).default([]),
 
-  /**
-   * The two things the customer actually agreed to.
-   *
-   * `termsAccepted` is the shop's protection and the server re-checks it
-   * against the business's own `requireTerms` setting - a client that could
-   * skip it would be skipping the one row that answers "they never agreed to
-   * leave it".
-   */
-  termsAccepted: z.boolean().default(false),
-  updatesConsent: z.boolean().default(false),
+    category: optionalText(60),
+    brand: optionalText(60),
+    series: optionalText(120),
+    model: optionalText(120),
+
+    /** The quick-pick faults, and anything the customer typed about them. */
+    problems: z.array(z.string().trim().min(1).max(60)).max(12).default([]),
+    notes: optionalText(500),
+    passcode: optionalText(60),
+
+    /**
+     * The eight components, as the customer describes them. Stored beside the
+     * counter's own grid, never in it: the grid is the shop's record of what it
+     * tested, and a customer's "the camera works" is a claim, not a test.
+     */
+    condition: z.record(z.enum(CONDITION_PARTS.map((part) => part.key)), conditionGradeSchema).default({}),
+
+    /**
+     * What the customer agreed to. `termsAccepted` is the shop's protection and
+     * the server re-checks it against the business's own `requireTerms`
+     * setting - a client that could skip it would be skipping the one row that
+     * answers "they never agreed to leave it".
+     */
+    termsAccepted: z.boolean().default(false),
+  })
+  .superRefine((value, ctx) => {
+    if (value.customerToken) return;
+    if (!value.firstName) {
+      ctx.addIssue({ code: 'custom', path: ['firstName'], message: 'Enter your first name.' });
+    }
+    if (!value.lastName) {
+      ctx.addIssue({ code: 'custom', path: ['lastName'], message: 'Enter your last name.' });
+    }
+    if (String(value.phone ?? '').replace(/\D/g, '').length < 7) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['phone'],
+        message: 'Enter a phone number we can reach you on.',
+      });
+    }
+  });
+
+/**
+ * "Let's find your details": a phone number or an email, typed at the tablet.
+ * The answer is masked (`shared/kiosk.js`), because anybody can type anything.
+ */
+const kioskLookupSchema = z.object({
+  query: z.string().trim().min(3, 'Type your phone number or email.').max(160),
+});
+
+/**
+ * "Sell your phone" (Sales § Sell your phone): what the kiosk sends.
+ *
+ * A returning seller arrives with the lookup's `customerToken` and sends no
+ * personal details; a new one sends them. Either way the sale carries a NEW
+ * photo, and an ID unless the account already holds one (`hasId` on the
+ * lookup), and the seller's declaration that the phone is theirs to sell.
+ */
+const ID_TYPES = [
+  { value: 'drivers_licence', label: "Driver's licence" },
+  { value: 'passport', label: 'Passport' },
+  { value: 'provincial_id', label: 'Provincial photo ID' },
+  { value: 'other', label: 'Other government ID' },
+];
+
+const kioskSellSchema = z
+  .object({
+    customerToken: z.string().trim().max(1000).or(z.literal('')).optional(),
+    rejectedToken: z.string().trim().max(1000).or(z.literal('')).optional(),
+
+    firstName: optionalText(60),
+    lastName: optionalText(60),
+    phone: optionalText(40),
+    email: z.string().trim().toLowerCase().email().or(z.literal('')).optional(),
+
+    idType: z.enum(ID_TYPES.map((type) => type.value)).or(z.literal('')).optional(),
+    idNumber: z.string().trim().max(40).or(z.literal('')).optional(),
+    /** The camera's `data:image/...;base64,` string. Stored privately, never echoed back. */
+    photo: z.string().max(1_400_000, 'That photo is too large.'),
+
+    category: optionalText(60),
+    brand: optionalText(60),
+    series: optionalText(120),
+    model: z.string().trim().min(1, 'Choose the model.').max(120),
+    storage: optionalText(20),
+    colour: optionalText(40),
+    /** 15 digits on every phone since the standard was set; dial *#06# to see it. */
+    imei: z.string().trim().regex(/^\d{15}$/, 'An IMEI is 15 digits. Dial *#06# to see it.'),
+    passcode: optionalText(60),
+    notes: optionalText(500),
+    condition: z.record(z.enum(CONDITION_PARTS.map((part) => part.key)), conditionGradeSchema).default({}),
+
+    declaredOwner: z.literal(true, {
+      errorMap: () => ({ message: 'Confirm the phone is yours to sell.' }),
+    }),
+  })
+  .superRefine((value, ctx) => {
+    if (value.customerToken) return;
+    if (!value.firstName) ctx.addIssue({ code: 'custom', path: ['firstName'], message: 'Enter your first name.' });
+    if (!value.lastName) ctx.addIssue({ code: 'custom', path: ['lastName'], message: 'Enter your last name.' });
+    if (String(value.phone ?? '').replace(/\D/g, '').length < 7) {
+      ctx.addIssue({ code: 'custom', path: ['phone'], message: 'Enter a phone number we can reach you on.' });
+    }
+  });
+
+/**
+ * Pricing a buyback into stock (Inventory › Pre-owned › Requests).
+ *
+ * Both prices in dollars on the form, stored in cents. The customer does not
+ * accept an offer (client ruling): the staff member agrees it at the counter
+ * and records what was paid and how, so the payout method is required.
+ */
+const buybackAcceptSchema = z.object({
+  purchasePriceDollars: z.coerce
+    .number({ invalid_type_error: 'Enter what you paid.' })
+    .min(0, 'Enter what you paid.')
+    .max(100_000, 'That is more than this form will take.'),
+  sellingPriceDollars: z.coerce
+    .number({ invalid_type_error: 'Enter a selling price.' })
+    .positive('Enter a selling price.')
+    .max(100_000, 'That is more than this form will take.'),
+  payoutMethod: z.string().trim().min(1, 'Choose how the customer was paid.').max(40),
+  payoutReference: z.string().trim().max(80).optional().or(z.literal('')),
+  grade: z.enum(['like_new', 'excellent', 'good', 'fair']),
+  // "Not checked" is an empty string on the form; the service drops it rather than storing a grade.
+  condition: z.record(z.string(), conditionGradeSchema.or(z.literal(''))).optional(),
+  description: z.string().trim().max(1000).optional().or(z.literal('')),
+  notes: z.string().trim().max(1000).optional().or(z.literal('')),
+  /** Put it on the website now, or keep it in stock until it is photographed. */
+  list: z.boolean().default(false),
+});
+
+const buybackDeclineSchema = z.object({
+  reason: z.string().trim().min(3, 'Say why, so the customer can be told.').max(500),
+});
+
+/** Editing a pre-owned unit in stock. */
+const preownedUpdateSchema = z.object({
+  sellingPriceDollars: z.coerce.number().positive('Enter a selling price.').max(100_000).optional(),
+  grade: z.enum(['like_new', 'excellent', 'good', 'fair']).optional(),
+  description: z.string().trim().max(1000).optional().or(z.literal('')),
+  photos: z.array(z.string().trim().max(600)).max(8).optional(),
+  status: z.enum(['in_stock', 'listed', 'withdrawn']).optional(),
 });
 
 /** Unlocking the tablet. Digits only; the server compares against a hash. */
@@ -3371,6 +3567,16 @@ const kioskSettingsSchema = z.object({
   readAloud: z.boolean(),
   requireTerms: z.boolean(),
   termsText: z.string().trim().max(1000, 'Keep the terms under 1,000 characters.'),
+  ...Object.fromEntries(
+    Object.entries(KIOSK_CLOCKS).map(([key, rule]) => [
+      key,
+      z.coerce
+        .number({ invalid_type_error: 'Enter a number of seconds.' })
+        .int('Whole seconds only.')
+        .min(rule.min, `At least ${rule.min} seconds.`)
+        .max(rule.max, `At most ${rule.max} seconds.`),
+    ]),
+  ),
 }).refine((value) => !value.requireTerms || value.termsText.length > 0, {
   // A required tick with nothing written beside it is a customer agreeing to a
   // blank line, which is worth less than not asking at all.
@@ -3465,4 +3671,4 @@ const serviceQuoteConvertSchema = z.object({
   priority: z.enum(TICKET_PRIORITIES).default('normal'),
 });
 
-export { quoteToTicketSchema, ticketDepositSchema, ticketConvertSchema, TAX_RATES, TAX_LABELS, provinceTaxOptions, INVOICE_SERVICE_TYPES, SERVICE_INVOICE_TYPES, ORDER_OPEN_STATUSES, ORDER_UNFULFILLED_STATUSES, approveUserSchema, rejectUserSchema, creditSchema, clientSchema, clientFormSchema, clientCreateFormSchema, clientUpdateSchema, CONSENT_CHANNELS, PREFERRED_CONTACT_OPTIONS, CUSTOMER_SOURCE_OPTIONS, contactConsentSchema, MEMBERSHIP_TIERS, tierSchema, internalNoteSchema, storeCreditSchema, refundSchema, userStatusSchema, productSchema, ORDER_STATUS_FLOW, orderStatusSchema, CARRIERS, ADMIN_NAV, ADMIN_LEGACY_REDIRECTS, invoicePaymentSchema, invoiceTipSchema, invoiceVoidSchema, webQuoteStatusSchema, creditPaymentSchema, invoiceUpdateSchema, bulkOrderStatusSchema, supplierSchema, purchaseOrderSchema, purchaseOrderStatusSchema, purchaseReceiveSchema, purchasePaymentSchema, purchaseInviteSchema, purchaseSendSchema, purchaseNegotiateSchema, purchaseConfirmSchema, proformaRevisionSchema, supplierQuoteSchema, supplierDeclineSchema, supplierProformaSchema, supplierDeliverySchema, superAdminLoginSchema, superAdminForgotSchema, superAdminResetSchema, tenantSchema, tenantSlotsSchema, superAdminBusinessSchema, businessAddressSchema, addressRequestSchema, addressRejectSchema, businessAssignSchema, businessFeatureSchema, impersonationSchema, tenantOwnerSchema, supportMessageSchema, planSchema, planFeatureSchema, businessStatusSchema, supplierLoginSchema, supplierForgotSchema, supplierResetSchema, supplierPasswordSchema, expenseSchema, expenseCategorySchema, stockAdjustSchema, productOpsSchema, quoteSchema, quoteStatusSchema, quoteConvertSchema, adminOrderSchema, adminInvoiceSchema, RMA_ITEM_DISPOSITIONS, rmaSchema, TICKET_STATUSES, TICKET_PRIORITIES, TICKET_SOURCES, TICKET_STATUS_LABELS, CONDITION_GRADES, CONDITION_PARTS, ticketSchema, ticketDeviceSchema, ticketLineSchema, ticketUpdateSchema, ticketStatusSchema, rmaStatusSchema, rmaInspectSchema, rmaResolveSchema, PERMISSION_AREAS, PERMISSION_LEVELS, PERMISSION_LEVEL_LABELS, SETTINGS_SUBAREAS, SUBAREA_LEVELS, SUBAREA_LEVEL_LABELS, settingsAreaKey, BUSINESS_STATUSES, BUSINESS_COLOR_TOKENS, businessSchema, roleSchema, staffUserSchema, staffUserUpdateSchema, MESSAGE_CHANNELS, TEMPLATE_DOCUMENTS, CAMPAIGN_AUDIENCES, CAMPAIGN_AUDIENCE_LABELS, messageSchema, callLogSchema, messageTemplateSchema, campaignSchema, unsubscribeSchema, referralRateSchema, businessInfoSchema, saleSettingsSchema, shippingSettingsSchema, paymentMethodsSettingsSchema, inventorySettingsSchema, agreementTemplateSchema, agreementSignSchema, providerCredentialSchema, taxonomyNodeSchema, taxonomyCreateSchema, taxonomyImportSchema, invoiceStatusRuleSchema, LABEL_COLOR_TOKENS, LABEL_COLOR_OPTIONS, invoiceLabelSchema, invoiceLabelSetSchema, invoiceRefundSchema, invoiceRemindSchema, communicationsSettingsSchema, messageLimitSchema, SUPPLIER_RETURN_REASON_VALUES, supplierReturnSchema, supplierReturnStatusSchema, supplierCreditSchema, SUPPLIER_BILLING_CYCLES, supplierServiceSchema, supplierServiceUpdateSchema, supplierChargeSchema, SERVICE_CATEGORIES, SERVICE_CATEGORY_LABELS, serviceCatalogSchema, serviceCatalogUpdateSchema, serviceImportSchema, DEVICE_KINDS, DEVICE_KIND_LABELS, deviceCatalogSchema, deviceCatalogUpdateSchema, kioskCheckInSchema, kioskUnlockSchema, kioskPinSchema, kioskSettingsSchema, SERVICE_QUOTE_STATUSES, SERVICE_QUOTE_SOURCES, SERVICE_QUOTE_STATUS_LABELS, serviceQuoteLineSchema, serviceQuoteDeviceSchema, serviceQuoteSchema, serviceQuoteUpdateSchema, serviceQuoteStatusSchema, serviceQuoteConvertSchema };
+export { quoteToTicketSchema, ticketDepositSchema, ticketConvertSchema, TAX_RATES, TAX_LABELS, provinceTaxOptions, INVOICE_SERVICE_TYPES, SERVICE_INVOICE_TYPES, ORDER_OPEN_STATUSES, ORDER_UNFULFILLED_STATUSES, approveUserSchema, rejectUserSchema, creditSchema, clientSchema, clientFormSchema, clientCreateFormSchema, clientUpdateSchema, CONSENT_CHANNELS, PREFERRED_CONTACT_OPTIONS, CUSTOMER_SOURCE_OPTIONS, contactConsentSchema, MEMBERSHIP_TIERS, tierSchema, internalNoteSchema, storeCreditSchema, refundSchema, userStatusSchema, productSchema, ORDER_STATUS_FLOW, orderStatusSchema, CARRIERS, ADMIN_NAV, ADMIN_LEGACY_REDIRECTS, invoicePaymentSchema, invoiceTipSchema, invoiceVoidSchema, webQuoteStatusSchema, creditPaymentSchema, invoiceUpdateSchema, bulkOrderStatusSchema, supplierSchema, purchaseOrderSchema, purchaseOrderStatusSchema, purchaseReceiveSchema, purchasePaymentSchema, purchaseInviteSchema, purchaseSendSchema, purchaseNegotiateSchema, purchaseConfirmSchema, proformaRevisionSchema, supplierQuoteSchema, supplierDeclineSchema, supplierProformaSchema, supplierDeliverySchema, superAdminLoginSchema, superAdminForgotSchema, superAdminResetSchema, tenantSchema, tenantSlotsSchema, superAdminBusinessSchema, businessAddressSchema, addressRequestSchema, addressRejectSchema, businessAssignSchema, businessFeatureSchema, impersonationSchema, tenantOwnerSchema, supportMessageSchema, planSchema, planFeatureSchema, businessStatusSchema, supplierLoginSchema, supplierForgotSchema, supplierResetSchema, supplierPasswordSchema, expenseSchema, expenseCategorySchema, stockAdjustSchema, productOpsSchema, quoteSchema, quoteStatusSchema, quoteConvertSchema, adminOrderSchema, adminInvoiceSchema, RMA_ITEM_DISPOSITIONS, rmaSchema, TICKET_STATUSES, TICKET_PRIORITIES, TICKET_SOURCES, TICKET_STATUS_LABELS, CONDITION_GRADES, CONDITION_PARTS, ticketSchema, ticketDeviceSchema, ticketLineSchema, ticketUpdateSchema, ticketStatusSchema, rmaStatusSchema, rmaInspectSchema, rmaResolveSchema, PERMISSION_AREAS, PERMISSION_LEVELS, PERMISSION_LEVEL_LABELS, SETTINGS_SUBAREAS, SUBAREA_LEVELS, SUBAREA_LEVEL_LABELS, settingsAreaKey, BUSINESS_STATUSES, BUSINESS_COLOR_TOKENS, businessSchema, roleSchema, staffUserSchema, staffUserUpdateSchema, MESSAGE_CHANNELS, TEMPLATE_DOCUMENTS, CAMPAIGN_AUDIENCES, CAMPAIGN_AUDIENCE_LABELS, messageSchema, callLogSchema, messageTemplateSchema, campaignSchema, unsubscribeSchema, referralRateSchema, businessInfoSchema, saleSettingsSchema, shippingSettingsSchema, paymentMethodsSettingsSchema, inventorySettingsSchema, agreementTemplateSchema, agreementSignSchema, providerCredentialSchema, taxonomyNodeSchema, taxonomyCreateSchema, taxonomyImportSchema, invoiceStatusRuleSchema, LABEL_COLOR_TOKENS, LABEL_COLOR_OPTIONS, invoiceLabelSchema, invoiceLabelSetSchema, invoiceRefundSchema, invoiceRemindSchema, communicationsSettingsSchema, messageLimitSchema, SUPPLIER_RETURN_REASON_VALUES, supplierReturnSchema, supplierReturnStatusSchema, supplierCreditSchema, SUPPLIER_BILLING_CYCLES, supplierServiceSchema, supplierServiceUpdateSchema, supplierChargeSchema, SERVICE_CATEGORIES, SERVICE_CATEGORY_LABELS, serviceCatalogSchema, serviceCatalogUpdateSchema, serviceImportSchema, DEVICE_KINDS, DEVICE_KIND_LABELS, deviceCatalogSchema, deviceCatalogUpdateSchema, kioskCheckInSchema, kioskLookupSchema, ID_TYPES, kioskSellSchema, buybackAcceptSchema, buybackDeclineSchema, preownedUpdateSchema, kioskUnlockSchema, kioskPinSchema, kioskSettingsSchema, SERVICE_QUOTE_STATUSES, SERVICE_QUOTE_SOURCES, SERVICE_QUOTE_STATUS_LABELS, serviceQuoteLineSchema, serviceQuoteDeviceSchema, serviceQuoteSchema, serviceQuoteUpdateSchema, serviceQuoteStatusSchema, serviceQuoteConvertSchema };

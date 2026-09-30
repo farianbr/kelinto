@@ -11,6 +11,7 @@ import { useOrder } from '@/hooks/useAccount';
 import { useCart } from '@/hooks/useCart';
 import { useAccountMutations } from '@/hooks/useAccount';
 import useUiStore from '@/store/uiStore';
+import { orderPaymentLabel } from '@/lib/paymentLabel';
 
 function AddressBlock({ title, address }) {
   if (!address) return null;
@@ -225,7 +226,7 @@ export function AccountOrderDetailPage() {
             <div className="flex justify-between">
               <dt className="text-ink-500">Method</dt>
               <dd className="font-medium text-ink-900">
-                {order.payment?.method === 'terms' ? 'On account' : 'Card'}
+                {orderPaymentLabel(order.payment?.method)}
               </dd>
             </div>
             <div className="flex justify-between">

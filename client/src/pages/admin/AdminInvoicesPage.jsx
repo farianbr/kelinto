@@ -823,9 +823,9 @@ export function AdminInvoicesPage() {
         },
     {
       key: 'status',
-      header: 'Payment',
+      header: 'Payment Status',
       priority: 1,
-      // Headed "Payment", not "Status": the column beside it is also a status,
+      // Headed "Payment Status", not "Status": the column beside it is also a status,
       // and two columns both called Status is a table nobody can read twice.
       render: (invoice) => (
         <Badge tone={STATUS_TONES[invoice.status]} size="sm">
@@ -835,11 +835,10 @@ export function AdminInvoicesPage() {
     },
     {
       key: 'label',
-      // "Status", not "Manual status": the qualifier was there to tell it apart
-      // from the payment column, which now says "Payment" and does that itself.
-      // A staff member does not think of it as manual, they think of it as the
-      // status - the other one is whether the money arrived.
-      header: 'Status',
+      // "After Sales Status" (client naming, 2026-09-30): where the invoice has
+      // got to with the customer once the sale is done, beside "Payment
+      // Status", which is whether the money arrived.
+      header: 'After Sales Status',
       priority: 2,
       /**
        * The status an admin sets, which is NOT the payment status beside it.
@@ -862,13 +861,13 @@ export function AdminInvoicesPage() {
              every other cell in the row does. */
           <div className="inline-flex" onClick={(event) => event.stopPropagation()}>
             <SelectMenu
-              srLabel={`Status for ${invoice.number}`}
+              srLabel={`After sales status for ${invoice.number}`}
               value={invoice.label?.id ?? ''}
               options={[
                 { value: '', label: 'No status' },
                 ...labels.map((label) => ({
                   value: label.id,
-                  label: label.sendsWarrantyEmail ? `${label.name} (emails)` : label.name,
+                  label: label.name,
                 })),
               ]}
               align="left"
@@ -879,16 +878,16 @@ export function AdminInvoicesPage() {
                   ? (LABEL_PILL[invoice.label.colorToken] ?? LABEL_PILL.ink)
                   : 'bg-transparent text-ink-400',
               )}
-              menuTitle="Set the manual status"
-              /* The consequence the list cannot show. One of these statuses can
-                 email the customer, and a menu that looks like it only edits a
-                 field is one somebody uses to tidy a board at midnight. */
+              menuTitle="Set the after sales status"
+              /* The consequence the list cannot show. A status can carry a
+                 message to the customer, and a menu that looks like it only
+                 edits a field is one somebody uses to tidy a board at midnight. */
               menuFootnote={
                 <>
                   <Mail className="mt-px size-3 shrink-0" strokeWidth={2} aria-hidden="true" />
                   <span>
-                    A status marked “emails” sends the warranty and review email once, and only
-                    on a paid invoice.
+                    A status with a message switched on sends it once per invoice, with the
+                    scheduled messages.
                   </span>
                 </>
               }
@@ -1180,9 +1179,9 @@ export function AdminInvoicesPage() {
         )}
       </Modal>
 
-      {/* Confirms, like a ticket status change and for the same reason: one of
-          these statuses emails the customer their warranty, and a picker in a
-          table row is clicked on the wrong line eventually.
+      {/* Confirms, like a ticket status change and for the same reason: a
+          status can carry a message to the customer, and a picker in a table
+          row is clicked on the wrong line eventually.
 
           `tone="info"` - it is reversible and moves no money. Red on an ordinary
           move teaches staff to click through reds. */}
@@ -1190,7 +1189,7 @@ export function AdminInvoicesPage() {
         open={Boolean(statusMove)}
         onClose={() => setStatusMove(null)}
         tone="info"
-        heading="Change status?"
+        heading="Change after sales status?"
         title={
           statusMove ? (
             <>
@@ -1212,15 +1211,15 @@ export function AdminInvoicesPage() {
           )
         }
         body={
-          statusMove?.label?.sendsWarrantyEmail ? (
+          statusMove?.label?.messageActive && statusMove.label.message?.trim() ? (
             <p className="flex items-start gap-2 rounded-md bg-warn-50 px-3 py-2.5 text-sm text-warn">
               <Mail className="mt-0.5 size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
               <span>
-                {statusMove.invoice.status === 'paid' && !statusMove.invoice.labelEmailSentAt
-                  ? 'This emails the customer their warranty and a review link. It sends once per invoice.'
-                  : statusMove.invoice.labelEmailSentAt
-                    ? 'The warranty email has already gone for this invoice, so it will not send again.'
-                    : 'The warranty email sends only on a paid invoice, so nothing will be sent yet.'}
+                {statusMove.label.name} sends the customer its message{' '}
+                {statusMove.label.delayDays
+                  ? `${statusMove.label.delayDays} ${statusMove.label.delayDays === 1 ? 'day' : 'days'} after it is set`
+                  : 'once it is set'}
+                , with the next run of the scheduled messages. It moves no money.
               </span>
             </p>
           ) : (
@@ -1237,14 +1236,7 @@ export function AdminInvoicesPage() {
               labelId: statusMove.label?.id ?? null,
             },
             {
-              onSuccess: (result) => {
-                setStatusMove(null);
-                // Whether the email actually went is the half the screen cannot
-                // work out for itself.
-                if (result?.emailed) {
-                  toast.ok('Warranty email sent', `${result.labelName} is set, and the customer has their warranty.`);
-                }
-              },
+              onSuccess: () => setStatusMove(null),
             },
           )
         }

@@ -48,6 +48,7 @@ const STATUS_TONES = { new: 'brand', read: 'info', closed: 'neutral' };
 
 /** What the enquiry is about. The storefront form's own list. */
 const TOPIC_TONES = {
+  quote: 'ok',
   account: 'info',
   order: 'warn',
   stock: 'info',

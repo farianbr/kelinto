@@ -46,6 +46,7 @@ import {
 } from '../../../shared/schemas/admin.js';
 import { formatDate, formatDateShort } from '../../../shared/dates.js';
 import { storefrontOrigin } from './linkOrigins.js';
+import '../models/Buyback.js';
 
 /**
  * Resolve the dashboard's date range.
@@ -196,6 +197,7 @@ async function stats({ from, to } = {}) {
     lowStockItems,
     openRmas,
     openTickets,
+    pendingBuybacks,
     recentInvoices,
     recentActivity,
   ] = await Promise.all([
@@ -398,6 +400,8 @@ async function stats({ from, to } = {}) {
     // dates would be nonsense.
     db().Rma.countDocuments({ status: { $in: RMA_OPEN_STATUSES } }),
     db().Ticket.countDocuments({ status: { $in: TICKET_OPEN_STATUSES } }),
+    // Phones bought at the kiosk and not yet priced: the Pre-owned badge.
+    db().Buyback.countDocuments({ status: 'pending' }),
 
     // Newest invoices, unranged like the other "recent" lists: the panel
     // answers "what was billed lately", which a date filter would silently
@@ -473,6 +477,7 @@ async function stats({ from, to } = {}) {
     // Open here excludes `ready_to_pickup`: the repair is done and the badge
     // should stop nagging, even though the device is still on the shelf.
     tickets: { open: openTickets },
+    buybacks: { pending: pendingBuybacks },
 
     trend: fillBuckets(trendRows, start, end, unit),
     topClients: topClientRows,

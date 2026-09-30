@@ -3,6 +3,7 @@ import { db } from '../db/models.js';
 import '../models/Offer.js';
 import '../models/Order.js';
 import '../models/Product.js';
+import '../models/PreownedDevice.js';
 import ApiError from '../utils/ApiError.js';
 import { DEFAULT_SHIPPING_METHODS } from '../models/Settings.js';
 import { offerStatus } from './offerService.js';
@@ -276,11 +277,17 @@ async function priceCart(cart, user, { deliveryCode = 'ground' } = {}) {
   // ---- bundles ------------------------------------------------------------
   const bundles = await expandBundles(cart, user);
 
+  // ---- pre-owned phones ---------------------------------------------------
+  const preowned = await expandPreowned(cart);
+  const preownedTotal = preowned
+    .filter((line) => line.available)
+    .reduce((sum, line) => sum + line.lineTotal, 0);
+
   const itemsSubtotal = items.reduce((sum, line) => sum + line.lineTotal, 0);
   const bundlesListTotal = bundles.reduce((sum, bundle) => sum + bundle.listTotal, 0);
   const bundlesCharged = bundles.reduce((sum, bundle) => sum + bundle.lineTotal, 0);
 
-  const subtotal = itemsSubtotal + bundlesListTotal;
+  const subtotal = itemsSubtotal + bundlesListTotal + preownedTotal;
   const bundleDiscount = bundlesListTotal - bundlesCharged;
 
   // ---- shipping, before any offer touches it ------------------------------
@@ -298,11 +305,14 @@ async function priceCart(cart, user, { deliveryCode = 'ground' } = {}) {
   const baseShipping = method.freeOver && afterBundles >= method.freeOver ? 0 : method.cost;
 
   // ---- the one offer ------------------------------------------------------
-  // Rule 3: only loose lines can carry a code. Bundle members are sealed.
+  // Rule 3: only loose lines can carry a code. Bundle members are sealed, and
+  // so is a pre-owned phone: it is priced one handset at a time by a person who
+  // agreed a buying price for it, and a parts promotion was never written with
+  // it in mind. It still counts toward free shipping, which is about the parcel.
   const evaluationInput = {
     lines: items.map((line) => ({ ...line, product: line.product_ })),
     itemsSubtotal,
-    orderSubtotal: afterBundles,
+    orderSubtotal: afterBundles - preownedTotal,
     shippingCost: baseShipping,
   };
 
@@ -359,6 +369,7 @@ async function priceCart(cart, user, { deliveryCode = 'ground' } = {}) {
     // `product_` is an implementation detail of the offer matcher.
     items: items.map(({ product_, ...line }) => line),
     bundles,
+    preowned,
     subtotal,
     bundleDiscount,
     promoDiscount,
@@ -408,6 +419,50 @@ async function priceCart(cart, user, { deliveryCode = 'ground' } = {}) {
  * `available: false` rather than dropped: silently removing something a buyer
  * put in their cart is worse than showing it and refusing to check out.
  */
+async function expandPreowned(cart) {
+  const refs = cart.preowned ?? [];
+  if (refs.length === 0) return [];
+
+  const devices = await db()
+    .PreownedDevice.find({ _id: { $in: refs.map((ref) => ref.device) } })
+    .lean();
+  const byId = new Map(devices.map((device) => [String(device._id), device]));
+
+  return refs
+    .map((ref) => {
+      const device = byId.get(String(ref.device));
+      if (!device) return null;
+      const title = [
+        [device.brand, device.model].filter(Boolean).join(' '),
+        device.storage,
+        device.colour,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      return {
+        device: device._id,
+        stockNumber: device.stockNumber,
+        name: `Pre-owned ${title}`,
+        grade: device.grade,
+        photo: urlOf(device.photos?.[0]) ?? null,
+        qty: 1,
+        unitPrice: device.priceCents,
+        lineTotal: device.priceCents,
+        // What we paid for it, so the order line snapshots its margin (§9.4).
+        unitCost: device.costCents > 0 ? device.costCents : undefined,
+        /**
+         * Still for sale. A phone is not held by sitting in a cart, so the
+         * first order to reach checkout takes it; the second cart shows it as
+         * gone rather than silently charging for nothing.
+         */
+        available: device.status === 'listed',
+        priceAtAdd: ref.priceAtAdd,
+        priceChanged: ref.priceAtAdd !== device.priceCents,
+      };
+    })
+    .filter(Boolean);
+}
+
 async function expandBundles(cart, _user) {
   if (!cart.bundles?.length) return [];
 
@@ -501,4 +556,4 @@ function assertBundlesOrderable(bundles) {
   }
 }
 
-export { OfferRejection, resolveCode, priceCart, expandBundles, assertBundlesOrderable };
+export { OfferRejection, resolveCode, priceCart, expandBundles, expandPreowned, assertBundlesOrderable };

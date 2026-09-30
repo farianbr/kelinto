@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertCircle, ArrowLeft, Banknote, CreditCard, Lock, Package, ShieldCheck, Truck, WalletCards } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Banknote, CreditCard, Lock, Package, ShieldCheck, Smartphone, Truck, WalletCards } from 'lucide-react';
 import cn from '@/lib/cn';
 import api from '@/lib/api';
 import { money } from '@/lib/format';
@@ -25,6 +25,7 @@ import PromoCodeField from '@/components/cart/PromoCodeField';
 import { useCart } from '@/hooks/useCart';
 import { useAuth } from '@/hooks/useAuth';
 import { pressable } from '@/lib/motion';
+import { useKioskShopping } from '@/lib/kioskShopping';
 
 const STEP_FIELDS = {
   contact: ['email'],
@@ -41,8 +42,19 @@ const STEP_FIELDS = {
   review: [],
 };
 
+/**
+ * The sections a kiosk checkout walks.
+ *
+ * A customer shopping from the in-store kiosk collects the order at the counter
+ * and pays for it there (client ruling, 2026-09-29), so there is no address to
+ * take and no delivery to choose: the two sections are left out rather than
+ * shown pre-answered, because a section somebody has to tap through without
+ * deciding anything is a section asking for the sake of it.
+ */
+const KIOSK_STEPS = CHECKOUT_STEPS.filter((step) => !['shipping', 'delivery'].includes(step.key));
+
 /** Builds the form's values from the signed-in account, tolerating a null user. */
-function buildDefaults(user) {
+function buildDefaults(user, kiosk = false) {
   const address =
     user?.addresses?.find((entry) => entry.isDefaultShipping) ?? user?.addresses?.[0] ?? null;
 
@@ -70,6 +82,11 @@ function buildDefaults(user) {
     // `poNumber` is not among them any more - a PO is supplier paperwork, and
     // the customer checkout no longer collects one.
     deliveryNotes: user?.fieldMemory?.deliveryNotes ?? '',
+    // The kiosk's fixed answers. The server refuses `counter` from anything but
+    // the tablet's own session, and refuses it with any delivery but pickup.
+    ...(kiosk
+      ? { shippingAddress: undefined, deliveryMethod: 'pickup', paymentMethod: 'counter', deliveryNotes: '' }
+      : {}),
   };
 }
 
@@ -98,7 +115,9 @@ export function CheckoutPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user, isApproved } = useAuth();
-  const { items, bundles, count, subtotal, priceVisible, hasStockIssue, isReady } = useCart();
+  const kiosk = useKioskShopping();
+  const steps = kiosk ? KIOSK_STEPS : CHECKOUT_STEPS;
+  const { items, bundles, preowned, count, subtotal, priceVisible, hasStockIssue, isReady } = useCart();
 
   const [activeStep, setActiveStep] = useState('contact');
   const [completed, setCompleted] = useState(new Set());
@@ -129,7 +148,7 @@ export function CheckoutPage() {
     */
     mode: 'onSubmit',
     reValidateMode: 'onChange',
-    defaultValues: buildDefaults(null),
+    defaultValues: buildDefaults(null, kiosk),
   });
 
   const { register, watch, trigger, handleSubmit, formState, reset, setValue, control } = form;
@@ -149,15 +168,17 @@ export function CheckoutPage() {
     if (!user || hydratedFromUser.current) return;
     if (formState.isDirty) return;
     hydratedFromUser.current = true;
-    reset(buildDefaults(user));
-  }, [user, reset, formState.isDirty]);
+    reset(buildDefaults(user, kiosk));
+  }, [user, reset, formState.isDirty, kiosk]);
 
   // An approved buyer who lands here with an empty cart has nothing to do.
   // Wait for `isReady` - before the cart resolves, `items` is empty for a
   // reason that has nothing to do with the cart actually being empty.
   useEffect(() => {
-    if (isReady && items.length === 0 && bundles.length === 0) navigate('/cart', { replace: true });
-  }, [isReady, items.length, bundles.length, navigate]);
+    if (isReady && items.length === 0 && bundles.length === 0 && preowned.length === 0) {
+      navigate('/cart', { replace: true });
+    }
+  }, [isReady, items.length, bundles.length, preowned.length, navigate]);
 
   /**
    * The binding price, from the server, re-fetched when the delivery method
@@ -170,7 +191,7 @@ export function CheckoutPage() {
   const { data: quoted } = useQuery({
     queryKey: ['orders', 'quote', values.deliveryMethod],
     queryFn: () => api.get('/orders/quote', { deliveryMethod: values.deliveryMethod }),
-    enabled: isApproved && isReady && (items.length > 0 || bundles.length > 0),
+    enabled: isApproved && isReady && (items.length > 0 || bundles.length > 0 || preowned.length > 0),
     placeholderData: (previous) => previous,
     staleTime: 0,
   });
@@ -226,8 +247,8 @@ export function CheckoutPage() {
 
     setCompleted((previous) => new Set(previous).add(stepKey));
 
-    const index = CHECKOUT_STEPS.findIndex((step) => step.key === stepKey);
-    const next = CHECKOUT_STEPS.slice(index + 1).find((step) => !completed.has(step.key));
+    const index = steps.findIndex((step) => step.key === stepKey);
+    const next = steps.slice(index + 1).find((step) => !completed.has(step.key));
     // If everything below is already done, drop straight back to Review - that
     // is what makes an out-of-order edit feel like a detour, not a restart.
     setActiveStep(next?.key ?? 'review');
@@ -280,7 +301,9 @@ export function CheckoutPage() {
     delivery: `${method.label} - ${method.detail}${shipping === 0 ? ' · Free' : ` · ${money(shipping)}`}`,
     payment: (() => {
       const base =
-        values.paymentMethod === 'terms'
+        values.paymentMethod === 'counter'
+          ? 'Pay at the counter'
+          : values.paymentMethod === 'terms'
           ? `On account - ${(user?.terms ?? 'net30').replace('net', 'Net ')}`
           : 'Card ending 4242';
       if (storeCreditApplied <= 0) return base;
@@ -345,11 +368,12 @@ export function CheckoutPage() {
                 {...register('email')}
               />
               <Button className="mt-4" onClick={() => advance('contact')}>
-                Continue to shipping
+                {kiosk ? 'Continue to payment' : 'Continue to shipping'}
               </Button>
             </StepSection>
 
             {/* ---- 2. shipping ------------------------------------------ */}
+            {!kiosk && (
             <StepSection
               index={2}
               label="Shipping address"
@@ -431,8 +455,10 @@ export function CheckoutPage() {
                 Continue to delivery
               </Button>
             </StepSection>
+            )}
 
             {/* ---- 3. delivery ------------------------------------------ */}
+            {!kiosk && (
             <StepSection
               index={3}
               label="Delivery method"
@@ -496,10 +522,11 @@ export function CheckoutPage() {
                 Continue to payment
               </Button>
             </StepSection>
+            )}
 
             {/* ---- 4. payment ------------------------------------------- */}
             <StepSection
-              index={4}
+              index={kiosk ? 2 : 4}
               label="Payment"
               state={stepState('payment')}
               summary={summaries.payment}
@@ -543,6 +570,23 @@ export function CheckoutPage() {
                 </label>
               )}
 
+              {kiosk ? (
+                /* The kiosk's only method, stated rather than offered: there is
+                   nothing to choose, so a radio button would be a control that
+                   does nothing. `paymentMethod` is already `counter`. */
+                <div className="flex items-start gap-3 rounded-md border border-brand bg-brand-50 p-3.5">
+                  <Banknote className="mt-0.5 size-5 shrink-0 text-brand" strokeWidth={1.5} aria-hidden="true" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-display text-md font-semibold text-ink-900">
+                      Pay at the counter
+                    </span>
+                    <span className="block text-sm text-ink-500">
+                      Collect your order at the counter and pay for it there. Nothing is charged now.
+                    </span>
+                  </span>
+                </div>
+              ) : (
+              <>
               <fieldset className="space-y-2">
                 <legend className="sr-only">
                   {storeCreditBalance > 0 ? 'How to settle the rest' : 'Payment method'}
@@ -682,6 +726,8 @@ export function CheckoutPage() {
                 <span className="font-semibold text-ink-700">DECLINE</span> show the failed-payment
                 path.
               </p>
+              </>
+              )}
 
               <Button className="mt-4" onClick={() => advance('payment')}>
                 Review order
@@ -690,7 +736,7 @@ export function CheckoutPage() {
 
             {/* ---- 5. review -------------------------------------------- */}
             <StepSection
-              index={5}
+              index={kiosk ? 3 : 5}
               label="Review & place order"
               state={stepState('review')}
               onEdit={() => setActiveStep('review')}
@@ -720,6 +766,18 @@ export function CheckoutPage() {
                         <span className="block text-2xs text-ok">−{money(bundle.savings)}</span>
                       )}
                     </span>
+                  </li>
+                ))}
+                {preowned.map((line) => (
+                  <li key={line.deviceId} className="flex items-center gap-3 p-3">
+                    <span className="flex size-12 shrink-0 items-center justify-center rounded-lg border border-line bg-surface-2">
+                      <Smartphone className="size-5 text-ink-300" strokeWidth={1.5} aria-hidden="true" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="line-clamp-1 text-md font-medium text-ink-900">{line.name}</span>
+                      <span className="tnum block font-mono text-2xs text-ink-300">{line.stockNumber} · ×1</span>
+                    </span>
+                    <span className="tnum shrink-0 font-display text-md font-bold">{money(line.lineTotal)}</span>
                   </li>
                 ))}
                 {items.map((item) => (
@@ -767,7 +825,7 @@ export function CheckoutPage() {
                 loading={placeOrder.isPending}
                 disabled={hasStockIssue}
               >
-                Place order · {money(dueNow)}
+                {kiosk ? `Place order · pay ${money(dueNow)} at the counter` : `Place order · ${money(dueNow)}`}
               </Button>
 
               <p className="mt-3 flex items-start justify-center gap-2 text-xs text-ink-400">
@@ -814,7 +872,7 @@ export function CheckoutPage() {
                   )}
 
                   <div className="flex justify-between">
-                    <dt className="text-ink-500">{method.label}</dt>
+                    <dt className="text-ink-500">{kiosk ? 'Pick up in store' : method.label}</dt>
                     <dd className={cn('tnum font-medium', shipping === 0 ? 'text-ok' : 'text-ink-900')}>
                       {shipping === 0 ? 'Free' : money(shipping)}
                     </dd>

@@ -71,11 +71,14 @@ const MODE = {
     emptyBody: 'Recurring supplier costs - a licence, a courier account, a service contract.',
   },
   service: {
-    route: '/admin/supplier-services',
+    // A tab on Purchase › Services since 2026-09-30, so it takes that screen's
+    // title and keeps its own description.
+    route: '/admin/services',
+    description: 'Things bought in that are not stock - outsourced repair, freight, disposal.',
     icon: 'Wrench',
     noun: 'service',
     plural: 'services',
-    createLabel: 'New service',
+    createLabel: 'New service product',
     createTitle: 'Add a service product',
     defaultBilling: 'one_off',
     emptyTitle: 'No services yet',
@@ -328,9 +331,15 @@ function ChargeForm({ row, onSubmit, onCancel, isPending, error }) {
   );
 }
 
-export function AdminSupplierServicesPage({ mode = 'service' }) {
+/** `tabs` is the Services screen's tab row, drawn under the header. */
+export function AdminSupplierServicesPage({ mode = 'service', tabs = null }) {
   const meta = MODE[mode];
-  const page = { ...ADMIN_ROUTES[meta.route], icon: adminIcon(meta.icon) };
+  const route = ADMIN_ROUTES[meta.route];
+  const page = {
+    ...route,
+    description: meta.description ?? route.description,
+    icon: adminIcon(meta.icon),
+  };
 
   const [query, setQuery] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
@@ -519,6 +528,8 @@ export function AdminSupplierServicesPage({ mode = 'service' }) {
           </Button>
         }
       />
+
+      {tabs}
 
       <KpiRow
         tiles={[

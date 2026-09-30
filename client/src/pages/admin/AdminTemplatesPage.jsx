@@ -15,7 +15,9 @@ import {
 import cn from '@/lib/cn';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
 import Input from '@/components/ui/Input';
-import Textarea from '@/components/ui/Textarea';
+import MessageBodyField from '@/components/admin/MessageBodyField';
+import ActiveSwitch from '@/components/admin/ActiveSwitch';
+import { MESSAGE_BODY_MAX } from '@shared/messageHtml.js';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import TabRow from '@/components/ui/TabRow';
@@ -94,11 +96,13 @@ const DOCUMENTS = [
   {
     key: 'ticket',
     label: 'Ticket',
+    statusHeading: 'Repair Status',
     statuses: TICKET_STATUSES.map((value) => ({ value, label: TICKET_STATUS_LABELS[value] ?? value })),
   },
   {
     key: 'invoice',
     label: 'Invoice',
+    statusHeading: 'Payment Status',
     statuses: [
       { value: 'unpaid', label: 'Unpaid' },
       { value: 'partial', label: 'Part paid' },
@@ -150,6 +154,10 @@ function statusesFor(documentKey) {
   return DOCUMENTS.find((d) => d.key === documentKey)?.statuses ?? [];
 }
 
+function documentLabel(documentKey) {
+  return DOCUMENTS.find((d) => d.key === documentKey)?.label ?? documentKey;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Templates                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -166,6 +174,9 @@ function MessageEditor({ channel, document: documentKey, status, statusLabel, te
 
   const [subject, setSubject] = useState(template?.subject ?? '');
   const [body, setBody] = useState(template?.body ?? '');
+  // A new message starts on: somebody writing the thing a status says means
+  // it to be said. Switching one off keeps the words and sends nothing.
+  const [isActive, setIsActive] = useState(template?.isActive ?? true);
   const [error, setError] = useState(null);
   const [saved, setSaved] = useState(false);
 
@@ -194,7 +205,7 @@ function MessageEditor({ channel, document: documentKey, status, statusLabel, te
       status,
       subject: isEmail ? subject : '',
       body,
-      isActive: true,
+      isActive,
     };
 
     try {
@@ -212,8 +223,8 @@ function MessageEditor({ channel, document: documentKey, status, statusLabel, te
         <span className="flex flex-wrap items-center gap-2">
           Message for {DOCUMENTS.find((d) => d.key === documentKey)?.label ?? documentKey} ·{' '}
           {statusLabel}
-          <Badge tone={template?.id ? 'ok' : 'neutral'} size="sm">
-            {template?.id ? 'Written' : 'Not set'}
+          <Badge tone={!template?.id ? 'neutral' : template.isActive ? 'ok' : 'warn'} size="sm">
+            {!template?.id ? 'Not set' : template.isActive ? 'Active' : 'Off'}
           </Badge>
         </span>
       }
@@ -233,14 +244,15 @@ function MessageEditor({ channel, document: documentKey, status, statusLabel, te
           />
         )}
 
-        <Textarea
+        <MessageBodyField
           label={isCall ? 'Call script / reminder note' : 'Message'}
-          rows={5}
+          channel={channel}
+          rows={7}
           required
           value={body}
-          counter={5000}
-          onChange={(event) => {
-            setBody(event.target.value);
+          counter={MESSAGE_BODY_MAX}
+          onChange={(next) => {
+            setBody(next);
             setSaved(false);
           }}
           placeholder={
@@ -273,7 +285,20 @@ function MessageEditor({ channel, document: documentKey, status, statusLabel, te
           ))}
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <ActiveSwitch
+          checked={isActive}
+          onChange={(next) => {
+            setIsActive(next);
+            setSaved(false);
+          }}
+          detail={
+            isCall
+              ? `Offered to staff on the Calls screen at ${statusLabel}. Off keeps the script and hides it.`
+              : `Sent when a ${documentLabel(documentKey).toLowerCase()} reaches ${statusLabel}. Off keeps the message and sends nothing.`
+          }
+        />
+
+        <div className="flex flex-wrap items-center gap-3 border-t border-line pt-4">
           <Button type="submit" icon={Save} loading={pending}>
             Save message
           </Button>
@@ -294,12 +319,13 @@ function TemplatesTab({ channel, templates, counts }) {
   const activeLabel =
     statuses.find((s) => s.value === activeStatus)?.label ?? 'Any status';
 
+  // status -> whether its message is switched on. Absent means not written.
   const written = useMemo(
     () =>
-      new Set(
+      new Map(
         templates
           .filter((t) => t.channel === channel && (t.document ?? 'none') === documentKey)
-          .map((t) => t.status || ''),
+          .map((t) => [t.status || '', t.isActive !== false]),
       ),
     [templates, channel, documentKey],
   );
@@ -329,7 +355,9 @@ function TemplatesTab({ channel, templates, counts }) {
           />
           {statuses.length > 0 && (
             <SelectMenu
-              label="Status"
+              // "Repair Status" / "Payment Status", the names the ticket and
+              // invoice screens use for the same field (2026-09-30).
+              label={DOCUMENTS.find((d) => d.key === documentKey)?.statusHeading ?? 'Status'}
               value={activeStatus}
               onChange={setStatus}
               options={statuses.map((s) => ({ value: s.value, label: s.label }))}
@@ -343,6 +371,7 @@ function TemplatesTab({ channel, templates, counts }) {
           <div className="mt-4 flex flex-wrap gap-1.5 border-t border-line pt-4">
             {statuses.map((s) => {
               const isSet = written.has(s.value);
+              const isOn = written.get(s.value) === true;
               const isActive = s.value === activeStatus;
               return (
                 <button
@@ -358,14 +387,18 @@ function TemplatesTab({ channel, templates, counts }) {
                       : 'border-line bg-surface text-ink-600 hover:border-line-strong hover:text-ink-900',
                   )}
                 >
+                  {/* Three states: on, written but switched off, not written. */}
                   <span
                     className={cn(
                       'size-1.5 shrink-0 rounded-full',
-                      isSet ? 'bg-ok' : 'bg-ink-300',
+                      isOn ? 'bg-ok' : isSet ? 'bg-warn' : 'bg-ink-300',
                     )}
                     aria-hidden="true"
                   />
                   {s.label}
+                  <span className="sr-only">
+                    {isOn ? ' (active)' : isSet ? ' (off)' : ' (not written)'}
+                  </span>
                 </button>
               );
             })}

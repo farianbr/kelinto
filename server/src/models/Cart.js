@@ -30,11 +30,28 @@ const cartBundleSchema = new mongoose.Schema(
   { _id: false },
 );
 
+/**
+ * A pre-owned phone sitting in the cart.
+ *
+ * Its own line, not a product line: it is one physical handset with no
+ * quantity (`models/PreownedDevice.js`). It is not reserved by being here; the
+ * order that reaches checkout first takes it, and the cart says so to the other.
+ */
+const cartPreownedSchema = new mongoose.Schema(
+  {
+    device: { type: mongoose.Schema.Types.ObjectId, ref: 'PreownedDevice', required: true },
+    priceAtAdd: { type: Number, required: true },
+    addedAt: { type: Date, default: Date.now },
+  },
+  { _id: false },
+);
+
 const cartSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     items: [cartItemSchema],
     bundles: [cartBundleSchema],
+    preowned: [cartPreownedSchema],
 
     // At most one. Offers do not stack (PROJECT_INSTRUCTIONS.md §5.9), so this
     // is a single string rather than a list, and applying a new code replaces

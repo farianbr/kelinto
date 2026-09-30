@@ -51,6 +51,8 @@ function acceptFile(req, res, next) {
 const BUSINESS_KINDS = {
   identity: ['logo', 'footer-logo', 'favicon'],
   catalogue: ['product-image', 'product-video'],
+  // A reviewer's picture beside a Google review (SEO › Reviews).
+  marketing: ['review-photo'],
 };
 
 /** A business's own file. Stored under that business's code, never another's. */
@@ -66,7 +68,7 @@ function uploadForBusiness(group) {
       req,
       kind: 'activity',
       action: 'asset.upload',
-      entity: { kind: group === 'identity' ? 'settings' : 'product', id: stored.key, label: kind },
+      entity: { kind: group === 'catalogue' ? 'product' : 'settings', id: stored.key, label: kind },
       description: `Uploaded a ${kind.replace('-', ' ')} (${Math.round(stored.originalBytes / 1024)} KB, stored as ${Math.round(stored.bytes / 1024)} KB).`,
     });
     res.status(201).json({ url: stored.url, poster: stored.poster });

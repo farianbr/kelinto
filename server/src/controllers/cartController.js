@@ -85,6 +85,18 @@ const removeBundle = asyncHandler(async (req, res) => {
   await respond(res, cart, req.user);
 });
 
+// ---- pre-owned phones -------------------------------------------------------
+
+const addPreowned = asyncHandler(async (req, res) => {
+  const cart = await cartService.addPreowned(req.user._id, req.body.device);
+  await respond(res, cart, req.user, 201);
+});
+
+const removePreowned = asyncHandler(async (req, res) => {
+  const cart = await cartService.removePreowned(req.user._id, req.params.deviceId);
+  await respond(res, cart, req.user);
+});
+
 // ---- promo code -------------------------------------------------------------
 
 const applyPromo = asyncHandler(async (req, res) => {
@@ -97,4 +109,4 @@ const clearPromo = asyncHandler(async (req, res) => {
   await respond(res, cart, req.user);
 });
 
-export { get, addItem, setQty, removeItem, merge, save, clear, listSaved, restoreSaved, deleteSaved, bulkAdd, addBundle, setBundleQty, removeBundle, applyPromo, clearPromo };
+export { get, addItem, setQty, removeItem, merge, save, clear, listSaved, restoreSaved, deleteSaved, bulkAdd, addBundle, setBundleQty, removeBundle, addPreowned, removePreowned, applyPromo, clearPromo };

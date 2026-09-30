@@ -5,6 +5,7 @@ import { db } from '../db/models.js';
 import '../models/Order.js';
 import '../models/Invoice.js';
 import '../models/Product.js';
+import '../models/PreownedDevice.js';
 import '../models/Cart.js';
 import '../models/User.js';
 import ApiError from '../utils/ApiError.js';
@@ -51,14 +52,21 @@ import { displayNameOf } from '../utils/displayName.js';
  */
 async function quote(userId, deliveryCode = 'ground') {
   const cart = await db().Cart.findOne({ user: userId, savedForLater: false });
-  if (!cart || (cart.items.length === 0 && (cart.bundles?.length ?? 0) === 0)) {
+  if (
+    !cart ||
+    (cart.items.length === 0 && (cart.bundles?.length ?? 0) === 0 && (cart.preowned?.length ?? 0) === 0)
+  ) {
     throw ApiError.badRequest('Your cart is empty.', 'CART_EMPTY');
   }
 
   const user = await db().User.findById(userId).lean();
   const priced = await priceCart(cart, user, { deliveryCode });
 
-  if (priced.items.length === 0 && priced.bundles.length === 0) {
+  if (
+    priced.items.length === 0 &&
+    priced.bundles.length === 0 &&
+    !priced.preowned.some((line) => line.available)
+  ) {
     throw ApiError.badRequest('Nothing in your cart is still available.', 'CART_EMPTY');
   }
 
@@ -77,13 +85,15 @@ async function quote(userId, deliveryCode = 'ground') {
       ...bundle,
       products: (bundle.products ?? []).map(({ unitCost, ...line }) => line),
     })),
+    preowned: priced.preowned.map(({ unitCost, ...line }) => line),
     storeCredit: credit,
     itemCount:
       priced.items.reduce((sum, item) => sum + item.qty, 0) +
       priced.bundles.reduce(
         (sum, bundle) => sum + bundle.products.reduce((n, line) => n + line.qty, 0),
         0,
-      ),
+      ) +
+      priced.preowned.filter((line) => line.available).length,
   };
 }
 
@@ -132,27 +142,51 @@ async function createOrder(user, input) {
   // charging list.
   assertBundlesOrderable(priced.bundles);
 
+  // A pre-owned phone somebody else bought while this cart held it. Refused
+  // before anything is charged, naming the phone, rather than quietly dropped.
+  const gone = priced.preowned.filter((line) => !line.available);
+  if (gone.length > 0) {
+    throw ApiError.conflict(
+      `${gone.map((line) => line.stockNumber).join(', ')} has just been sold. Remove it from your cart to continue.`,
+      'PREOWNED_UNAVAILABLE',
+    );
+  }
+
   // Bundles are flattened here, not in `quote`: a warehouse picks SKUs, so the
   // order and its invoice list parts. The bundle grouping rides along per line.
-  const lines = [...priced.items, ...flattenBundles(priced.bundles)];
+  const partLines = [...priced.items, ...flattenBundles(priced.bundles)];
+  const preownedLines = priced.preowned.map((line) => ({
+    preowned: line.device,
+    sku: line.stockNumber,
+    name: line.name,
+    image: line.photo ?? undefined,
+    grade: line.grade,
+    partType: 'preowned-phone',
+    partTypeLabel: 'Pre-owned phone',
+    qty: 1,
+    unitPrice: line.unitPrice,
+    lineTotal: line.lineTotal,
+    unitCost: line.unitCost,
+  }));
+  const lines = [...partLines, ...preownedLines];
 
   // Re-check availability at the moment of purchase, not at add-to-cart.
   const products = await db().Product.find({
-    _id: { $in: lines.map((item) => item.product) },
+    _id: { $in: partLines.map((item) => item.product) },
   }).lean();
   const stockById = new Map(products.map((product) => [product._id.toString(), product.stock]));
 
   // Two bundle lines can reference the same SKU, so demand is summed before it
   // is compared - checking line by line would let a shortfall through.
   const demand = new Map();
-  for (const line of lines) {
+  for (const line of partLines) {
     const key = line.product.toString();
     demand.set(key, (demand.get(key) ?? 0) + line.qty);
   }
 
   const short = [...demand.entries()]
     .filter(([id, qty]) => qty > (stockById.get(id) ?? 0))
-    .map(([id]) => lines.find((line) => line.product.toString() === id));
+    .map(([id]) => partLines.find((line) => line.product.toString() === id));
   if (short.length > 0) {
     throw ApiError.conflict(
       `Not enough stock for ${short.map((item) => item.sku).join(', ')}. Adjust the quantities and try again.`,
@@ -259,7 +293,16 @@ async function createOrder(user, input) {
       listTotal: bundle.listTotal,
     })),
     status: 'placed',
-    timeline: [{ status: 'placed', at: new Date(), note: 'Order received and confirmed.' }],
+    timeline: [
+      {
+        status: 'placed',
+        at: new Date(),
+        note:
+          input.paymentMethod === 'counter'
+            ? 'Placed on the in-store kiosk. To be paid for and collected at the counter.'
+            : 'Order received and confirmed.',
+      },
+    ],
     shippingAddress: input.shippingAddress,
     billingAddress: billing,
     deliveryMethod: priced.deliveryMethod,
@@ -272,6 +315,24 @@ async function createOrder(user, input) {
       paidAt: result.status === 'paid' ? result.processedAt : undefined,
     },
   });
+
+  /**
+   * The phones leave stock with the order that took them.
+   *
+   * Conditional on `listed`, so two orders racing for one phone cannot both
+   * mark it sold; the loser's order is already charged at this point, which is
+   * the same window the part stock above has, and the counter sees the second
+   * order against a phone marked sold to the first.
+   */
+  if (preownedLines.length > 0) {
+    const taken = await db().PreownedDevice.updateMany(
+      { _id: { $in: preownedLines.map((line) => line.preowned) }, status: 'listed' },
+      { $set: { status: 'sold', soldAt: new Date(), order: order._id } },
+    );
+    if (taken.modifiedCount < preownedLines.length) {
+      console.error(`  Order ${orderNumber}: a pre-owned phone on it was sold to another order first.`);
+    }
+  }
 
   // The credit is spent against the order that was just written, so the ledger
   // row can name it. A concurrent spend that emptied the balance in between
@@ -366,7 +427,7 @@ async function createOrder(user, input) {
 
   await db().Cart.updateOne(
     { user: user._id, savedForLater: false },
-    { $set: { items: [], bundles: [], promoCode: '' } },
+    { $set: { items: [], bundles: [], preowned: [], promoCode: '' } },
   );
 
   // The invoice goes out by email the moment the order is placed. Deliberately

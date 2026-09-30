@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { MESSAGE_CHANNELS } from './MessageLog.js';
+import { MESSAGE_BODY_MAX } from '../../../shared/messageHtml.js';
 
 /**
  * Reusable message bodies (ERP rework §6.13, §8, §6.15).
@@ -72,7 +73,7 @@ const messageTemplateSchema = new mongoose.Schema(
     // Email only; ignored on the other channels rather than being conditionally
     // required, because a template that changes channel should not lose text.
     subject: { type: String, trim: true, maxlength: 200 },
-    body: { type: String, required: true, trim: true, maxlength: 5000 },
+    body: { type: String, required: true, trim: true, maxlength: MESSAGE_BODY_MAX },
 
     isActive: { type: Boolean, default: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

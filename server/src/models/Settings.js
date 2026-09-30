@@ -1,5 +1,7 @@
 import mongoose from 'mongoose';
 
+import { KIOSK_CLOCKS } from '../../../shared/kiosk.js';
+
 /**
  * The settings singleton (ERP rework §8, §6.15).
  *
@@ -108,8 +110,8 @@ const settingsSchema = new mongoose.Schema(
       /**
        * Where a happy customer is sent to leave a review.
        *
-       * No default, and that is the point: the warranty sheet and the warranty
-       * email both omit the whole feedback block when it is empty. A review
+       * No default, and that is the point: the warranty sheet omits the whole
+       * feedback block when it is empty. A review
        * button pointing at a placeholder is worse than no button, because the
        * customer who clicks it lands nowhere and the shop never finds out.
        */
@@ -163,6 +165,24 @@ const settingsSchema = new mongoose.Schema(
        */
       whatsapp: { type: String, default: '' },
       mapUrl: { type: String, default: '' },
+
+      /**
+       * The `src` of Google's "Embed a map" iframe, drawn in the Location section
+       * at the foot of every website page. Only the address is stored, never the
+       * pasted `<iframe>` markup: the schema pulls the `src` out, and the website
+       * builds its own frame around it. Empty means no map, and the section shows
+       * the address and hours alone.
+       */
+      mapEmbedUrl: { type: String, default: '' },
+
+      /**
+       * The overall Google figures, printed above the reviews ("4.7 from 137
+       * reviews"), and where "See all reviews" goes. Typed in by hand, like the
+       * reviews themselves (`GoogleReview`); both zeros hide the summary line.
+       */
+      googleRating: { type: Number, default: 0, min: 0, max: 5 },
+      googleReviewCount: { type: Number, default: 0, min: 0 },
+      googleReviewsUrl: { type: String, default: '' },
 
       /**
        * Opening hours, as rows rather than a blob.
@@ -393,6 +413,24 @@ const settingsSchema = new mongoose.Schema(
         maxlength: 1000,
         default: "I agree to leave my device for diagnosis and to the shop's repair terms.",
       },
+
+      /**
+       * The three clocks that hand the tablet back to the next customer.
+       *
+       * A customer who walks away halfway leaves their name and number on a
+       * screen in a public room, and a shopper who walks away signed in leaves
+       * an account anybody can order on. So every screen past the welcome runs
+       * on `idleTimeoutSeconds` of no touch, then warns for `idleWarningSeconds`
+       * before it signs out and starts again.
+       *
+       * `orderAgainSeconds` is the one question with its own clock: "Order
+       * again?" after a purchase, where the likeliest answer is that they have
+       * already left. Seconds, all of them, because that is the unit a person
+       * setting them thinks in.
+       */
+      idleTimeoutSeconds: { type: Number, ...KIOSK_CLOCKS.idleTimeoutSeconds },
+      idleWarningSeconds: { type: Number, ...KIOSK_CLOCKS.idleWarningSeconds },
+      orderAgainSeconds: { type: Number, ...KIOSK_CLOCKS.orderAgainSeconds },
     },
 
     /**

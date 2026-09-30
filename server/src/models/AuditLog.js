@@ -47,6 +47,9 @@ const AUDIT_ENTITIES = [
   'referral',
   'storeCredit',
   'session',
+  // A phone bought from a customer, and the stock unit it became.
+  'buyback',
+  'preowned',
 ];
 
 const auditLogSchema = new mongoose.Schema(

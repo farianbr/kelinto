@@ -54,6 +54,7 @@ const KINDS = {
   favicon: { families: ['image', 'icon'], maxBytes: 2 * 1024 * 1024 },
   'product-image': { families: ['image'], maxBytes: 15 * 1024 * 1024 },
   'product-video': { families: ['video'], maxBytes: 100 * 1024 * 1024 },
+  'review-photo': { families: ['image'], maxBytes: 10 * 1024 * 1024 },
 };
 
 /** The largest any kind allows, for the multipart parser's own ceiling. */
@@ -435,6 +436,8 @@ const storage = {
 export {
   KINDS,
   MAX_UPLOAD_BYTES,
+  sniff,
+  ownerPrefix,
   isConfigured,
   isAllowedUrl,
   store,

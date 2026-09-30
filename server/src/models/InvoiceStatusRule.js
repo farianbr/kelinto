@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 
 import { MESSAGE_CHANNELS } from './MessageLog.js';
 import { formatDate } from '../../../shared/dates.js';
+import { MESSAGE_BODY_MAX } from '../../../shared/messageHtml.js';
 
 /**
  * Time-lapse invoice messages (ERP rework §6.15 category 2, §8, phase 11d).
@@ -98,7 +99,7 @@ const invoiceStatusRuleSchema = new mongoose.Schema(
     channel: { type: String, enum: MESSAGE_CHANNELS, default: 'email' },
 
     subject: { type: String, trim: true, maxlength: 200 },
-    message: { type: String, required: true, trim: true, maxlength: 5000 },
+    message: { type: String, required: true, trim: true, maxlength: MESSAGE_BODY_MAX },
 
     /**
      * Built-in rules cannot be deleted, only edited and deactivated (§6.15).

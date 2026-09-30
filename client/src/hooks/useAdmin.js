@@ -153,6 +153,37 @@ export function useAdminReviews(params) {
 }
 
 /** The editor: the product being written about, and its article if it has one. */
+/** The website pages that carry the standard sections, with what each has. */
+export function useAdminPages() {
+  const { canUseAdmin } = useAuth();
+  return useQuery({
+    queryKey: ['admin', 'pages'],
+    queryFn: () => api.get('/admin/pages'),
+    enabled: canUseAdmin,
+    staleTime: 15 * 1000,
+  });
+}
+
+/** One page's article, section switches and questions, for its editor. */
+export function useAdminPage(page) {
+  return useQuery({
+    queryKey: ['admin', 'pages', 'one', page],
+    queryFn: () => api.get(`/admin/pages/${page}`),
+    enabled: Boolean(page),
+  });
+}
+
+/** The business's hand-entered Google reviews and the summary above them. */
+export function useAdminGoogleReviews() {
+  const { canUseAdmin } = useAuth();
+  return useQuery({
+    queryKey: ['admin', 'google-reviews'],
+    queryFn: () => api.get('/admin/google-reviews'),
+    enabled: canUseAdmin,
+    staleTime: 15 * 1000,
+  });
+}
+
 export function useAdminProductArticle(productId) {
   return useQuery({
     queryKey: ['admin', 'product-articles', 'one', productId],
@@ -1256,6 +1287,42 @@ export function useAdminMutations() {
         queryClient.invalidateQueries({ queryKey: ['reviews'] });
       },
     }),
+    // Website page sections. Each write also drops the website's cached copy of
+    // that page, so an owner who saves and switches tabs sees the change.
+    savePage: useMutation({
+      mutationFn: ({ page, ...body }) => api.patch(`/admin/pages/${page}`, body),
+      onSuccess: invalidateContent('page-sections'),
+    }),
+    createPageFaq: useMutation({
+      mutationFn: ({ page, ...body }) => api.post(`/admin/pages/${page}/faqs`, body),
+      onSuccess: invalidateContent('page-sections'),
+    }),
+    updatePageFaq: useMutation({
+      mutationFn: ({ page, id, ...body }) => api.patch(`/admin/pages/${page}/faqs/${id}`, body),
+      onSuccess: invalidateContent('page-sections'),
+    }),
+    deletePageFaq: useMutation({
+      mutationFn: ({ page, id }) => api.delete(`/admin/pages/${page}/faqs/${id}`),
+      onSuccess: invalidateContent('page-sections'),
+    }),
+
+    createGoogleReview: useMutation({
+      mutationFn: (body) => api.post('/admin/google-reviews', body),
+      onSuccess: invalidateContent('google-reviews'),
+    }),
+    updateGoogleReview: useMutation({
+      mutationFn: ({ id, ...body }) => api.patch(`/admin/google-reviews/${id}`, body),
+      onSuccess: invalidateContent('google-reviews'),
+    }),
+    deleteGoogleReview: useMutation({
+      mutationFn: (id) => api.delete(`/admin/google-reviews/${id}`),
+      onSuccess: invalidateContent('google-reviews'),
+    }),
+    saveGoogleSummary: useMutation({
+      mutationFn: (body) => api.patch('/admin/google-reviews/summary', body),
+      onSuccess: invalidateContent('google-reviews'),
+    }),
+
     deleteProductArticle: useMutation({
       mutationFn: (productId) => api.delete(`/admin/product-articles/${productId}`),
       onSuccess: invalidateContent('product'),
@@ -1505,11 +1572,8 @@ export function useAdminMutations() {
       onSuccess: invalidate,
     }),
     /**
-     * Set or clear the manual status on one invoice.
-     *
-     * Resolves to `{ emailed }` - whether the warranty email actually went out,
-     * which is a side effect the person clicking cannot otherwise see. Pass
-     * `labelId: null` to clear.
+     * Set or clear the manual status on one invoice. Pass `labelId: null` to
+     * clear.
      */
     setInvoiceLabel: useMutation({
       mutationFn: ({ number, labelId }) =>

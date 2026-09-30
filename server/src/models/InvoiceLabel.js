@@ -1,5 +1,8 @@
 import mongoose from 'mongoose';
 
+import { MESSAGE_CHANNELS } from './MessageLog.js';
+import { MESSAGE_BODY_MAX } from '../../../shared/messageHtml.js';
+
 /**
  * The manual status an admin sets on an invoice (Sales § Invoice).
  *
@@ -34,19 +37,14 @@ import mongoose from 'mongoose';
  * while sitting right there in the collection. `InvoiceStatusRule`, the closest
  * precedent and also an admin-editable per-shop list, carries none either.
  *
- * ## The side effect, and why it lives on the label
+ * ## What a label sends
  *
- * A label may carry `sendsWarrantyEmail`. When it is first set on a **paid**
- * invoice, the warranty and review email goes out once. That is a property of
- * the label rather than of the code, because which label means "we have
- * finished with this customer" is exactly the thing that differs per shop -
- * hardcoding the phrase would put a tenant's wording inside a conditional.
- *
- * **Once, ever.** `Invoice.labelEmailSentAt` records it, so re-setting the same
- * label, or setting it again after clearing it, sends nothing. A customer who
- * gets the same warranty email twice because somebody was tidying a board is
- * the failure this prevents - the same "once per invoice" rule
- * `InvoiceStatusRule` enforces with its run collection.
+ * Only its own message (`message`, `messageActive` below), written by the
+ * owner and sent once per invoice with the scheduled messages. A fixed
+ * warranty and review email armed by a `sendsWarrantyEmail` tick existed
+ * until 2026-10-01; the client removed it, since the status's own message can
+ * say the same in the business's own words. Stored documents may still carry
+ * the old field; nothing reads it.
  */
 const invoiceLabelSchema = new mongoose.Schema(
   {
@@ -62,15 +60,6 @@ const invoiceLabelSchema = new mongoose.Schema(
     colorToken: { type: String, default: 'ink' },
 
     /**
-     * Whether setting this label sends the warranty and review email.
-     *
-     * Off by default. A label that mails a customer the moment somebody picks
-     * it from a menu is a side effect nobody asked for, so it is opted into per
-     * label and the picker says which ones do it.
-     */
-    sendsWarrantyEmail: { type: Boolean, default: false },
-
-    /**
      * Retired rather than deleted.
      *
      * A label in use cannot be deleted (`invoiceLabelService.deleteLabel`
@@ -81,6 +70,28 @@ const invoiceLabelSchema = new mongoose.Schema(
      */
     isActive: { type: Boolean, default: true, index: true },
     order: { type: Number, default: 0 },
+
+    /**
+     * The message this status sends, a set number of days after it is set on
+     * an invoice (2026-10-01, client request).
+     *
+     * The same shape as an `InvoiceStatusRule`, and run by the same pass
+     * (`invoiceStatusService.run`) with the same once-per-invoice guard, except
+     * that the delay counts from `Invoice.labelSetAt` rather than from a date
+     * the invoice carries on its own. It lives on the status rather than as a
+     * rule pointing at it because the client reads it as part of the status:
+     * "Picked Up sends this, two days later".
+     *
+     * Never negative: nothing can be sent before the status exists.
+     * `messageActive` is separate from `isActive` - retiring a status from the
+     * picker says nothing about whether the invoices already carrying it
+     * should still hear from us - and ships off, like every message here.
+     */
+    delayDays: { type: Number, default: 0, min: 0, max: 365 },
+    channel: { type: String, enum: MESSAGE_CHANNELS, default: 'email' },
+    subject: { type: String, trim: true, maxlength: 200, default: '' },
+    message: { type: String, trim: true, maxlength: MESSAGE_BODY_MAX, default: '' },
+    messageActive: { type: Boolean, default: false },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },

@@ -148,7 +148,11 @@ const FEATURES = [
     key: 'sales.services',
     label: 'Services',
     description: 'The price list a quote or a ticket picks its labour from.',
-    area: 'sales',
+    // The key keeps `sales.` (renaming it is a data migration on every
+    // business's overrides), but the screen moved to Purchase on 2026-09-30,
+    // so the console files it there. It shares the `services` nav row with
+    // `purchase.services`, and the row shows while either is on.
+    area: 'purchase',
     nav: 'services',
     /**
      * Service businesses only, by default.
@@ -160,6 +164,24 @@ const FEATURES = [
      * what a product business doing the occasional repair wants.
      */
     defaults: { product: false, service: true },
+  },
+  {
+    key: 'sales.buyback',
+    label: 'Pre-owned phones',
+    description:
+      'Customers sell their phones at the kiosk; staff price them into pre-owned stock, sold on the website.',
+    area: 'purchase',
+    nav: 'preowned',
+    /**
+     * On for every type (client ruling, 2026-09-29).
+     *
+     * One flag for the whole loop, because none of its halves stands alone:
+     * the kiosk's "Sell your phone" door, the review queue, the pre-owned
+     * stock, the customer's "Phones you sold us" and the website's pre-owned
+     * page. A business that buys phones and cannot sell them, or sells stock it
+     * has no way to take in, is a switch set wrong rather than a choice.
+     */
+    defaults: { product: true, service: true },
   },
   {
     key: 'sales.webquotes',
@@ -218,7 +240,8 @@ const FEATURES = [
     label: 'Bought-in services',
     description: 'Supplier subscriptions and service products.',
     area: 'purchase',
-    nav: 'supplier-services',
+    // Service Products is a tab on the Services screen since 2026-09-30.
+    nav: 'services',
     defaults: { product: true, service: true },
   },
   {
@@ -536,9 +559,15 @@ function featureEnabled(features, key) {
   return features?.[key] !== false;
 }
 
-/** The feature gating one `ADMIN_NAV` key, or `null` when a row is not gated. */
-function featureForNav(navKey) {
-  return FEATURES.find((feature) => feature.nav === navKey) ?? null;
+/**
+ * The features gating one `ADMIN_NAV` key, empty when a row is not gated.
+ *
+ * A list, because one row can be two capabilities: Purchase › Services holds
+ * the price list (`sales.services`) and bought-in services
+ * (`purchase.services`) as tabs. The row shows while ANY of them is on.
+ */
+function featuresForNav(navKey) {
+  return FEATURES.filter((feature) => feature.nav === navKey);
 }
 
 export {
@@ -551,7 +580,7 @@ export {
   defaultFor,
   defaultsForType,
   featureEnabled,
-  featureForNav,
+  featuresForNav,
   resolveFeatures,
 };
 export default FEATURES;

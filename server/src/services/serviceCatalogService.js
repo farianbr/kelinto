@@ -5,6 +5,8 @@ import { db } from '../db/models.js';
 import ApiError from '../utils/ApiError.js';
 import { likeRegex } from '../utils/regex.js';
 import { parseCsv, rowsWithoutHeader } from '../utils/csv.js';
+import { canSeePricing } from '../middleware/auth.js';
+import { SERVICE_CATEGORY_LABELS } from '../../../shared/schemas/admin.js';
 
 /**
  * The repair services a shop sells (Sales § Services).
@@ -404,8 +406,57 @@ async function importServices(text, actor, business = null) {
   return results;
 }
 
+/**
+ * The website's services page (Shop › Services, 2026-09-30).
+ *
+ * Active services only, and never the cost. **The price follows the same
+ * server-side gate as a part** (Instructions §5.3): a guest or a pending
+ * account is told what the shop does, never what it charges.
+ *
+ * `categories` carries only the ones with something in them, counted, so the
+ * mobile menu's drill-down cannot offer a category that opens onto nothing.
+ */
+async function publicList(user, { category, business } = {}) {
+  const query = { isActive: true };
+  if (business) query.business = business;
+
+  const rows = await db().Service.find(query).sort({ order: 1, name: 1 }).lean();
+  const priced = canSeePricing(user);
+
+  const counts = new Map();
+  for (const row of rows) {
+    const key = row.category ?? 'other';
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  const wanted = category && category !== 'all' ? String(category) : null;
+
+  return {
+    priceVisible: priced,
+    categories: SERVICE_CATEGORIES.filter((key) => counts.has(key)).map((key) => ({
+      slug: key,
+      name: SERVICE_CATEGORY_LABELS[key] ?? key,
+      count: counts.get(key),
+    })),
+    services: rows
+      .filter((row) => !wanted || (row.category ?? 'other') === wanted)
+      .map((row) => ({
+        id: String(row._id),
+        name: row.name,
+        description: row.description ?? '',
+        category: row.category ?? 'other',
+        categoryLabel: SERVICE_CATEGORY_LABELS[row.category ?? 'other'] ?? row.category,
+        durationMinutes: row.durationMinutes ?? 0,
+        warrantyDays: row.warrantyDays ?? 0,
+        deviceTypes: row.deviceTypes ?? [],
+        ...(priced ? { priceCents: row.priceCents ?? 0 } : {}),
+      })),
+  };
+}
+
 export {
   listServices,
+  publicList,
   getService,
   createService,
   updateService,
@@ -416,6 +467,7 @@ export {
 };
 export default {
   listServices,
+  publicList,
   getService,
   createService,
   updateService,

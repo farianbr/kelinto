@@ -136,7 +136,7 @@ export function AdminProductArticleEditPage() {
         status: nextStatus,
       });
       setStatus(nextStatus);
-      navigate('/admin/marketing/articles');
+      navigate('/admin/marketing/articles?tab=parts');
     } catch (err) {
       setError(err.message || 'The article could not be saved.');
     }
@@ -169,7 +169,7 @@ export function AdminProductArticleEditPage() {
         action={
           <div className="flex flex-wrap items-center gap-2">
             <Link
-              to="/admin/marketing/articles"
+              to="/admin/marketing/articles?tab=parts"
               className={cn(
                 pressable,
                 'inline-flex h-10 items-center gap-1.5 rounded-lg border border-line px-3 text-sm font-semibold text-ink-700 hover:bg-surface-2',

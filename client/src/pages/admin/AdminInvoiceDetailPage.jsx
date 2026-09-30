@@ -254,21 +254,21 @@ export function AdminInvoiceDetailPage() {
             {/* The status, pickable from the badge row as well as from the
                 three-dot menu - one is where it is READ, the other where
                 somebody goes looking for what they can do to an invoice. Both
-                stage the same confirmation rather than firing: one of these
-                statuses emails the customer, so a stray click on a pill must
-                not send it.
+                stage the same confirmation rather than firing: a status can
+                carry a message to the customer, so a stray click on a pill
+                must not start its clock.
 
                 Hidden entirely when the shop has not made a list - an empty
                 picker is a dead control. */}
             {labels.length > 0 && (
               <SelectMenu
-                srLabel={`Manual status for ${invoice.number}`}
+                srLabel={`After sales status for ${invoice.number}`}
                 value={invoice.label?.id ?? ''}
                 options={[
                   { value: '', label: 'No status' },
                   ...labels.map((label) => ({
                     value: label.id,
-                    label: label.sendsWarrantyEmail ? `${label.name} (emails)` : label.name,
+                    label: label.name,
                   })),
                 ]}
                 align="left"
@@ -279,14 +279,13 @@ export function AdminInvoiceDetailPage() {
                     ? (LABEL_PILL[invoice.label.colorToken] ?? LABEL_PILL.ink)
                     : 'bg-surface-2 text-ink-400',
                 )}
-                menuTitle="Set the manual status"
+                menuTitle="Set the after sales status"
                 menuFootnote={
                   <>
                     <Tag className="mt-px size-3 shrink-0" strokeWidth={2} aria-hidden="true" />
                     <span>
-                      {invoice.labelEmailSentAt
-                        ? `The warranty email went out on ${date(invoice.labelEmailSentAt)}, so it will not send again.`
-                        : 'A status marked “emails” sends the warranty and review email once, and only on a paid invoice.'}
+                      A status with a message switched on sends it once per invoice, with the
+                      scheduled messages.
                     </span>
                   </>
                 }
@@ -362,7 +361,7 @@ export function AdminInvoiceDetailPage() {
                    * not been shown it will not try clicking it.
                    */
                   key: 'status',
-                  label: 'Set status',
+                  label: 'Set after sales status',
                   icon: Tag,
                   // Nothing to pick from until the shop has made a list.
                   disabled: labels.length === 0,
@@ -801,7 +800,7 @@ export function AdminInvoiceDetailPage() {
           caption={
             invoice.status === 'void'
               ? 'Voided - the balance was forgiven and the invoice goes no further.'
-              : 'Status follows the payments recorded above; there is nothing to set by hand.'
+              : 'Payment status follows the payments recorded above; there is nothing to set by hand.'
           }
         />
       </div>
@@ -876,8 +875,8 @@ export function AdminInvoiceDetailPage() {
       />
 
       {/* One confirmation for both ways in - the pill on the badge row and the
-          menu item - because they are the same change and one of these statuses
-          emails the customer.
+          menu item - because they are the same change and a status can carry a
+          message to the customer.
 
           It carries its own picker rather than only confirming a choice already
           made, since the menu route arrives here with nothing chosen: "Set
@@ -887,7 +886,7 @@ export function AdminInvoiceDetailPage() {
         open={pickingStatus}
         onClose={() => setPickingStatus(false)}
         tone="info"
-        heading="Change status?"
+        heading="Change after sales status?"
         title={
           <>
             Where{' '}
@@ -898,13 +897,13 @@ export function AdminInvoiceDetailPage() {
         body={
           <div className="space-y-3">
             <SelectMenu
-              label="Status"
+              label="After Sales Status"
               value={statusMove?.id ?? ''}
               options={[
                 { value: '', label: 'No status' },
                 ...labels.map((label) => ({
                   value: label.id,
-                  label: label.sendsWarrantyEmail ? `${label.name} (emails)` : label.name,
+                  label: label.name,
                 })),
               ]}
               onChange={(next) =>
@@ -912,40 +911,28 @@ export function AdminInvoiceDetailPage() {
               }
             />
 
-            {statusMove?.sendsWarrantyEmail ? (
+            {statusMove?.messageActive && statusMove.message?.trim() ? (
               <p className="flex items-start gap-2 rounded-md bg-warn-50 px-3 py-2.5 text-sm text-warn">
                 <Mail className="mt-0.5 size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
                 <span>
-                  {invoice.labelEmailSentAt
-                    ? `The warranty email went out on ${date(invoice.labelEmailSentAt)}, so it will not send again.`
-                    : invoice.status === 'paid'
-                      ? 'This emails the customer their warranty and a review link, once.'
-                      : 'The warranty email sends only on a paid invoice, so nothing will be sent yet.'}
+                  {statusMove.name} sends the customer its message{' '}
+                  {statusMove.delayDays
+                    ? `${statusMove.delayDays} ${statusMove.delayDays === 1 ? 'day' : 'days'} after it is set`
+                    : 'once it is set'}
+                  , with the next run of the scheduled messages.
                 </span>
               </p>
             ) : null}
           </div>
         }
         confirmLabel="Confirm change"
-        confirmPhrase={statusMove?.sendsWarrantyEmail && !invoice.labelEmailSentAt && invoice.status === 'paid' ? invoice.number : undefined}
-        confirmPhraseLabel="the invoice number"
         loading={setInvoiceLabel.isPending}
         error={setInvoiceLabel.error?.message}
         onConfirm={() =>
           setInvoiceLabel.mutate(
             { number: invoice.number, labelId: statusMove?.id ?? null },
             {
-              onSuccess: (result) => {
-                setPickingStatus(false);
-                // Whether the email actually went is the half the screen cannot
-                // work out for itself.
-                if (result?.emailed) {
-                  toast.ok(
-                    'Warranty email sent',
-                    `${result.labelName} is set, and the customer has their warranty and a review link.`,
-                  );
-                }
-              },
+              onSuccess: () => setPickingStatus(false),
             },
           )
         }

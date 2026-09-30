@@ -310,7 +310,7 @@ export function AdminTicketsPage() {
     },
     {
       key: 'status',
-      header: 'Status',
+      header: 'Repair Status',
       priority: 1,
       // The move a staff member makes most often, so it costs one click. The
       // server takes any status and records the move (invariant 13: this is a
@@ -328,7 +328,7 @@ export function AdminTicketsPage() {
          */
         <div className="inline-flex" onClick={(event) => event.stopPropagation()}>
           <SelectMenu
-            srLabel={`Status for ${ticket.ticketNumber}`}
+            srLabel={`Repair status for ${ticket.ticketNumber}`}
             value={ticket.status}
             options={STATUS_OPTIONS}
             align="left"
@@ -355,7 +355,7 @@ export function AdminTicketsPage() {
               'hover:border-0 focus:border-0 focus:ring-1',
               STATUS_PILL[ticket.status] ?? 'bg-surface-2 text-ink-700',
             )}
-            menuTitle="Change status"
+            menuTitle="Change repair status"
             /* The consequence the list cannot show. A status move messages the
                customer on their preferred channel, and a menu that looks like
                it only edits a field is one somebody uses to tidy a board at
@@ -592,7 +592,7 @@ export function AdminTicketsPage() {
           onExport={(format) =>
             window.alert(
               `Export to ${format} arrives in phase 12. It will carry the current filters: ` +
-                `status "${status}"${query ? `, search "${query}"` : ''}.`,
+                `repair status "${status}"${query ? `, search "${query}"` : ''}.`,
             )
           }
         />
@@ -645,7 +645,7 @@ export function AdminTicketsPage() {
         open={Boolean(statusMove)}
         onClose={() => setStatusMove(null)}
         tone="info"
-        heading="Change status?"
+        heading="Change repair status?"
         title={
           statusMove ? (
             <>

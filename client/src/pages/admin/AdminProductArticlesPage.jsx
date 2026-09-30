@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router';
-import { FileText, Pencil, Search, Trash2 } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router';
+import { FileText, LayoutPanelTop, Package, Pencil, Search, Trash2 } from 'lucide-react';
 import cn from '@/lib/cn';
 import { pressable } from '@/lib/motion';
 import { date } from '@/lib/format';
@@ -12,17 +12,26 @@ import DataTable, { CountLine } from '@/components/admin/DataTable';
 import Pagination from '@/components/ui/Pagination';
 import PageHeader from '@/components/admin/PageHeader';
 import Skeleton from '@/components/ui/Skeleton';
+import TabRow from '@/components/ui/TabRow';
 import useTablePage from '@/hooks/useTablePage';
 import { ADMIN_ROUTES } from '@/lib/adminRoutes';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
-import { useAdminProductArticles, useAdminMutations } from '@/hooks/useAdmin';
+import { useAdminPages, useAdminProductArticles, useAdminMutations } from '@/hooks/useAdmin';
+import { PAGE_SECTION_LABELS } from '@shared/websitePages';
 
 // The registry stores the icon as a NAME; `adminIcon` resolves it to the
 // component `PageHeader` renders. Same line as every other admin page.
 const ADMIN_PAGE = { ...ADMIN_ROUTES['/admin/marketing/articles'], icon: adminIcon('FileText') };
 
 /**
- * SEO, product articles.
+ * SEO, articles: one screen for every piece of long-form copy on the website
+ * (client ruling 2026-09-30), in two tabs.
+ *
+ * **Pages** - each website page's article, its questions and which of the five
+ * foot-of-page sections it shows (`shared/websitePages.js`). A fixed list, one
+ * row per registry entry, because the pages are the site's, not the owner's to add.
+ *
+ * **Parts** - the per-product articles, as before:
  *
  * THE LIST IS OF PRODUCTS, NOT ARTICLES. The staff member opening this page is
  * asking "which parts still need one", and a list of articles that exist cannot
@@ -57,7 +66,147 @@ const STATE_LABEL = {
   none: '–',
 };
 
+/**
+ * The Pages tab. Every row is a page whether or not anything was written for
+ * it, for the same reason the Parts tab lists parts: the question is "which
+ * pages still need copy", and a list of what exists cannot answer it.
+ */
+function PagesPanel() {
+  const navigate = useNavigate();
+  const { data, isLoading } = useAdminPages();
+  const rows = data?.rows ?? [];
+  const open = (row) => navigate(`/admin/marketing/articles/pages/${row.key}`);
+
+  const columns = [
+    {
+      key: 'label',
+      header: 'Page',
+      width: '34%',
+      render: (row) => (
+        <div className="min-w-0">
+          <p className="truncate font-medium text-ink-900">{row.label}</p>
+          <p className="truncate text-xs text-ink-400">
+            {row.heading || <span className="font-mono">{row.path}</span>}
+          </p>
+        </div>
+      ),
+    },
+    {
+      key: 'articleStatus',
+      header: 'Article',
+      render: (row) =>
+        row.takesArticle ? (
+          <Badge tone={STATE_TONE[row.articleStatus] ?? 'neutral'}>
+            {STATE_LABEL[row.articleStatus] ?? row.articleStatus}
+          </Badge>
+        ) : (
+          // The page IS the article (a blog post) or draws its own (a part).
+          <span className="text-sm text-ink-400">Own copy</span>
+        ),
+    },
+    {
+      key: 'faqCount',
+      header: 'Questions',
+      align: 'right',
+      render: (row) =>
+        row.takesFaq ? (
+          <span className="tnum text-ink-700">{row.faqCount || '–'}</span>
+        ) : (
+          <span className="text-sm text-ink-400">Own list</span>
+        ),
+    },
+    {
+      key: 'hiddenSections',
+      header: 'Hidden sections',
+      priority: 2,
+      sortValue: (row) => row.hiddenSections.length,
+      render: (row) =>
+        row.hiddenSections.length ? (
+          <span className="text-sm text-ink-700">
+            {row.hiddenSections.map((section) => PAGE_SECTION_LABELS[section]).join(' · ')}
+          </span>
+        ) : (
+          <span className="text-ink-400">–</span>
+        ),
+    },
+    {
+      key: 'updatedAt',
+      header: 'Updated',
+      priority: 2,
+      render: (row) => <span className="text-ink-500">{row.updatedAt ? date(row.updatedAt) : '–'}</span>,
+    },
+    {
+      key: 'actions',
+      header: '',
+      sortable: false,
+      width: '56px',
+      render: (row) => (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              open(row);
+            }}
+            className={cn(pressable, 'rounded-md p-1.5 text-ink-400 hover:bg-surface-2 hover:text-ink-900')}
+            aria-label={`Edit the ${row.label} page`}
+          >
+            <Pencil className="size-4" strokeWidth={2} aria-hidden="true" />
+          </button>
+        </div>
+      ),
+    },
+  ];
+
+  return (
+    <Panel
+      title="Website pages"
+      description="The article, questions and sections at the foot of each page."
+      icon={LayoutPanelTop}
+      flush
+    >
+      {isLoading ? (
+        <div className="space-y-2 p-4">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <Skeleton key={index} className="h-12" />
+          ))}
+        </div>
+      ) : (
+        <DataTable columns={columns} rows={rows} rowKey={(row) => row.key} onRowClick={open} />
+      )}
+    </Panel>
+  );
+}
+
 export function AdminProductArticlesPage() {
+  const [params, setParams] = useSearchParams();
+  // In the address so the editor's back link, and a reload, land on the tab
+  // the staff member was on.
+  const tab = params.get('tab') === 'parts' ? 'parts' : 'pages';
+
+  return (
+    <div className="space-y-4">
+      <PageHeader
+        icon={ADMIN_PAGE.icon}
+        title={ADMIN_PAGE.title}
+        description={ADMIN_PAGE.description}
+      />
+
+      <TabRow
+        tabs={[
+          { key: 'pages', label: 'Pages', icon: LayoutPanelTop },
+          { key: 'parts', label: 'Parts', icon: Package },
+        ]}
+        value={tab}
+        onChange={(next) => setParams(next === 'parts' ? { tab: 'parts' } : {}, { replace: true })}
+      />
+
+      {tab === 'pages' ? <PagesPanel /> : <PartsPanel />}
+    </div>
+  );
+}
+
+function PartsPanel() {
   const navigate = useNavigate();
 
   const [q, setQ] = useState('');
@@ -156,13 +305,7 @@ export function AdminProductArticlesPage() {
   ];
 
   return (
-    <div className="space-y-4">
-      <PageHeader
-        icon={ADMIN_PAGE.icon}
-        title={ADMIN_PAGE.title}
-        description={ADMIN_PAGE.description}
-      />
-
+    <>
       <Panel
         title="Parts"
         description="Every active part, and the article shown on its product page."
@@ -272,7 +415,7 @@ export function AdminProductArticlesPage() {
           setDeleting(null);
         }}
       />
-    </div>
+    </>
   );
 }
 

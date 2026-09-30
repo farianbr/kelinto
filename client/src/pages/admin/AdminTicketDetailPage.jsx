@@ -24,7 +24,12 @@ import {
 import cn from '@/lib/cn';
 import { apiUrl } from '@/lib/api';
 import { money, date, dateTime, count as formatCount } from '@/lib/format';
-import { TICKET_STATUSES, TICKET_STATUS_LABELS } from '@shared/schemas/admin';
+import {
+  CONDITION_GRADES,
+  CONDITION_PARTS,
+  TICKET_STATUSES,
+  TICKET_STATUS_LABELS,
+} from '@shared/schemas/admin';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
 import Modal from '@/components/ui/Modal';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
@@ -536,7 +541,7 @@ export function AdminTicketDetailPage() {
         // `warn` rather than `info` when it reaches somebody outside the
         // building, which is the tone rule exactly (see ConfirmDialog).
         tone={movingStage?.channels?.length === 0 ? 'info' : 'warn'}
-        confirmLabel="Set status"
+        confirmLabel="Set repair status"
         confirmPhrase={movingStage?.channels?.length === 0 ? undefined : ticket.ticketNumber}
         confirmPhraseLabel="the ticket number"
         loading={setTicketStatus.isPending}
@@ -684,7 +689,7 @@ function StageCard({ ticket, disabled, isPending, error, onMove }) {
   const unchanged = watch('status') === ticket.status;
 
   return (
-    <Panel icon={ArrowRight} title="Status" bodyClassName={COMPACT_BODY}>
+    <Panel icon={ArrowRight} title="Repair Status" bodyClassName={COMPACT_BODY}>
       {error && (
         <p className="mb-3 flex items-start gap-2 rounded-md bg-danger-50 px-3 py-2.5 text-sm text-danger">
           <AlertCircle className="mt-0.5 size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
@@ -720,7 +725,7 @@ function StageCard({ ticket, disabled, isPending, error, onMove }) {
           <SelectField
             control={control}
             name="status"
-            label="Set status to"
+            label="Set repair status to"
             size="sm"
             /**
              * Every status, the current one included and marked as such.
@@ -959,6 +964,8 @@ function WorkCard({ ticket, balance }) {
                   <p className="mb-2 font-mono text-2xs text-ink-400">Serial {device.serial}</p>
                 )}
 
+                <CustomerCondition condition={device.customerCondition} />
+
                 {lines.length === 0 ? (
                   <p className="text-sm text-ink-400">Nothing priced on this device.</p>
                 ) : (
@@ -1016,6 +1023,33 @@ function WorkCard({ ticket, balance }) {
   );
 }
 
+/**
+ * The condition as the CUSTOMER described it at the kiosk.
+ *
+ * A claim, not a test, so it is labelled as whose it is and kept out of the
+ * counter's own grid: the grid is what answers a dispute, and the counter grades
+ * the device itself when it reviews the ticket. Only the parts that are not
+ * "works" are listed, because those are the ones worth checking first.
+ */
+function CustomerCondition({ condition }) {
+  const answered = CONDITION_PARTS.filter((part) => condition?.[part.key]);
+  if (answered.length === 0) return null;
+
+  const labelOf = Object.fromEntries(CONDITION_GRADES.map((grade) => [grade.value, grade.label]));
+  const flagged = answered.filter((part) => condition[part.key] !== 'working');
+
+  return (
+    <p className="mb-2 border-l-2 border-line-strong pl-2.5 text-sm text-ink-600">
+      <span className="font-medium text-ink-900">Customer says: </span>
+      {flagged.length === 0
+        ? 'everything works'
+        : flagged
+            .map((part) => `${part.label} ${labelOf[condition[part.key]].toLowerCase()}`)
+            .join(' · ')}
+    </p>
+  );
+}
+
 function Row({ label, value }) {
   return (
     <div className="flex items-baseline justify-between text-ink-600">
@@ -1050,6 +1084,12 @@ function CustomerCard({ ticket }) {
           <p className="flex items-center gap-1.5">
             <Phone className="size-3.5 shrink-0 text-ink-300" strokeWidth={2.25} aria-hidden="true" />
             {ticket.customer.phone}
+            {/* The kiosk asked whether they had the account's phone with them
+                and they did not; this number is for this repair only, and the
+                profile keeps its own. Said, so the mismatch is not "fixed". */}
+            {ticket.intake?.alternateContact && (
+              <span className="text-ink-400">· for this repair only</span>
+            )}
           </p>
         )}
         {ticket.customer.email && (
@@ -1102,7 +1142,7 @@ function Lifecycle({ ticket, invoiced, className }) {
       caption={
         cancelled
           ? 'Cancelled - the job stopped here. Any deposit taken stays recorded against it.'
-          : 'The stage follows the Status control above; invoicing settles it.'
+          : 'The stage follows the Repair Status control above; invoicing settles it.'
       }
       className={className}
     />

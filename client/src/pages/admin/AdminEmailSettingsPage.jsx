@@ -43,7 +43,7 @@ const TOGGLES = [
     key: 'invoiceReminders',
     label: 'Send automatic invoice messages',
     detail:
-      'The master switch for the time-lapse messages on the Invoice Statuses screen - reminders, overdue notices and payment confirmations. Individual messages still have to be switched on there as well.',
+      'The master switch for the time-lapse messages on the After Sales Statuses screen - reminders, overdue notices and payment confirmations. Individual messages still have to be switched on there as well.',
   },
   {
     key: 'paymentStatusUpdates',
@@ -270,7 +270,7 @@ export function AdminEmailSettingsPage() {
 
           <p className="mt-4 border-t border-line pt-3 text-sm leading-relaxed text-ink-500">
             These two day counts are read by the built-in reminder and overdue messages. Editing a
-            message’s own timing on the Invoice Statuses screen overrides them for that message.
+            message’s own timing on the After Sales Statuses screen overrides them for that message.
           </p>
         </Panel>
 

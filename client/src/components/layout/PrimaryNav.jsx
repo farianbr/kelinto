@@ -2,10 +2,10 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from 'react-dom';
 import { Link, NavLink, useLocation } from 'react-router';
 import { AnimatePresence, motion } from 'motion/react';
-import { ChevronDown, Layers, Sparkles, TicketPercent } from 'lucide-react';
+import { Boxes, ChevronDown, Layers, Smartphone, Sparkles, TicketPercent, Wrench } from 'lucide-react';
 import cn from '@/lib/cn';
 import { useAuth } from '@/hooks/useAuth';
-import { useOffers } from '@/hooks/useContent';
+import { findExclusive, useOffers } from '@/hooks/useContent';
 import useOnClickOutside from '@/hooks/useOnClickOutside';
 import { ease, popover, pressable } from '@/lib/motion';
 
@@ -28,15 +28,32 @@ import { ease, popover, pressable } from '@/lib/motion';
  * contradiction.
  */
 
-/** Left of the dropdown. Order is the reading order of a buyer's visit. */
+/**
+ * The row, in the reading order of a buyer's visit. `menu` entries are
+ * dropdowns (2026-09-30, mirroring the mobile drawer): Shop holds the three
+ * things the website sells, Offers the three ways it discounts them.
+ */
 const LINKS = [
   { label: 'Home', to: '/' },
-  { label: 'Shop', to: '/shop' },
+  { label: 'Shop', menu: 'shop' },
+  { label: 'Membership', to: '/membership' },
   { label: 'About us', to: '/about' },
   { label: 'Blog', to: '/blog' },
   { label: 'FAQ', to: '/faq' },
   { label: 'Contact us', to: '/contact' },
+  { label: 'Offers', menu: 'offers' },
 ];
+
+/**
+ * Shop › Parts, Services, Phones. Pre-owned phones moved here from Offers on
+ * 2026-09-30: a used phone is a thing the shop sells, not a discount on one.
+ */
+const SHOP_ITEMS = [
+  { to: '/shop', icon: Boxes, label: 'Parts', note: 'By component, device and model' },
+  { to: '/services', icon: Wrench, label: 'Services', note: 'Repairs and what they cost' },
+  { to: '/pre-owned', icon: Smartphone, label: 'Phones', note: 'Pre-owned, tested and graded' },
+];
+const SHOP_PATHS = SHOP_ITEMS.map((item) => item.to);
 
 /**
  * How far the page must move in one direction before the row reacts.
@@ -104,15 +121,17 @@ function ActiveBar() {
 }
 
 /**
- * Offers, as a dropdown over the three surfaces that sell.
+ * A dropdown in the row: Shop and Offers.
  *
- * They are three separate pages for good reasons - a combo is priced as a unit,
- * clearance is an admin flag on a product, an exclusive deal has its own page
- * with a clock on it - and a buyer does not hold that distinction in their
- * head. One parent named Offers lets them find all three without us collapsing
- * them into a list that would have to explain itself.
+ * Offers is the original reason for it. Combo deals, clearance and an
+ * exclusive deal are three separate pages for good reasons - a combo is priced
+ * as a unit, clearance is an admin flag on a product, an exclusive deal has its
+ * own page with a clock on it - and a buyer does not hold that distinction in
+ * their head. One parent lets them find all three without us collapsing them
+ * into a list that would have to explain itself. Shop (2026-09-30) is the same
+ * shape: parts, services and phones are three catalogues under one word.
  */
-function OffersMenu({ pathname, shown }) {
+function NavMenu({ label, items, active, pathname, shown }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -147,9 +166,6 @@ function OffersMenu({ pathname, shown }) {
    * takes; the portal below is what actually escapes the clip.
    */
   const [anchor, setAnchor] = useState(null);
-
-  const { isApproved } = useAuth();
-  const { data } = useOffers(isApproved);
 
   const close = useCallback(() => {
     clearTimeout(timer.current);
@@ -222,51 +238,6 @@ function OffersMenu({ pathname, shown }) {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [open, close]);
 
-  /**
-   * There is no index of exclusive deals, only a page per offer, so the item
-   * has to resolve to a live slug. `/offers` answers grouped rather than flat,
-   * which is why all three buckets are searched.
-   *
-   * No live exclusive means no item. A nav entry that lands on a 404 is worse
-   * than an absent one, and an "Exclusive deals" page that says "none running"
-   * advertises the gap every time somebody opens the menu.
-   */
-  const exclusive = [
-    ...(data?.featured ? [data.featured] : []),
-    ...(data?.deals ?? []),
-    ...(data?.combos ?? []),
-  ].find((offer) => offer.isExclusive);
-
-  const items = [
-    {
-      to: '/offers',
-      icon: Layers,
-      label: 'Combo deals',
-      note: 'Parts priced as one unit',
-    },
-    {
-      to: '/clearance',
-      icon: TicketPercent,
-      label: 'Stock clearance',
-      note: 'Marked down while stock lasts',
-    },
-    ...(exclusive
-      ? [
-          {
-            to: `/deals/${exclusive.slug}`,
-            icon: Sparkles,
-            // SINGULAR. An exclusive deal is one product at a time, by
-            // definition - the plural would promise a list that does not and
-            // cannot exist.
-            label: 'Exclusive deal',
-            note: exclusive.title,
-          },
-        ]
-      : []),
-  ];
-
-  const active = items.some((item) => pathname === item.to || pathname.startsWith('/deals/'));
-
   return (
     <div
       ref={ref}
@@ -291,15 +262,21 @@ function OffersMenu({ pathname, shown }) {
     >
       <button
         type="button"
-        onClick={() => {
+        onClick={(event) => {
           clearTimeout(timer.current);
-          setOpen((value) => !value);
+          // A mouse has already opened the panel by hovering, so a click that
+          // toggled would CLOSE it under the pointer - which is what Shop, a
+          // plain link until 2026-09-30, gets clicked by habit. For a mouse the
+          // click only opens; leaving, Escape or a click outside closes.
+          // Touch and keyboard still toggle.
+          if (event.nativeEvent?.pointerType === 'mouse') setOpen(true);
+          else setOpen((value) => !value);
         }}
         aria-expanded={open}
         aria-haspopup="true"
         className={cn(pressable, ITEM, (active || open) && 'text-ink-900')}
       >
-        Offers
+        {label}
         <ChevronDown
           className={cn('size-3.5 transition-transform duration-200', open && 'rotate-180')}
           strokeWidth={2.25}
@@ -382,6 +359,34 @@ export function PrimaryNav() {
   // takes it away.
   const [shown, setShown] = useState(true);
   const { pathname } = useLocation();
+
+  const { isApproved } = useAuth();
+  const { data: offers } = useOffers(isApproved);
+  const exclusive = findExclusive(offers);
+
+  const offerItems = [
+    { to: '/offers', icon: Layers, label: 'Combo deals', note: 'Parts priced as one unit' },
+    { to: '/clearance', icon: TicketPercent, label: 'Stock clearance', note: 'Marked down while stock lasts' },
+    /**
+     * Always listed (2026-09-30, matching the mobile menu by client ruling).
+     * With a live deal it opens that deal; without one, `/deals` says none is
+     * running and points at the other two.
+     */
+    {
+      to: exclusive ? `/deals/${exclusive.slug}` : '/deals',
+      icon: Sparkles,
+      label: 'Exclusive deals',
+      note: exclusive ? exclusive.title : 'None running right now',
+    },
+  ];
+
+  const menus = {
+    shop: { items: SHOP_ITEMS, active: SHOP_PATHS.includes(pathname) },
+    offers: {
+      items: offerItems,
+      active: pathname === '/offers' || pathname === '/clearance' || pathname.startsWith('/deals'),
+    },
+  };
 
   useEffect(() => {
     // Read on a rAF rather than in the listener: a scroll handler that touches
@@ -525,7 +530,17 @@ export function PrimaryNav() {
             happens to start at the logo. `justify-center` on the inner row
             keeps it centred against the page, not against the max-width box. */}
         <div className="mx-auto flex h-full max-w-[1400px] items-center justify-center gap-0.5 px-6">
-          {LINKS.map((link) => (
+          {LINKS.map((link) =>
+            link.menu ? (
+              <NavMenu
+                key={link.menu}
+                label={link.label}
+                items={menus[link.menu].items}
+                active={menus[link.menu].active}
+                pathname={pathname}
+                shown={shown}
+              />
+            ) : (
             <NavLink
               key={link.to}
               to={link.to}
@@ -545,9 +560,8 @@ export function PrimaryNav() {
                 </>
               )}
             </NavLink>
-          ))}
-
-          <OffersMenu pathname={pathname} shown={shown} />
+            ),
+          )}
         </div>
       </motion.nav>
     </div>

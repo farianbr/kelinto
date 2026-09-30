@@ -11,7 +11,11 @@ const faqSchema = new mongoose.Schema(
     question: { type: String, required: true },
     answer: { type: String, required: true },
     category: { type: String, default: 'ordering', index: true },
-    scope: { type: String, enum: ['general', 'product'], default: 'general', index: true },
+    // `page` (2026-09-30): a question written for one website page, shown in
+    // that page's FAQ section and edited beside its article (ERP › SEO ›
+    // Articles). `page` below names which, from `shared/websitePages.js`.
+    scope: { type: String, enum: ['general', 'product', 'page'], default: 'general', index: true },
+    page: { type: String, default: '', index: true },
 
     partType: { type: String, default: '', index: true },
     deviceTypeSlug: { type: String, default: '', index: true },
@@ -23,6 +27,7 @@ const faqSchema = new mongoose.Schema(
 );
 
 faqSchema.index({ scope: 1, isPublished: 1, order: 1 });
+faqSchema.index({ scope: 1, page: 1, order: 1 });
 
 const Faq = mongoose.model('Faq', faqSchema);
 

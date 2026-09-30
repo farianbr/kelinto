@@ -22,7 +22,7 @@ export function CartDropdown() {
   const open = useUiStore((s) => s.cartFlyoutOpen);
   const close = useUiStore((s) => s.closeCart);
 
-  const { items, bundles, count, subtotal, payable, discount, promo, setQty, removeItem, removeBundle, saveForLater, isSaving } =
+  const { items, bundles, preowned, count, subtotal, payable, discount, promo, setQty, removeItem, removeBundle, removePreowned, saveForLater, isSaving } =
     useCart();
   const { isApproved } = useAuth();
 
@@ -87,6 +87,8 @@ export function CartDropdown() {
                   <CartPanelBody
                     items={items}
                     bundles={bundles}
+                    preowned={preowned}
+                    onRemovePreowned={removePreowned}
                     onQtyChange={setQty}
                     onRemove={removeItem}
                     onRemoveBundle={removeBundle}
@@ -95,7 +97,7 @@ export function CartDropdown() {
                   />
                 </div>
 
-                {(items.length > 0 || bundles.length > 0) && (
+                {(items.length > 0 || bundles.length > 0 || preowned.length > 0) && (
                   <footer className="shrink-0 border-t border-line">
                     <CartPanelFooter
                       subtotal={subtotal}

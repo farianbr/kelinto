@@ -1,4 +1,4 @@
-import { BookOpen, Wrench } from 'lucide-react';
+import { BookOpen } from 'lucide-react';
 import cn from '@/lib/cn';
 import { pressable } from '@/lib/motion';
 import RichText, { extractHeadings } from '@/lib/richText';
@@ -40,7 +40,19 @@ import useBusinessInfo from '@/hooks/useBusinessInfo';
  * stored as plain text in that renderer's small vocabulary precisely so
  * admin-authored copy never has to be trusted as markup (Instructions §8).
  */
-export function ProductArticle({ article, product, className }) {
+/**
+ * Also the article at the foot of every website PAGE (`components/website/PageSections`),
+ * which is why the eyebrow and heading id are props: the layout is the same
+ * long-form reading shape, and a second component drawing it would drift from
+ * this one within a week.
+ */
+export function ProductArticle({
+  article,
+  product,
+  className,
+  eyebrow = 'From the workshop',
+  headingId = 'product-article',
+}) {
   const info = useBusinessInfo();
   // No article for this product, or only a draft - the server sends published
   // ones only, so there is simply nothing here.
@@ -51,23 +63,38 @@ export function ProductArticle({ article, product, className }) {
   const headings = extractHeadings(article.body);
 
   // One subheading is not a table of contents, it is a repeat of the heading
-  // above; a byline with no name was never authored. Both rails are priced into
-  // the grid template above, so these decide the layout, not just the render.
+  // above. Both rails are priced into the grid template below, so these decide
+  // the layout, not just the render.
   const hasContents = headings.length > 1;
-  const hasAuthor = Boolean(article.author?.name);
+
+  /**
+   * The author rail is ALWAYS drawn (client ruling 2026-10-01: every article
+   * carries its author on the right). An article nobody put a byline on is
+   * credited to the business's team, which is what the inline "Written by the
+   * ... team" line under the prose used to say; one answer, in one place.
+   */
+  const author = article.author?.name
+    ? article.author
+    : {
+        name: `${info.name} team`,
+        role: product?.partTypeLabel ? `${product.partTypeLabel} specialists` : '',
+        bio: '',
+        photo: '',
+        links: {},
+      };
 
   return (
-    <section aria-labelledby="product-article" className={cn('min-w-0', className)}>
+    <section aria-labelledby={headingId} className={cn('min-w-0', className)}>
       {/* ---- section opener ---------------------------------------------
           The same shape `ProductFaq` opens with, so this reads as a peer of
           the sections around it rather than as loose copy between them. */}
       <div className="mb-6">
         <p className="eyebrow mb-2 inline-flex items-center gap-2 rounded-full border border-line bg-surface px-3 py-1.5 text-ink-400">
           <span className="size-1 rounded-full bg-brand" aria-hidden="true" />
-          From the workshop
+          {eyebrow}
         </p>
         <h2
-          id="product-article"
+          id={headingId}
           className="text-2xl tracking-[-0.03em] sm:text-3xl"
         >
           {article.heading}
@@ -88,15 +115,14 @@ export function ProductArticle({ article, product, className }) {
           it before the prose is the right order for a screen reader and a Tab
           key as much as for the eye, and it now matches `BlogPostPage`.
 
-          Each rail track collapses to nothing when its content is absent, so an
-          article with one subheading and no byline still sizes its prose panel
-          correctly rather than leaving two empty columns. */}
+          The contents track collapses when there is nothing to list, so an
+          article with one subheading still sizes its prose panel correctly. The
+          author track is always there: an unbylined article is credited to the
+          business's team. */}
       <div
         className={cn(
           'grid gap-4 lg:gap-6',
-          hasContents && hasAuthor && 'lg:grid-cols-[220px_minmax(0,76ch)_260px]',
-          hasContents && !hasAuthor && 'lg:grid-cols-[220px_minmax(0,76ch)]',
-          !hasContents && hasAuthor && 'lg:grid-cols-[minmax(0,76ch)_260px]',
+          hasContents ? 'lg:grid-cols-[220px_minmax(0,76ch)_260px]' : 'lg:grid-cols-[minmax(0,76ch)_260px]',
         )}
       >
         {/* ---- contents ---------------------------------------------------
@@ -144,30 +170,17 @@ export function ProductArticle({ article, product, className }) {
             {article.body}
           </RichText>
 
-          {/* The parts-desk line, for an article with no byline authored - 773
-              seeded articles are in that state, so this is the common case, not
-              the edge one. Where there IS a byline the rail carries it and this
-              would be a second, contradictory answer to the same question. */}
-          {!hasAuthor && (
-            <p className="mt-7 flex items-center gap-2 border-t border-line pt-4 text-xs text-ink-400">
-              <Wrench className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
-              Written by the {info.name} team
-              {product?.partTypeLabel ? ` · ${product.partTypeLabel}` : ''}
-            </p>
-          )}
         </div>
 
         {/* ---- the author -------------------------------------------------
             The same card the blog rail draws, so a byline looks the same
             wherever the reader meets one. */}
-        {hasAuthor && (
-          <aside
-            className="lg:sticky lg:top-[calc(var(--chrome-h,158px)+16px)] lg:self-start"
-            aria-label="About the author"
-          >
-            <AuthorCard author={article.author} eyebrow="Written by" />
-          </aside>
-        )}
+        <aside
+          className="lg:sticky lg:top-[calc(var(--chrome-h,158px)+16px)] lg:self-start"
+          aria-label="About the author"
+        >
+          <AuthorCard author={author} eyebrow="Written by" />
+        </aside>
       </div>
     </section>
   );

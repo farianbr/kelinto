@@ -10,6 +10,7 @@ import {
   Receipt,
   Settings,
   ShoppingCart,
+  Smartphone,
   Wallet,
   Zap,
 } from 'lucide-react';
@@ -33,6 +34,7 @@ const REGISTRY = {
   Receipt,
   Settings,
   ShoppingCart,
+  Smartphone,
 };
 
 export function accountIcon(name) {

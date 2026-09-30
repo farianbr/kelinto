@@ -114,6 +114,20 @@ const ticketDeviceSchema = new mongoose.Schema(
       of: { type: String, enum: CONDITION_GRADES },
       default: undefined,
     },
+    /**
+     * The same eight components, as the CUSTOMER described them at the kiosk.
+     *
+     * Beside `condition`, never in it. The grid above is the shop's record of
+     * what it tested at the counter and is what answers a dispute; a customer's
+     * "the camera works" is a claim about it. Written into the grid, the claim
+     * would read as a test nobody ran. The counter uses it as a starting point
+     * and grades the device itself.
+     */
+    customerCondition: {
+      type: Map,
+      of: { type: String, enum: CONDITION_GRADES },
+      default: undefined,
+    },
 
     services: [ticketLineSchema],
     parts: [ticketLineSchema],
@@ -261,6 +275,19 @@ const ticketSchema = new mongoose.Schema(
        */
       termsAcceptedAt: { type: Date, default: null },
       updatesConsentAt: { type: Date, default: null },
+
+      /**
+       * Set when `customerPhone` is NOT the account's own number.
+       *
+       * The kiosk asks whether the customer has the phone on their account with
+       * them, because it is often the phone being repaired. When they do not,
+       * the number they give instead reaches them for this repair only; the
+       * account keeps its own. Without the flag the counter would see a number
+       * that disagrees with the profile and have no way to tell which is wrong.
+       */
+      alternateContact: { type: Boolean, default: false },
+      /** A returning customer, found at the tablet by phone or email. */
+      returningCustomer: { type: Boolean, default: false },
     },
 
     /**

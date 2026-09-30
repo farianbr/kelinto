@@ -517,7 +517,7 @@ function SalesTab({ data }) {
             { key: 'terms', header: 'Terms', priority: 3, render: (row) => <span className="text-sm text-ink-500">{String(row.terms).replace('net', 'Net ')}</span> },
             {
               key: 'status',
-              header: 'Status',
+              header: 'Payment Status',
               priority: 1,
               render: (row) => (
                 <Badge tone={{ paid: 'ok', partial: 'warn', unpaid: 'neutral', overdue: 'danger' }[row.status]} size="sm">

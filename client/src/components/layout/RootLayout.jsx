@@ -10,6 +10,7 @@ import AccountPopup from '@/components/account/AccountPopup';
 import SignOutConfirm from '@/components/account/SignOutConfirm';
 import useBusinessInfo from '@/hooks/useBusinessInfo';
 import useBusinessTheme from '@/hooks/useBusinessTheme';
+import PageSections from '@/components/website/PageSections';
 
 /** Chrome shared by every route: header, footer, and the global overlays. */
 export function RootLayout() {
@@ -75,6 +76,11 @@ export function RootLayout() {
         style={{ '--nav-strip-h': `${NAV_STRIP_H}px` }}
       >
         <Outlet />
+
+        {/* Article, FAQ, Google reviews, location and contact under every
+            website page that takes them - drawn here, once, so no page can
+            forget them (`shared/websitePages.js`). */}
+        <PageSections />
       </main>
 
       <Footer />

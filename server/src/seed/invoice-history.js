@@ -31,19 +31,16 @@ import { refundableOf } from '../services/invoiceRefundService.js';
  *
  * ## What it deliberately does NOT do
  *
- * **No label that sends the warranty email.** Setting one on a paid invoice
- * mails a real customer, and a seed script is the last place that should decide
- * to contact somebody. The mailing label stays available in the picker for a
- * human to choose; this only applies the quiet ones.
+ * **No label whose message is switched on.** Its message would go to a real
+ * customer on the next run, and a seed script is the last place that should
+ * decide to contact somebody.
  */
 
 /**
  * The label the demo applies, by name.
  *
- * One, and it is the quiet one: the other seeded status mails the customer
- * their warranty, and a seed script is the last place that should decide to
- * contact somebody. Named rather than "the first non-mailing label" so it is
- * obvious which one a re-run will use.
+ * One, named rather than "the first quiet label" so it is obvious which one a
+ * re-run will use.
  */
 const LABEL_PLAN = ['Thank You for Being Part of Us'];
 
@@ -51,7 +48,7 @@ async function seedInvoiceHistory({ quiet = false } = {}) {
   const log = quiet ? () => {} : (...args) => console.log(...args);
 
   const labels = await db()
-    .InvoiceLabel.find({ isActive: true, sendsWarrantyEmail: false })
+    .InvoiceLabel.find({ isActive: true, messageActive: { $ne: true } })
     .select('name')
     .lean();
 

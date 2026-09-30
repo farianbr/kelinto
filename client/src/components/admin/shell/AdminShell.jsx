@@ -249,6 +249,7 @@ export function AdminShell() {
     lowStock: (stats?.inventory?.lowStock ?? 0) + (stats?.inventory?.outOfStock ?? 0),
     openRmas: stats?.rma?.open ?? 0,
     openTickets: stats?.tickets?.open ?? 0,
+    pendingBuybacks: stats?.buybacks?.pending ?? 0,
   };
 
   const openSearch = () => setPaletteOpen(true);

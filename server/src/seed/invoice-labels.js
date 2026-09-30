@@ -3,6 +3,9 @@ import { connectDb, disconnectDb } from '../config/db.js';
 import { db, dbFor } from '../db/models.js';
 import { runInBusiness } from '../db/context.js';
 import '../models/InvoiceLabel.js';
+import '../models/Settings.js';
+import { paletteFor, migrateColorToken } from '../../../shared/businessPalette.js';
+import { labelMessages } from './invoice-label-messages.js';
 // Registered for the business roster read below. `Business` is control-plane,
 // so it is never bound to a business connection - see `db/models.js`.
 import '../models/Business.js';
@@ -17,10 +20,10 @@ import '../models/Business.js';
  * genuinely missing names are added. Safe on a database with real invoices, and
  * safe to run twice.
  *
- * **Only one of these sends mail**, and it is the reason the flag is data rather
- * than code: "Thanks for Support" is what CellShoppe says when a repair is
- * finished and paid for, and that is the moment to send the warranty. Another
- * shop will word it differently, and a garage may not send one at all.
+ * **Neither sends anything.** Each gets a designed demo message
+ * (`invoice-label-messages.js`), written only where the status has none, so an
+ * owner's own words are never replaced. Every message is left switched OFF:
+ * the owner turns it on in the ERP; a seed never decides to contact a customer.
  *
  * Per business, because the vocabulary is the shop's own - and because the
  * collection lives in the shop's own database. A product business is skipped:
@@ -47,22 +50,18 @@ const INVOICE_LABELS = [
   {
     name: 'Thanks for Support',
     colorToken: 'ok',
-    // The one that mails. See the header note.
-    sendsWarrantyEmail: true,
     order: 10,
   },
   {
     name: 'Thank You for Being Part of Us',
     colorToken: 'brand',
     // A second way of saying the same thing, for a shop that prefers the
-    // warmer wording. It does NOT mail: two labels that both send would make
-    // "once per invoice" depend on which one somebody happened to pick first.
-    sendsWarrantyEmail: false,
+    // warmer wording.
     order: 20,
   },
 ];
 
-async function seedInvoiceLabels({ quiet = false } = {}) {
+async function seedInvoiceLabels({ quiet = false, colorToken } = {}) {
   const log = quiet ? () => {} : (...args) => console.log(...args);
 
   const existing = await db().InvoiceLabel.find({}).select('name').lean();
@@ -71,8 +70,34 @@ async function seedInvoiceLabels({ quiet = false } = {}) {
   const missing = INVOICE_LABELS.filter((label) => !have.has(label.name));
   if (missing.length) await db().InvoiceLabel.insertMany(missing);
 
-  log(`    invoice statuses: ${missing.length} added, ${have.size} already present`);
-  return { added: missing.length, existing: have.size };
+  /*
+    The demo messages, in this business's colour and with its own contact
+    details. Written only onto a starter status whose message is empty, and
+    always left off: `messageActive` is never touched here.
+  */
+  const settings = await db().Settings.load();
+  const info = settings?.business ?? {};
+  const messages = labelMessages({
+    brand: paletteFor(migrateColorToken(colorToken)).base,
+    reviewUrl: info.reviewUrl || info.googleReviewsUrl || '',
+    phone: info.phone || '',
+    email: info.supportEmail || info.email || '',
+  });
+
+  let written = 0;
+  for (const [name, fields] of Object.entries(messages)) {
+    const result = await db().InvoiceLabel.updateOne(
+      { name, $or: [{ message: { $exists: false } }, { message: '' }, { message: null }] },
+      { $set: fields },
+    );
+    written += result.modifiedCount;
+  }
+
+  log(
+    `    invoice statuses: ${missing.length} added, ${have.size} already present, ` +
+      `${written} demo message${written === 1 ? '' : 's'} written`,
+  );
+  return { added: missing.length, existing: have.size, messages: written };
 }
 
 // CLI entry: `npm run seed:invoice-labels`
@@ -83,7 +108,7 @@ if (process.argv[1] && process.argv[1].endsWith('invoice-labels.js')) {
 
     const businesses = await db()
       .Business.find({ deletedAt: null })
-      .select('name code businessType')
+      .select('name code businessType colorToken')
       .lean();
 
     /**
@@ -100,7 +125,7 @@ if (process.argv[1] && process.argv[1].endsWith('invoice-labels.js')) {
       }
 
       if (business) console.log(`  ${business.name} (${business.code})`);
-      const work = () => seedInvoiceLabels();
+      const work = () => seedInvoiceLabels({ colorToken: business?.colorToken });
 
       if (business) {
         results.push(

@@ -20,6 +20,7 @@ import Skeleton from "@/components/ui/Skeleton";
 import { OrderStatusBadge } from "@/components/account/OrderStatusBadge";
 import { useOrders } from "@/hooks/useAccount";
 import { pressable } from "@/lib/motion";
+import { orderPaymentLabel } from '@/lib/paymentLabel';
 
 const STATUS_FILTERS = [
   { value: "all", label: "All statuses" },
@@ -338,9 +339,7 @@ export function AccountOrdersPage() {
                           {money(order.total)}
                         </span>
                         <span className="block text-2xs text-ink-400">
-                          {order.payment?.method === "terms"
-                            ? "On account"
-                            : "Card"}
+                          {orderPaymentLabel(order.payment?.method)}
                         </span>
                       </td>
 
@@ -407,9 +406,7 @@ export function AccountOrdersPage() {
                         {money(order.total)}
                       </p>
                       <p className="text-xs text-ink-400">
-                        {order.payment?.method === "terms"
-                          ? "On account"
-                          : "Card"}
+                        {orderPaymentLabel(order.payment?.method)}
                       </p>
                     </div>
 

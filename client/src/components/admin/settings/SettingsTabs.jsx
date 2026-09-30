@@ -23,9 +23,9 @@ import { pressable } from '@/lib/motion';
  *
  * ## What counts as "a settings page"
  *
- * Not the URL. A tab's screen may live anywhere - Device & Models is
- * `/admin/device-models`, Services is `/admin/services` - because those are
- * real screens staff also reach from their own sections, and rebuilding them
+ * Not the URL. A tab's screen may live anywhere - Discount Codes is
+ * `/admin/marketing/offers` - because its URL predates the move and is linked
+ * from everywhere, and rebuilding screens like it
  * under `/admin/settings/*` would mean two places to edit one list. What makes
  * a page part of a category is its `parent: 'settings:<category>'`, which is
  * the same field the hub's card grid reads.
@@ -50,11 +50,9 @@ import { pressable } from '@/lib/motion';
  *   breadcrumb runs Home › Settings › Financial › …, and it is on the hub's
  *   card grid.
  * - `settingsTab: 'financial'` - the page lives somewhere else and is *also*
- *   reachable from the row. Services is in the Sales nav because staff price
- *   labour daily; Discount Codes is Marketing → Offers because
- *   `pricingService` is the only place a discount is decided. Both belong in
- *   the Financial row too, and neither should have its breadcrumb or its nav
- *   home moved to get there.
+ *   reachable from the row, without its breadcrumb or nav home moving. No
+ *   route uses it today: Services was the last, and it left Financial for
+ *   Purchase › Services on 2026-09-30. The mechanism stays for the next one.
  *
  * The second is a tab, not a card: the hub's grid still reads `parent`, so a
  * page is listed once on the map, under the section that owns it.
@@ -95,9 +93,9 @@ export function SettingsTabs() {
   /**
    * A LENT page shows the row only when it was opened from Settings.
    *
-   * Services lives in the Sales nav and Discount Codes in Marketing; both are
-   * lent to the Financial row with `settingsTab`. Showing the row whenever the
-   * page rendered meant a counter staff member opening Services from Sales
+   * Services, when it lived in the Sales nav, was lent to the Financial row
+   * with `settingsTab`. Showing the row whenever the page rendered meant a
+   * counter staff member opening Services from Sales
    * found eleven settings tabs across the top of the price list, which reads
    * as having landed in Settings by mistake. The settings links (this row and
    * the hub's cards) pass `state.fromSettings`; the page's own nav does not.

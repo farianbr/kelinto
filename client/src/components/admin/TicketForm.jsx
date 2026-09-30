@@ -346,7 +346,7 @@ export function TicketForm({
 
         <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {!editing && (
-            <SelectField control={control} name="status" label="Status" options={STATUS_OPTIONS} />
+            <SelectField control={control} name="status" label="Repair Status" options={STATUS_OPTIONS} />
           )}
           <SelectField control={control} name="priority" label="Priority" options={PRIORITY_OPTIONS} />
           <Input label="Est. completion" type="date" {...register('dueDate')} />

@@ -203,6 +203,19 @@ export function useCart() {
     onSuccess: (payload) => queryClient.setQueryData(CART_KEY, payload),
   });
 
+  // ---- pre-owned phones -----------------------------------------------------
+  // Server-only, like bundles: a phone is a priced thing, held by an approved
+  // account, and the cart line is whatever the server says it is.
+  const addPreownedMutation = useMutation({
+    mutationFn: (deviceId) => api.post('/cart/preowned', { device: deviceId }),
+    onSuccess: (payload) => queryClient.setQueryData(CART_KEY, payload),
+  });
+
+  const removePreownedMutation = useMutation({
+    mutationFn: (deviceId) => api.delete(`/cart/preowned/${deviceId}`),
+    onSuccess: (payload) => queryClient.setQueryData(CART_KEY, payload),
+  });
+
   const setBundleQty = useCallback(
     (offerId, qty) => bundleQtyMutation.mutate({ offerId, qty }),
     [bundleQtyMutation],
@@ -257,6 +270,7 @@ export function useCart() {
   return useMemo(() => {
     const priceVisible = isAuthenticated ? Boolean(data?.priceVisible) : false;
     const bundles = isAuthenticated ? (data?.bundles ?? []) : [];
+    const preowned = isAuthenticated ? (data?.preowned ?? []) : [];
 
     // Signed in, every figure is the server's: it is the only side that knows
     // about bundle pricing and which offer applied, and a second implementation
@@ -271,6 +285,7 @@ export function useCart() {
     return {
       items,
       bundles,
+      preowned,
       count,
       subtotal,
       // What the cart actually costs after bundle pricing and the one offer.
@@ -297,7 +312,9 @@ export function useCart() {
       isReady: authLoading ? false : !isAuthenticated || data !== undefined,
       // Any line whose quantity now exceeds stock - blocks checkout.
       hasStockIssue:
-        items.some((item) => item.exceedsStock) || bundles.some((bundle) => !bundle.available),
+        items.some((item) => item.exceedsStock) ||
+        bundles.some((bundle) => !bundle.available) ||
+        preowned.some((line) => !line.available),
       addItem,
       // Per-consumer: every product card mounts its own useCart, so this is that
       // card's add in flight, not any add anywhere.
@@ -309,6 +326,9 @@ export function useCart() {
 
       setBundleQty,
       removeBundle,
+      addPreowned: addPreownedMutation.mutateAsync,
+      isAddingPreowned: addPreownedMutation.isPending,
+      removePreowned: (deviceId) => removePreownedMutation.mutate(deviceId),
       applyPromo: promoMutation.mutateAsync,
       clearPromo: () => clearPromoMutation.mutate(),
       isApplyingPromo: promoMutation.isPending,
@@ -326,6 +346,8 @@ export function useCart() {
     saveMutation,
     setBundleQty,
     removeBundle,
+    addPreownedMutation,
+    removePreownedMutation,
     promoMutation,
     clearPromoMutation,
   ]);

@@ -51,6 +51,18 @@ export function useKioskMutations() {
       mutationFn: () => api.post('/kiosk/lock', {}),
       onSuccess: invalidate,
     }),
+    shopSignIn: useMutation({
+      mutationFn: (body) => api.post('/kiosk/shop/sign-in', body),
+    }),
+    shopSignUp: useMutation({
+      mutationFn: (body) => api.post('/kiosk/shop/sign-up', body),
+    }),
+    sell: useMutation({
+      mutationFn: (body) => api.post('/kiosk/sell', body),
+    }),
+    lookup: useMutation({
+      mutationFn: (body) => api.post('/kiosk/lookup', body),
+    }),
     checkIn: useMutation({
       mutationFn: (body) => api.post('/kiosk/check-in', body),
     }),

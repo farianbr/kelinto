@@ -23,7 +23,22 @@ import { pressable } from '@/lib/motion';
  * The last column is the escape hatch: nothing here answers it, so ask a person,
  * with the SKU already attached to the message.
  */
-export function ProductFaq({ faqs = [], product = null, className }) {
+/**
+ * Also the FAQ at the foot of every website PAGE (`components/website/PageSections`).
+ * The copy is props for that reason; the defaults are the product page's.
+ */
+export function ProductFaq({
+  faqs = [],
+  product = null,
+  className,
+  headingId = 'product-faq',
+  eyebrow = 'Before you order',
+  title = 'Questions about this part',
+  askBody = null,
+  askLabel = 'Ask about this part',
+  onAsk = null,
+  showFullFaqLink = true,
+}) {
   // Above the early return: a hook cannot be called conditionally.
   const info = useBusinessInfo();
 
@@ -34,25 +49,27 @@ export function ProductFaq({ faqs = [], product = null, className }) {
     : '/contact';
 
   return (
-    <section aria-labelledby="product-faq" className={cn('min-w-0', className)}>
+    <section aria-labelledby={headingId} className={cn('min-w-0', className)}>
       <div className="mb-6 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
         <div>
           <p className="eyebrow mb-2 inline-flex items-center gap-2 rounded-full border border-line bg-surface px-3 py-1.5 text-ink-400">
             <span className="size-1 rounded-full bg-brand" aria-hidden="true" />
-            Before you order
+            {eyebrow}
           </p>
-          <h2 id="product-faq" className="text-2xl tracking-[-0.03em] sm:text-3xl">
-            Questions about this part
+          <h2 id={headingId} className="text-2xl tracking-[-0.03em] sm:text-3xl">
+            {title}
           </h2>
         </div>
 
-        <Link
-          to="/faq"
-          className={cn(pressable, 'inline-flex items-center gap-0.5 text-sm font-semibold text-brand hover:text-brand-700')}
-        >
-          The full FAQ
-          <ArrowUpRight className="size-3.5" strokeWidth={2.25} aria-hidden="true" />
-        </Link>
+        {showFullFaqLink && (
+          <Link
+            to="/faq"
+            className={cn(pressable, 'inline-flex items-center gap-0.5 text-sm font-semibold text-brand hover:text-brand-700')}
+          >
+            The full FAQ
+            <ArrowUpRight className="size-3.5" strokeWidth={2.25} aria-hidden="true" />
+          </Link>
+        )}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px] lg:gap-6">
@@ -67,17 +84,34 @@ export function ProductFaq({ faqs = [], product = null, className }) {
 
             <p className="font-display text-md font-bold text-ink-900">Not answered here?</p>
             <p className="mt-1.5 text-sm leading-relaxed text-ink-500">
-              Fitment, cross-references and lead times on unlisted parts go straight to the sales
-              desk.
-              {product && ' Your message starts with this SKU already in it.'}
+              {askBody ?? (
+                <>
+                  Fitment, cross-references and lead times on unlisted parts go straight to the sales
+                  desk.
+                  {product && ' Your message starts with this SKU already in it.'}
+                </>
+              )}
             </p>
 
-            <Link
-              to={askHref}
-              className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-full bg-brand-gradient font-display text-md font-semibold text-white transition-[filter] hover:brightness-110"
-            >
-              Ask about this part
-            </Link>
+            {/* `onAsk` when the page carries its own contact form: the question
+                is one scroll away, and leaving the page for /contact would lose
+                the reader's place. */}
+            {onAsk ? (
+              <button
+                type="button"
+                onClick={onAsk}
+                className={cn(pressable, 'mt-4 inline-flex h-11 w-full items-center justify-center rounded-full bg-brand-gradient font-display text-md font-semibold text-white transition-[filter] hover:brightness-110')}
+              >
+                {askLabel}
+              </button>
+            ) : (
+              <Link
+                to={askHref}
+                className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-full bg-brand-gradient font-display text-md font-semibold text-white transition-[filter] hover:brightness-110"
+              >
+                {askLabel}
+              </Link>
+            )}
 
             {/* No number on file, no button - an empty pill reading nothing is
                 worse than the one action above it standing alone. */}

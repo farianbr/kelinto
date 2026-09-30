@@ -11,6 +11,7 @@ import { pressable } from '@/lib/motion';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
+import Textarea from '@/components/ui/Textarea';
 import PhoneField from '@/components/ui/PhoneField';
 import SelectField from '@/components/ui/SelectField';
 import PageHeader from '@/components/admin/PageHeader';
@@ -51,6 +52,7 @@ const EMPTY = {
   footerLogoUrl: '',
   whatsapp: '',
   mapUrl: '',
+  mapEmbedUrl: '',
   hours: [],
   social: [],
   address: { line1: '', line2: '', city: '', region: 'ON', postal: '', country: 'CA' },
@@ -328,6 +330,18 @@ export function AdminBusinessInfoPage() {
               error={errors.mapUrl?.message}
               {...register('mapUrl')}
             />
+            {/* The map drawn beside the address at the foot of every website
+                page. People paste Google's whole <iframe>; the schema keeps
+                only its address, so either works. */}
+            <Textarea
+              label="Embedded map"
+              containerClassName="sm:col-span-2"
+              rows={3}
+              hint="Google Maps › your business › Share › Embed a map › Copy HTML, then paste it here. Leave empty for no map."
+              placeholder={'<iframe src="https://www.google.com/maps/embed?pb=…'}
+              error={errors.mapEmbedUrl?.message}
+              {...register('mapEmbedUrl')}
+            />
           </div>
         </Panel>
 
@@ -336,7 +350,7 @@ export function AdminBusinessInfoPage() {
             weekday grid with open and close times. */}
         <Panel
           title="Opening hours"
-          description="Shown on the contact page and in the website footer. Leave empty to show none."
+          description="Shown at the foot of every website page and in the footer. Leave empty to show none."
         >
           <div className="space-y-3">
             {hours.fields.map((row, index) => (

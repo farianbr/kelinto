@@ -23,6 +23,7 @@
     "seed:tickets": "node src/seed/tickets.js",
     "seed:bids": "node src/seed/purchase-bids.js",
     "seed:storefront": "node src/seed/storefront-pages.js",
+    "seed:website": "node src/seed/website-sections.js",
     "drop:pictureless": "node src/seed/drop-pictureless.js",
     "seed:agreements": "node src/seed/agreements.js",
     "seed:superadmin": "node src/seed/superadmin.js",
@@ -50,6 +51,7 @@
     "morgan": "^1.10.0",
     "multer": "^2.4.0",
     "nodemailer": "^9.0.6",
+    "sanitize-html": "^2.18.0",
     "sharp": "^0.35.4",
     "zod": "^3.24.1"
   }

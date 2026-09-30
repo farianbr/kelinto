@@ -48,6 +48,7 @@ const TYPE_ICON = {
   new_order: 'Package',
   quote_accepted: 'FileSignature',
   new_rma: 'RotateCcw',
+  new_buyback: 'Smartphone',
   invoice_overdue: 'FileText',
   low_stock: 'TrendingDown',
   out_of_stock: 'PackageX',

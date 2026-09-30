@@ -25,6 +25,7 @@ import ffmpegStatic from 'ffmpeg-static';
  * | logo, footer-logo | PNG, palette-quantised, trimmed to the artwork, at most 1200 × 400 (footer 2800 × 600, it spans the footer) | flat colour and transparency compress best as a small palette; PNG is the one format every mail client shows, and the logo is embedded in invoices |
  * | favicon | PNG 192 × 192 (ICO kept as sent) | covers browser tabs, pinned tabs and home-screen icons at every density |
  * | product-image | WebP at most 1600 px, plus a 480 px WebP beside it (`-480`) | a card is ~300 px wide, so it loads the small one; the product page and zoom load the large one |
+ * | review-photo | WebP 160 × 160, cropped square from the centre | drawn as a 64 px disc beside a Google review; 160 covers a 2.5x screen |
  * | product-video | H.264 MP4, at most 1280 px, CRF 28 (veryfast, so a 2-minute clip finishes inside a proxy timeout), fast-start, plus a WebP poster (`-poster`) | plays everywhere including Safari; fast-start begins playing before the whole file arrives; the poster is all a visitor downloads until they press play |
  *
  * Metadata (EXIF, GPS from a phone photo, colour profiles beyond sRGB) is
@@ -37,6 +38,7 @@ sharp.concurrency(1);
 sharp.cache(false);
 
 const LOGO_BOX = { width: 1200, height: 400 };
+const REVIEW_PHOTO_SIZE = 160;
 // The footer logo spans the whole footer panel (up to ~1400 px wide), so it
 // keeps enough width to stay sharp on a 2x screen.
 const FOOTER_BOX = { width: 2800, height: 600 };
@@ -108,6 +110,16 @@ async function favicon(buffer, found) {
     .png({ palette: true, quality: 95, effort: 10, compressionLevel: 9 })
     .toBuffer();
   return [out(png, 'image/png', 'png')];
+}
+
+/** A reviewer's face, square, for the disc beside a Google review. */
+async function reviewPhoto(buffer) {
+  const webp = await sharp(buffer, { animated: false })
+    .rotate()
+    .resize(REVIEW_PHOTO_SIZE, REVIEW_PHOTO_SIZE, { fit: 'cover', position: 'centre' })
+    .webp({ quality: 78, effort: 5 })
+    .toBuffer();
+  return [out(webp, 'image/webp', 'webp')];
 }
 
 async function productImage(buffer) {
@@ -220,6 +232,8 @@ async function processUpload(kind, buffer, found) {
       return favicon(buffer, found);
     case 'product-image':
       return productImage(buffer);
+    case 'review-photo':
+      return reviewPhoto(buffer);
     case 'product-video':
       return productVideo(buffer, found);
     default:

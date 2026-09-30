@@ -15,6 +15,7 @@ import env from '../config/env.js';
 import { BUSINESS_INFO } from '../../../shared/business.js';
 import { sendingBusiness } from './sendingBusiness.js';
 import { storefrontOrigin } from './linkOrigins.js';
+import { toEmailHtml, toPlainText } from './messageBody.js';
 
 /**
  * Marketing - the four communication channels (ERP rework §6.13, phase 9).
@@ -346,7 +347,7 @@ async function sendMessage(
       to: account.email,
       subject: subject || `A message from ${business.name}`,
       html: decorate(text, account, business, origin),
-      text,
+      text: toPlainText(text),
     });
     row.status = result.delivered ? 'sent' : 'failed';
     row.provider = result.via;
@@ -503,10 +504,9 @@ function decorate(body, account, business = BUSINESS_INFO, origin = env.publicOr
       (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[character],
     );
 
-  const paragraphs = String(body ?? '')
-    .split(/\n{2,}/)
-    .map((block) => `<p style="margin:0 0 14px">${escape(block).replace(/\n/g, '<br>')}</p>`)
-    .join('');
+  // Plain text becomes escaped paragraphs; an HTML body (2026-10-01) is
+  // sanitised against an email allowlist, never passed through.
+  const paragraphs = toEmailHtml(body);
 
   const { line1, city, region, postal } = business.address ?? {};
   const address = [line1, city, [region, postal].filter(Boolean).join(' ')]
@@ -711,7 +711,7 @@ async function sendCampaign(id, staff) {
           shopName: business.name,
         }),
         html: decorate(body, account, business, origin),
-        text: body,
+        text: toPlainText(body),
       });
       status = result.delivered ? 'sent' : 'failed';
       if (!result.delivered) {

@@ -97,6 +97,21 @@ const schema = z.object({
     .default('')
     .transform((value) => value.replace(/\/+$/, '')),
 
+  /**
+   * A second R2 bucket for personal files: the face photo a customer takes
+   * when they sell us a phone (`services/privateStorageService.js`).
+   *
+   * **Its own bucket, with no public access at all**, because a public bucket
+   * serves every object in it to anybody with the URL, and a folder inside one
+   * is not private. Files here are read only by the server, with the same key
+   * pair as `R2_BUCKET` (give that token access to both), and handed to a staff
+   * member through an audited ERP route.
+   *
+   * Empty means "Sell your phone" cannot take a photo, and the kiosk says so
+   * rather than storing a face somewhere public.
+   */
+  R2_PRIVATE_BUCKET: z.string().trim().default(''),
+
   CLIENT_ORIGIN: z.string().default('http://localhost:5173'),
 
   /**

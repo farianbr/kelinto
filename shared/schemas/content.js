@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PAGE_SECTIONS } from '../websitePages.js';
 
 /**
  * Editorial content: blog posts, FAQs and offers.
@@ -331,3 +332,67 @@ const offerSchema = z
   });
 
 export { BLOG_CATEGORIES, BLOG_STATUSES, blogPostSchema, FAQ_CATEGORIES, FAQ_SCOPES, faqSchema, productArticleSchema, reviewSchema, reviewModerationSchema, OFFER_KINDS, DISCOUNT_TYPES, OFFER_ACCENTS, offerSchema };
+
+// --- website page sections ---------------------------------------------------
+
+/**
+ * The article and section switches for one website page (`shared/websitePages.js`).
+ *
+ * The article is OPTIONAL as a whole, unlike a product article: most pages start
+ * with none, and saving only the section switches must not demand one. But half
+ * an article is refused - a heading with no body renders a title over nothing.
+ * The page is in the URL, never the body, as for a product article.
+ */
+const pageContentSchema = z
+  .object({
+    heading: z.string().trim().max(140).optional().or(z.literal('')),
+    body: z.string().trim().max(20000).optional().or(z.literal('')),
+    authorName: z.string().trim().max(80).optional().or(z.literal('')),
+    ...authorFields,
+    status: z.enum(['draft', 'published']).default('draft'),
+    hiddenSections: z.array(z.enum(PAGE_SECTIONS)).max(PAGE_SECTIONS.length).default([]),
+  })
+  .superRefine((value, ctx) => {
+    const heading = value.heading ?? '';
+    const body = value.body ?? '';
+    if (!heading && !body) return;
+    if (heading.length < 6) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['heading'], message: 'Enter a heading.' });
+    }
+    if (body.length < 40) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['body'], message: 'Write the article body.' });
+    }
+  });
+
+/** One question on one page. The page comes from the URL. */
+const pageFaqSchema = z.object({
+  question: z.string().trim().min(6, 'Enter the question.').max(240),
+  answer: z.string().trim().min(10, 'Enter the answer.').max(4000),
+  order: z.coerce.number().int().min(0).max(999).default(0),
+  isPublished: z.boolean().default(true),
+});
+
+// --- google reviews ----------------------------------------------------------
+
+/**
+ * One Google review of the business, copied in by hand. `reviewedAt` is the date
+ * the reviewer wrote it on Google, which is what the website prints as its age.
+ */
+const googleReviewSchema = z.object({
+  authorName: z.string().trim().min(1, 'Who wrote it?').max(80),
+  photoUrl: z.string().trim().max(500).optional().or(z.literal('')),
+  rating: z.coerce.number().int().min(1, 'Choose a rating.').max(5),
+  text: z.string().trim().min(2, 'Paste what they wrote.').max(2000),
+  reviewedAt: z.string().trim().min(1, 'When did they post it?'),
+  isPublished: z.boolean().default(true),
+  order: z.coerce.number().int().min(0).max(999).default(0),
+});
+
+/** The figures above the reviews, as Google shows them on the business profile. */
+const googleSummarySchema = z.object({
+  rating: z.coerce.number().min(0).max(5, 'Google ratings run to 5.'),
+  count: z.coerce.number().int().min(0).max(1_000_000),
+  url: z.string().trim().url('Enter the full link, including https://').max(500).optional().or(z.literal('')),
+});
+
+export { pageContentSchema, pageFaqSchema, googleReviewSchema, googleSummarySchema };

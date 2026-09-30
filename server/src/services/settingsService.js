@@ -13,6 +13,8 @@ import { resetBusinessResolution } from '../middleware/resolveBusiness.js';
 import { migrateColorToken } from '../../../shared/businessPalette.js';
 import { BUSINESS_INFO } from '../../../shared/business.js';
 import { COUNTRIES } from '../../../shared/countries.js';
+import { kioskClocks } from '../../../shared/kiosk.js';
+import { MEMBERSHIP_TIERS } from '../../../shared/schemas/admin.js';
 import '../models/Settings.js';
 import ApiError from '../utils/ApiError.js';
 
@@ -278,6 +280,7 @@ async function get() {
       termsText:
         doc.kiosk?.termsText ??
         "I agree to leave my device for diagnosis and to the shop's repair terms.",
+      ...kioskClocks(doc.kiosk),
     },
     // Which toggles actually gate a live path today (§6b rule 4, applied to a
     // settings screen). Sent so the screen can mark the rest plainly instead of
@@ -366,6 +369,12 @@ async function publicProfile() {
     billingEmail: info.billingEmail || email,
     whatsapp: info.whatsapp ?? '',
     mapUrl: info.mapUrl ?? '',
+    // The Location section's map, the `src` of Google's embed frame. Empty draws
+    // the section without one.
+    mapEmbedUrl: info.mapEmbedUrl ?? '',
+    // Where "Write a review" under the Google reviews goes. Already printed on
+    // the warranty sheet a customer takes home, so nothing private.
+    reviewUrl: info.reviewUrl ?? '',
     website: info.website ?? '',
 
     address: {
@@ -464,6 +473,9 @@ async function updateBusiness(input) {
     'business.billingEmail': input.billingEmail ?? '',
     'business.whatsapp': input.whatsapp ?? '',
     'business.mapUrl': input.mapUrl ?? '',
+    // Absent is "not edited", as for the lists below: a client that predates the
+    // field must not clear a map the owner pasted in.
+    ...(input.mapEmbedUrl === undefined ? {} : { 'business.mapEmbedUrl': input.mapEmbedUrl }),
     /**
      * Lists are replaced wholesale, unlike the warranty maps in `updateSale`.
      *
@@ -490,6 +502,31 @@ async function updateBusiness(input) {
   );
   forgetBusinessIdentity(currentBusinessId());
   return saved;
+}
+
+/**
+ * The Google summary above the website's reviews: the rating, the count and the
+ * "See all reviews" link. Its own write rather than part of Business info
+ * because it is edited on the Reviews screen, beside the reviews it summarises,
+ * under the marketing permission rather than the business-settings one.
+ */
+async function updateGoogleSummary(input) {
+  await patch({
+    'business.googleRating': Number(input.rating ?? 0),
+    'business.googleReviewCount': Number(input.count ?? 0),
+    'business.googleReviewsUrl': input.url ?? '',
+  });
+  return googleSummary();
+}
+
+/** The same three figures, read. Shared by the ERP screen and the website. */
+async function googleSummary() {
+  const info = (await db().Settings.load())?.business ?? {};
+  return {
+    rating: info.googleRating ?? 0,
+    count: info.googleReviewCount ?? 0,
+    url: info.googleReviewsUrl ?? '',
+  };
 }
 
 /**
@@ -716,12 +753,42 @@ async function updateKiosk(input) {
     'kiosk.readAloud': input.readAloud,
     'kiosk.requireTerms': input.requireTerms,
     'kiosk.termsText': input.termsText,
+    'kiosk.idleTimeoutSeconds': input.idleTimeoutSeconds,
+    'kiosk.idleWarningSeconds': input.idleWarningSeconds,
+    'kiosk.orderAgainSeconds': input.orderAgainSeconds,
   });
+}
+
+/**
+ * The website's Membership page (2026-09-30).
+ *
+ * Built from what the ERP already holds about membership and nothing else:
+ * the four tiers (`User.tier`, set by staff on a customer) and the warranty
+ * each carries, from Sale Settings' base days plus the tier's bonus. A tier
+ * does not touch price (see `User.tier`), so the page promises no discount.
+ */
+async function publicMembership() {
+  const { financial } = await get();
+  const base = financial.warrantyBaseDays ?? 90;
+
+  return {
+    warrantyBaseDays: base,
+    tiers: MEMBERSHIP_TIERS.map((tier) => {
+      const bonus = Number(financial.warrantyBonusByTier?.[tier.value] ?? 0) || 0;
+      return {
+        value: tier.value,
+        label: tier.label,
+        warrantyBonusDays: bonus,
+        warrantyDays: base + bonus,
+      };
+    }),
+  };
 }
 
 export default {
   get,
   publicProfile,
+  publicMembership,
   updateKiosk,
   updateBusiness,
   updateSale,
@@ -729,12 +796,15 @@ export default {
   updatePaymentMethods,
   updateInventory,
   updateCommunications,
+  updateGoogleSummary,
+  googleSummary,
 };
 
 export {
   COMMUNICATIONS_WIRED,
   get,
   publicProfile,
+  publicMembership,
   updateKiosk,
   updateBusiness,
   updateSale,
@@ -742,4 +812,6 @@ export {
   updatePaymentMethods,
   updateInventory,
   updateCommunications,
+  updateGoogleSummary,
+  googleSummary,
 };

@@ -9,6 +9,14 @@ import '../models/DeviceCatalog.js';
 import env from '../config/env.js';
 import ApiError from '../utils/ApiError.js';
 import { migrateColorToken } from '../../../shared/businessPalette.js';
+import { kioskClocks, maskEmail, maskName, maskPhone } from '../../../shared/kiosk.js';
+import { CONDITION_GRADES, CONDITION_PARTS } from '../models/Ticket.js';
+import * as authService from './authService.js';
+import auditService from './auditService.js';
+import referralService from './referralService.js';
+
+/** The four channels `User.contactConsent` records, in the order the tablet offers them. */
+const CONSENT_CHANNELS = ['sms', 'whatsapp', 'email', 'call'];
 
 /**
  * Self-service check-in (Sales § Kiosk).
@@ -119,6 +127,7 @@ async function getPublicConfig(businessId = null) {
     requireTerms: kiosk.requireTerms !== false,
     termsText:
       kiosk.termsText ?? "I agree to leave my device for diagnosis and to the shop's repair terms.",
+    ...kioskClocks(kiosk),
   };
 }
 
@@ -236,67 +245,215 @@ async function nextTicketNumber() {
 }
 
 /**
+ * A regex matching a stored phone by its digits, whatever it was typed with.
+ *
+ * `User.phone` is stored as `+1 780 123 4567` by `PhoneField`, older rows as
+ * whatever somebody typed, and a customer at a tablet types `7801234567`. So
+ * the match is on the last ten digits with anything allowed between them,
+ * anchored at the end - which also makes the `+1` optional without having to
+ * guess a country.
+ */
+function phonePattern(raw) {
+  const digits = String(raw ?? '').replace(/\D/g, '').slice(-10);
+  if (digits.length < 7) return null;
+  return new RegExp(`${digits.split('').join('\\D*')}\\D*$`);
+}
+
+/** Only a customer account is ever found at a tablet, never a member of staff. */
+const CUSTOMER_FILTER = { role: 'buyer' };
+
+/** How long "Yes, that's me" stays good for: one check-in, with room to dither. */
+const CUSTOMER_TOKEN_MINUTES = 30;
+
+function signCustomerToken(userId, businessId) {
+  return jwt.sign(
+    { sub: String(userId), biz: String(businessId ?? 'default'), kind: 'kiosk-customer' },
+    env.JWT_SECRET,
+    { expiresIn: `${CUSTOMER_TOKEN_MINUTES}m` },
+  );
+}
+
+/**
+ * The account id inside a token this business's tablet issued, or null.
+ *
+ * Null rather than a throw for anything wrong with it: an expired token means a
+ * customer dithered for half an hour, and the right answer is to ask again, not
+ * to show them an error about cryptography.
+ */
+function readCustomerToken(token, businessId) {
+  if (!token) return null;
+  try {
+    const payload = jwt.verify(token, env.JWT_SECRET);
+    if (payload.kind !== 'kiosk-customer') return null;
+    if (payload.biz !== String(businessId ?? 'default')) return null;
+    return payload.sub;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * "Let's find your details": look a customer up by phone or email.
+ *
+ * ## What comes back
+ *
+ * A masked name, a masked hint and a token - never the account. The tablet is
+ * in a public room and anybody can type any number into it, so the answer has
+ * to be recognisable to its owner and useless to everybody else. The token is
+ * what "Yes, that's me" hands back to `checkIn`, so a check-in can only attach
+ * to an account this tablet looked up.
+ *
+ * `{ match: null }` for no match, with a 200: "we could not find you" is the
+ * normal answer for every new customer, not an error.
+ */
+async function lookupCustomer({ query } = {}, businessId = null) {
+  const text = String(query ?? '').trim();
+  let user = null;
+
+  if (text.includes('@')) {
+    user = await db()
+      .User.findOne({ ...CUSTOMER_FILTER, email: text.toLowerCase() })
+      .select('contactName businessName email phone identity.idLast4')
+      .lean();
+  } else {
+    const pattern = phonePattern(text);
+    if (pattern) {
+      user = await db()
+        .User.findOne({ ...CUSTOMER_FILTER, phone: pattern })
+        // The most recently active account, where a number was reused.
+        .sort({ updatedAt: -1 })
+        .select('contactName businessName email phone identity.idLast4')
+        .lean();
+    }
+  }
+
+  if (!user) return { match: null };
+
+  return {
+    match: {
+      token: signCustomerToken(user._id, businessId),
+      name: maskName(user.contactName || user.businessName),
+      phone: maskPhone(user.phone),
+      email: maskEmail(user.email),
+      /**
+       * Whether a photo ID is already on file, so "Sell your phone" can skip
+       * asking for it again. Only a yes or no: never the type or the digits.
+       */
+      hasId: Boolean(user.identity?.idLast4),
+    },
+  };
+}
+
+/**
+ * The consent a new customer gave, in the shape `User.contactConsent` stores.
+ *
+ * The first channel they picked becomes `preferredContact`, because the screen
+ * lists them in the order a repair customer is most likely to read them and a
+ * customer who ticks one ticks the one they mean.
+ */
+function consentFrom(channels = [], hasEmail, now) {
+  const picked = new Set(channels.filter((channel) => channel !== 'email' || hasEmail));
+  if (picked.size === 0) return { consent: undefined, preferred: undefined };
+  return {
+    consent: {
+      sms: picked.has('sms'),
+      whatsapp: picked.has('whatsapp'),
+      email: picked.has('email'),
+      call: picked.has('call'),
+      at: now,
+      source: 'kiosk',
+    },
+    preferred: CONSENT_CHANNELS.find((channel) => picked.has(channel)),
+  };
+}
+
+/**
  * Find the customer this check-in belongs to, or create one.
  *
- * **Matched on phone first, then email.** A repair customer is reached by
- * phone - it is the number every status update goes to - and somebody checking
- * in their second device should not become a second account. Email is the
- * fallback because the kiosk lets them skip it.
+ * **A returning customer arrives with a token** from `lookupCustomer`, which is
+ * the only way the tablet can name an existing account. Their account is used
+ * as it stands: nothing on it is rewritten from a tablet, because somebody
+ * typing in a hurry must not rename an account the shop has dealt with for
+ * years.
  *
- * An existing account is **never overwritten** from a kiosk. Somebody typing
- * their name in a hurry on a tablet must not rename an account the shop has
- * been dealing with for two years. The one thing that IS filled in is a missing
- * `preferredContact`: an empty field is not an answer, so recording one is new
- * information rather than a correction.
+ * **A new customer is still matched on phone, then email,** before an account
+ * is created, so somebody who pressed "I'm new" on their second visit does not
+ * become a second account. The one exception is the account they refused with
+ * "Not me": filing them under the stranger they just said they were not would
+ * be the exact mistake the question exists to prevent.
  */
-async function resolveCustomer(intake, businessId) {
+async function resolveCustomer(intake, businessId, now) {
+  const tokenUserId = readCustomerToken(intake.customerToken, businessId);
+  if (intake.customerToken && !tokenUserId) {
+    throw ApiError.badRequest(
+      'That took a little too long. Please find your details again.',
+      'KIOSK_CUSTOMER_EXPIRED',
+    );
+  }
+  if (tokenUserId) {
+    const user = await db().User.findOne({ _id: tokenUserId, ...CUSTOMER_FILTER });
+    if (user) return { user, created: false };
+  }
+
+  const refused = readCustomerToken(intake.rejectedToken, businessId);
+  const notRefused = refused ? { _id: { $ne: refused } } : {};
+
   const phone = String(intake.phone ?? '').trim();
   const email = String(intake.email ?? '').trim().toLowerCase();
 
   let user = null;
-  if (phone) user = await db().User.findOne({ phone, role: 'buyer' });
-  if (!user && email) user = await db().User.findOne({ email, role: 'buyer' });
+  const pattern = phonePattern(phone);
+  if (pattern) {
+    user = await db().User.findOne({ ...CUSTOMER_FILTER, ...notRefused, phone: pattern });
+  }
+  if (!user && email) {
+    user = await db().User.findOne({ ...CUSTOMER_FILTER, ...notRefused, email });
+  }
 
-  const contactName = [intake.firstName, intake.lastName]
-    .map((part) => String(part ?? '').trim())
-    .filter(Boolean)
-    .join(' ');
+  const { consent, preferred } = consentFrom(intake.contactChannels, Boolean(email), now);
 
   if (user) {
     /**
      * The one field a kiosk may fill on an existing account.
      *
      * An empty `preferredContact` is not an answer - nobody has asked - so
-     * recording one is new information rather than a correction. Every other
-     * field is left exactly as it is: somebody typing their name in a hurry on
-     * a tablet must not rename an account the shop has dealt with for years.
+     * recording one is new information rather than a correction.
      */
-    if (!user.preferredContact && intake.updatesConsent) {
-      user.preferredContact = 'sms';
+    if (!user.preferredContact && preferred) {
+      user.preferredContact = preferred;
       await user.save();
     }
     return { user, created: false };
   }
+
+  const contactName = [intake.firstName, intake.lastName]
+    .map((part) => String(part ?? '').trim())
+    .filter(Boolean)
+    .join(' ');
+
+  /**
+   * An email that belongs to a refused account cannot be reused: `email` is
+   * unique. The customer keeps their check-in and the counter sorts out the
+   * address, which is better than refusing somebody at a tablet over a clash
+   * they cannot see.
+   */
+  const emailTaken = email && (await db().User.exists({ email }));
 
   const created = new (db().User)({
     contactName: contactName || 'Kiosk customer',
     // A kiosk customer may genuinely have no email - the flow lets them skip
     // it - so a placeholder is generated rather than failing. It is unique and
     // obviously not real, which is better than refusing the check-in.
-    email: email || `kiosk-${Date.now()}@no-email.invalid`,
+    email: email && !emailTaken ? email : `kiosk-${Date.now()}@no-email.invalid`,
     phone,
     role: 'buyer',
     // Approved: this is a walk-in consumer, not a wholesale account waiting on
-    // a credit decision. Nothing here can see a wholesale price.
+    // a credit decision.
     status: 'approved',
     business: businessId ?? null,
     source: 'kiosk',
-    // SMS, because a phone number is the one contact detail the kiosk always
-    // has. The counter corrects it when they review the ticket.
-    preferredContact: intake.updatesConsent ? 'sms' : undefined,
-    contactConsent: intake.updatesConsent
-      ? { sms: true, whatsapp: false, email: Boolean(email), call: false, at: new Date(), source: 'kiosk' }
-      : undefined,
+    preferredContact: preferred,
+    contactConsent: consent,
   });
 
   // Nobody signs in as a kiosk-created account, but `User` requires a password
@@ -308,11 +465,13 @@ async function resolveCustomer(intake, businessId) {
 }
 
 /**
- * Take a check-in.
+ * Take a repair check-in.
  *
- * Returns only the ticket number: it is what the done screen shows and what the
- * customer is asked to quote. Nothing else about the shop, the account or the
- * job goes back to a tablet in a public space.
+ * Returns only the ticket number and a first name to thank: the number is what
+ * the done screen shows and what the customer is asked to quote. Nothing else
+ * about the shop, the account or the job goes back to a tablet in a public
+ * space, which is also why a returning customer is thanked without a name:
+ * the tablet only ever showed them their initials.
  */
 async function checkIn(intake = {}, businessId = null) {
   const settings = await db().Settings.findOne({}).select('+kiosk.pinHash').lean();
@@ -324,22 +483,44 @@ async function checkIn(intake = {}, businessId = null) {
     );
   }
 
-  const phone = String(intake.phone ?? '').trim();
-  if (phone.length < 7) {
+  const now = new Date();
+  const { user } = await resolveCustomer(intake, businessId, now);
+  const returning = Boolean(intake.customerToken);
+
+  /**
+   * The number this repair is reached on.
+   *
+   * The alternate one when the customer said they do not have the account's
+   * phone with them, otherwise the account's own. A returning customer never
+   * typed a number at all, so theirs comes off the account.
+   */
+  const alternate = String(intake.alternatePhone ?? '').trim();
+  const contactPhone = alternate || user.phone || String(intake.phone ?? '').trim();
+  if (contactPhone.replace(/\D/g, '').length < 7) {
     throw ApiError.badRequest('Enter a phone number we can reach you on.', 'KIOSK_PHONE_REQUIRED');
   }
 
-  const { user } = await resolveCustomer(intake, businessId);
+  const problems = (intake.problems ?? []).map((item) => item.trim()).filter(Boolean);
+  const problem = problems.join(', ');
+  const notes = String(intake.notes ?? '').trim();
 
-  const problem = String(intake.problem ?? '').trim();
-  const now = new Date();
+  /**
+   * Only the parts the customer actually answered. "Not sure" is `untested`,
+   * which IS an answer here, so it stays; a part missing from the map was never
+   * shown, and inventing a grade for it would be the shop speaking for them.
+   */
+  const customerCondition = Object.fromEntries(
+    Object.entries(intake.condition ?? {}).filter(([key, grade]) =>
+      CONDITION_PARTS.includes(key) && CONDITION_GRADES.includes(grade),
+    ),
+  );
 
   const ticket = await db().Ticket.create({
     ticketNumber: await nextTicketNumber(),
 
     user: user._id,
     customerName: user.contactName,
-    customerPhone: phone,
+    customerPhone: contactPhone,
     customerEmail: user.email?.endsWith('@no-email.invalid') ? '' : user.email,
     business: businessId ?? null,
 
@@ -350,19 +531,21 @@ async function checkIn(intake = {}, businessId = null) {
     // The legacy single-device columns the list and search read.
     deviceBrand: intake.brand || undefined,
     deviceModel: intake.model || undefined,
-    deviceSerial: intake.serial || undefined,
-    issue: problem || 'Checked in at the kiosk; fault not described.',
+    issue: problem || notes || 'Checked in at the kiosk; fault not described.',
 
     devices: [
       {
         category: intake.category || undefined,
         brand: intake.brand || undefined,
+        series: intake.series || undefined,
         model: intake.model || undefined,
-        serial: intake.serial || undefined,
         passcode: intake.passcode || undefined,
         problem: problem || undefined,
-        // No condition grid, no services, no parts. The counter adds all three
-        // when they review it - a customer cannot grade a back camera.
+        notes: notes || undefined,
+        // The customer's account of the device, beside the grid the counter
+        // fills in rather than inside it. No services and no parts: the
+        // counter prices it when they review it.
+        customerCondition: Object.keys(customerCondition).length ? customerCondition : undefined,
         services: [],
         parts: [],
       },
@@ -375,25 +558,146 @@ async function checkIn(intake = {}, businessId = null) {
       // read off the hardware.
       deviceGuessed: true,
       termsAcceptedAt: intake.termsAccepted ? now : null,
-      updatesConsentAt: intake.updatesConsent ? now : null,
+      // A returning customer was not asked: their account's consent stands.
+      updatesConsentAt: !returning && intake.contactChannels?.length ? now : null,
+      alternateContact: Boolean(alternate),
+      returningCustomer: returning,
     },
 
     timeline: [
-      { status: 'diagnosis', at: now, note: 'Checked in by the customer at the kiosk.' },
+      {
+        status: 'diagnosis',
+        at: now,
+        note: returning
+          ? 'Checked in at the kiosk by a returning customer.'
+          : 'Checked in by the customer at the kiosk.',
+      },
     ],
   });
 
-  return { ticketNumber: ticket.ticketNumber, firstName: String(intake.firstName ?? '').trim() };
+  return {
+    ticketNumber: ticket.ticketNumber,
+    firstName: returning ? '' : String(intake.firstName ?? '').trim(),
+  };
+}
+
+/**
+ * Approve a customer account because they signed in at the kiosk.
+ *
+ * ## Why a tablet can approve an account at all
+ *
+ * The approval gate exists so a stranger who fills in a form online cannot see
+ * wholesale prices or order on credit before somebody at the business has
+ * looked at them. A customer standing at the kiosk has been looked at: they are
+ * in the shop, in front of the staff who unlocked the tablet, and they pay at
+ * the counter before anything leaves. The client ruled that this is enough
+ * (2026-09-29), for new accounts and for pending ones alike.
+ *
+ * **Only `pending` moves.** A rejected or suspended account was a decision
+ * somebody made, and a tablet does not get to reverse it.
+ *
+ * `approvedBy` stays empty and the security log says how it happened, so the
+ * approvals history can tell a kiosk approval from a person's.
+ */
+async function approveAtKiosk(user, req) {
+  if (user.status !== 'pending') return user;
+
+  user.status = 'approved';
+  user.approvedAt = new Date();
+  user.approvedBy = undefined;
+  user.rejectionReason = undefined;
+  await referralService.ensureReferralCode(user);
+  await user.save();
+
+  await auditService.recordSecurity({
+    req,
+    action: 'auth.kiosk_approved',
+    entity: { kind: 'user', id: user._id.toString(), label: user.email },
+    description: `${user.email} was approved by signing in at the in-store kiosk.`,
+    subject: user,
+  });
+
+  return user;
+}
+
+/**
+ * How long a website session opened at the kiosk lasts, at most.
+ *
+ * The idle timer signs a shopper out long before this; this is the backstop for
+ * a tablet whose page crashed with somebody signed in. Two hours covers the
+ * longest shop visit anybody has, and nothing about a counter purchase needs a
+ * session that outlives the visit.
+ */
+const SHOP_SESSION = '2h';
+
+/**
+ * "Buy parts": sign an existing customer in, from the tablet.
+ *
+ * The same sign-in as the website's (`authService.login`, surface `storefront`,
+ * pinned to this business) so the same accounts open and the same ones are
+ * refused, and a wrong-kind account fails exactly like a wrong password. Then a
+ * pending account is approved (see above) and a website session is issued.
+ */
+async function shopSignIn(req, res, body) {
+  let user;
+  try {
+    ({ user } = await authService.login(body, {
+      pinned: req.businessScope ?? null,
+      surface: 'storefront',
+    }));
+  } catch (error) {
+    await auditService.recordSecurity({
+      req,
+      action: 'auth.login_failed',
+      entity: { kind: 'session', id: '', label: body?.email ?? '' },
+      description: `Failed sign-in at the kiosk for ${body?.email}.`,
+      subject: await authService.findForAudit(body?.email),
+    });
+    throw error;
+  }
+
+  await approveAtKiosk(user, req);
+  authService.issueSession(res, user, false, req.businessScope ?? null, { expiresIn: SHOP_SESSION });
+
+  await auditService.recordSecurity({
+    req,
+    action: 'auth.login',
+    entity: { kind: 'session', id: user._id.toString(), label: user.email },
+    description: `${user.email} signed in at the kiosk.`,
+    subject: user,
+  });
+
+  return { user: user.toPublic() };
+}
+
+/**
+ * "Buy parts": open an account at the tablet and sign straight in.
+ *
+ * `authService.register` does the work every sign-up does (the duplicate check,
+ * CASL consent, the approvals bell, the welcome mail) so a kiosk account is not
+ * a second kind of account. Only the outcome differs: it is approved at once
+ * and signed in, where a website sign-up waits for a person.
+ */
+async function shopSignUp(req, res, body) {
+  const user = await authService.register(body, { ip: req.ip, via: 'kiosk' });
+  await approveAtKiosk(user, req);
+  authService.issueSession(res, user, false, req.businessScope ?? null, { expiresIn: SHOP_SESSION });
+  return { user: user.toPublic() };
 }
 
 export {
   KIOSK_COOKIE,
+  shopSignIn,
+  shopSignUp,
   issueSession,
   clearSession,
   getPublicConfig,
   unlock,
   setPin,
   getDeviceOptions,
+  lookupCustomer,
+  readCustomerToken,
+  resolveCustomer,
   checkIn,
 };
-export default { getPublicConfig, unlock, setPin, getDeviceOptions, checkIn };
+export default { getPublicConfig, unlock, setPin, getDeviceOptions, lookupCustomer, checkIn };

@@ -108,6 +108,8 @@ const ACCOUNT_NAV = [
     children: [
       { key: 'quick-order', label: 'Quick order pad', to: '/account/quick-order', icon: 'Zap' },
       { key: 'referrals', label: 'Refer & earn', to: '/account/referrals', icon: 'Gift' },
+      // Phones sold to us at the kiosk (Sales § Sell your phone).
+      { key: 'sold-phones', label: 'Phones you sold us', to: '/account/sold-phones', icon: 'Smartphone' },
     ],
   },
   {

@@ -6,6 +6,8 @@ import PrimaryNav, { NAV_STRIP_H } from './PrimaryNav';
 import MobileDrawer from './MobileDrawer';
 import CartDropdown from '@/components/cart/CartDropdown';
 import AccountMenu from '@/components/account/AccountMenu';
+import { useKioskShopping } from '@/lib/kioskShopping';
+import KioskShoppingBar from './KioskShoppingBar';
 
 /**
  * Header shell.
@@ -16,6 +18,7 @@ import AccountMenu from '@/components/account/AccountMenu';
  */
 export function Header() {
   const ref = useRef(null);
+  const kiosk = useKioskShopping();
 
   // TWO measurements, because there are two different questions to answer.
   //
@@ -65,7 +68,9 @@ export function Header() {
   return (
     <>
       <header ref={ref} className="sticky top-0 z-40 border-b border-line bg-surface">
-        <AnnouncementBar />
+        {/* A customer shopping from the in-store kiosk gets the kiosk's strip in
+            the announcement's place: see KioskShoppingBar. */}
+        {kiosk ? <KioskShoppingBar /> : <AnnouncementBar />}
         <HeaderDesktop />
         <HeaderMobile />
 

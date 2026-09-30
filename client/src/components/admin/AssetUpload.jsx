@@ -20,7 +20,8 @@ import { useDensity, labelSize, hintSize } from '@/components/ui/density';
  * the form without saving deletes whatever is left. A file that WAS saved is
  * only emptied here; the save that stops using it deletes it.
  *
- * @param endpoint `identity` (logos, favicon) or `catalogue` (product media).
+ * @param endpoint `identity` (logos, favicon), `catalogue` (product media) or
+ *   `marketing` (a Google reviewer's photo).
  * @param kind the upload slot: `logo`, `footer-logo`, `favicon`,
  *   `product-image`, `product-video`.
  * @param shape how the preview is drawn: `wide` for a logo, `square` for an
@@ -33,6 +34,7 @@ const ACCEPT = {
   favicon: 'image/png,image/x-icon,image/vnd.microsoft.icon,image/webp,image/gif',
   'product-image': 'image/png,image/jpeg,image/webp,image/gif,image/avif',
   'product-video': 'video/mp4,video/quicktime,video/webm',
+  'review-photo': 'image/png,image/jpeg,image/webp,image/gif,image/avif',
 };
 
 const PREVIEW = {

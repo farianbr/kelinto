@@ -6,7 +6,8 @@ import ApiError from '../utils/ApiError.js';
 import { canSeePricing } from '../middleware/auth.js';
 import '../models/Offer.js';
 import { offerStatus } from './offerService.js';
-import { OfferRejection, priceCart, resolveCode } from './pricingService.js';
+import { OfferRejection, expandPreowned, priceCart, resolveCode } from './pricingService.js';
+import '../models/PreownedDevice.js';
 import { formatDate } from '../../../shared/dates.js';
 
 /** A user has exactly one active cart. Saved carts are separate documents. */
@@ -62,13 +63,20 @@ async function serialize(cart, user) {
     0,
   );
 
+  const preowned = priced.preowned.map(({ unitCost, device, ...line }) => ({
+    ...line,
+    deviceId: String(device),
+    priceVisible: true,
+  }));
+
   return {
     id: cart._id.toString(),
     items,
     bundles: priced.bundles,
+    preowned,
     // The badge counts parts, so a bundle contributes the parts inside it
     // "3 items" that turns into six things in a box is a bad surprise.
-    count: items.reduce((sum, item) => sum + item.qty, 0) + bundleUnits,
+    count: items.reduce((sum, item) => sum + item.qty, 0) + bundleUnits + preowned.length,
     subtotal: priced.subtotal,
     bundleDiscount: priced.bundleDiscount,
     promoDiscount: priced.promoDiscount,
@@ -131,11 +139,21 @@ async function serializeUnpriced(cart) {
     });
   }
 
+  // A pre-owned phone, without its price: the same gate as every other line.
+  const preowned = (await expandPreowned(cart)).map(
+    ({ unitCost, device, unitPrice, lineTotal, priceAtAdd, priceChanged, ...line }) => ({
+      ...line,
+      deviceId: String(device),
+      priceVisible: false,
+    }),
+  );
+
   return {
     id: cart._id.toString(),
     items,
     bundles: [],
-    count: items.reduce((sum, item) => sum + item.qty, 0),
+    preowned,
+    count: items.reduce((sum, item) => sum + item.qty, 0) + preowned.length,
     subtotal: null,
     bundleDiscount: null,
     promoDiscount: null,
@@ -202,6 +220,7 @@ async function clearCart(userId) {
   const cart = await getOrCreateCart(userId);
   cart.items = [];
   cart.bundles = [];
+  cart.preowned = [];
   // A code attached to a cart that no longer exists would silently re-apply to
   // whatever is added next.
   cart.promoCode = '';
@@ -405,6 +424,35 @@ async function removeBundle(userId, offerId) {
   return setBundleQty(userId, offerId, 0);
 }
 
+/**
+ * Put a pre-owned phone in the cart.
+ *
+ * Only one of each: it is one handset. Only a listed one: a phone in the back
+ * room waiting for photos, or already sold, answers the same as one that never
+ * existed. Not reserved by being here (`models/Cart.js`).
+ */
+async function addPreowned(userId, deviceId) {
+  const device = /^[0-9a-f]{24}$/i.test(String(deviceId ?? ''))
+    ? await db().PreownedDevice.findOne({ _id: deviceId, status: 'listed' }).lean()
+    : null;
+  if (!device) throw ApiError.notFound('That phone is no longer for sale.', 'PREOWNED_UNAVAILABLE');
+
+  const cart = await getOrCreateCart(userId);
+  cart.preowned = cart.preowned ?? [];
+  if (!cart.preowned.some((line) => String(line.device) === String(device._id))) {
+    cart.preowned.push({ device: device._id, priceAtAdd: device.priceCents });
+    await cart.save();
+  }
+  return cart;
+}
+
+async function removePreowned(userId, deviceId) {
+  const cart = await getOrCreateCart(userId);
+  cart.preowned = (cart.preowned ?? []).filter((line) => String(line.device) !== String(deviceId));
+  await cart.save();
+  return cart;
+}
+
 async function findLiveCombo(slugOrId) {
   const query = /^[0-9a-fA-F]{24}$/.test(slugOrId) ? { _id: slugOrId } : { slug: slugOrId };
   const offer = await db().Offer.findOne(query).lean();
@@ -455,4 +503,4 @@ async function clearPromoCode(userId) {
   return cart;
 }
 
-export { getOrCreateCart, serialize, addItem, setQty, removeItem, clearCart, mergeGuestCart, saveForLater, listSaved, restoreSaved, deleteSaved, bulkAdd, addBundle, setBundleQty, removeBundle, applyPromoCode, clearPromoCode };
+export { addPreowned, removePreowned, getOrCreateCart, serialize, addItem, setQty, removeItem, clearCart, mergeGuestCart, saveForLater, listSaved, restoreSaved, deleteSaved, bulkAdd, addBundle, setBundleQty, removeBundle, applyPromoCode, clearPromoCode };

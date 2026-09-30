@@ -103,6 +103,7 @@ const SHOP_TITLES = {
   '/': null,
   '/shop': 'Shop all parts',
   '/clearance': 'Stock clearance',
+  '/pre-owned': 'Pre-owned phones',
   '/cart': 'Cart',
   '/checkout': 'Checkout',
   '/payment-failed': 'Payment failed',

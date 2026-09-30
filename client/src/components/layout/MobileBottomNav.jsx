@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router';
 import { AnimatePresence, motion } from 'motion/react';
-import { Home, LayoutGrid, Search, ShoppingCart, User } from 'lucide-react';
+import { Home, Menu, Search, ShoppingCart, User } from 'lucide-react';
 import cn from '@/lib/cn';
 import { BOTTOM_NAV_REVEAL_AT } from '@/lib/constants';
 import useUiStore from '@/store/uiStore';
@@ -58,11 +58,9 @@ export function MobileBottomNav() {
               active={pathname === '/shop'}
             />
 
-            <BarItem
-              icon={LayoutGrid}
-              label="Categories"
-              onClick={() => openMobileNav('categories')}
-            />
+            {/* Was Categories. The drill-down moved under Menu › Shop › Parts
+                when the drawer's second tab became Account (2026-09-30). */}
+            <BarItem icon={Menu} label="Menu" onClick={() => openMobileNav('menu')} />
 
             {/* The one raised control: search is the primary way into a
                 200k-SKU catalogue, so it does not look like the others. It puts

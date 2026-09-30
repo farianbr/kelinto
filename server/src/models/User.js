@@ -238,6 +238,30 @@ const userSchema = new mongoose.Schema(
     },
 
     /**
+     * The customer's photo ID, on file because they sold us a phone.
+     *
+     * Asked once, at their first sale at the kiosk (a returning seller skips
+     * it), because buying second-hand phones from the public is the one thing
+     * here where the business has to be able to say who it bought from.
+     *
+     * **The number is encrypted at rest** (`utils/secrets.js`, AES-256-GCM on
+     * `SECRETS_KEY`) and `select: false`, so it rides along on none of the
+     * hundred reads of this record. Staff see `idLast4`; the full number is
+     * revealed one account at a time, through an audited route. It is never in
+     * `toPublic`: the account holder is not shown it back on a screen either.
+     *
+     * The PHOTO is not here. Each sale takes its own (`Buyback.identity`),
+     * because a picture from a previous visit proves nothing about who is
+     * selling today.
+     */
+    identity: {
+      idType: { type: String, enum: ['drivers_licence', 'passport', 'provincial_id', 'other'] },
+      idNumberCipher: { type: String, select: false },
+      idLast4: { type: String, trim: true, maxlength: 4 },
+      recordedAt: { type: Date },
+    },
+
+    /**
      * How this customer first reached the business.
      *
      * Attribution, and nothing reads it as authority for anything. It is the

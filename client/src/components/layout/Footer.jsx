@@ -126,8 +126,10 @@ const COLUMNS = [
       { label: 'Tablet parts', to: '/shop?deviceType=tablet' },
       { label: 'Laptop parts', to: '/shop?deviceType=laptop' },
       { label: 'Console parts', to: '/shop?deviceType=game-console' },
+      { label: 'Repair services', to: '/services' },
       { label: 'Combo deals', to: '/offers' },
       { label: 'Stock clearance', to: '/clearance' },
+      { label: 'Pre-owned phones', to: '/pre-owned' },
     ],
   },
   {
@@ -144,6 +146,7 @@ const COLUMNS = [
     title: 'Company',
     links: [
       { label: 'About us', to: '/about' },
+      { label: 'Membership', to: '/membership' },
       { label: 'Blog', to: '/blog' },
       { label: 'FAQ', to: '/faq' },
       { label: 'Contact us', to: '/contact' },
@@ -328,21 +331,21 @@ export function Footer() {
           surface. The wordmark is cropped BY that panel's rounded bottom edge
           it is a texture the footer ends on, not a logo to be read, and letting
           it run out of the box is what stops it reading as a fifth column. */}
-      {/* `overflow-hidden` is what makes the gradient rule below read as the
-          panel EDGE rather than as a separate line laid across the top of it.
-
-          The rule is a square-ended bar and the panel is `rounded-xl`, so
-          unclipped its two ends overhang the curve by the corner radius - a
-          straight line sticking out past both shoulders, which is exactly what
-          it looked like. Clipped, it takes the corner with the panel and the
-          accent belongs to the box.
-
-          The wordmark lower down is cropped by this same clip, which is
-          deliberate and pre-existing: it is a texture the footer ends on, not a
-          logo to be read. */}
-      <div className="mx-auto max-w-[1400px] overflow-hidden rounded-xl bg-surface-2 ring-1 ring-line">
-        {/* The gradient as a hairline rule - accent, not fill. */}
-        <div className="rule-brand-gradient h-1" aria-hidden="true" />
+      {/* NOT `overflow-hidden` (2026-10-01). The panel used to clip so the
+          gradient rule below would take its rounded corners, and that same clip
+          cut the top off the Location popover, which opens upward out of a
+          Support row. The rule now sits in its own clipping box, the corner
+          radius tall, so it still follows the curve; the wordmark already does
+          its own clipping (`FooterWordmark`). Nothing here may overflow by
+          accident, so anything new that bleeds must clip itself the same way. */}
+      <div className="relative mx-auto max-w-[1400px] rounded-xl bg-surface-2 ring-1 ring-line">
+        {/* The gradient as a hairline rule - accent, not fill. Clipped by a box
+            as tall as the corner radius, so its ends bend with the panel
+            instead of overhanging the curve as a square bar. */}
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-5 overflow-hidden rounded-t-xl" aria-hidden="true">
+          <div className="rule-brand-gradient h-1" />
+        </div>
+        <div className="h-1" aria-hidden="true" />
 
         <div className="px-5 pt-8 sm:px-7 lg:px-10 lg:pt-12">
           {/* 4 / 8 of twelve from lg up. The pair of calls to action that held

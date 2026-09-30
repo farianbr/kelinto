@@ -32,6 +32,12 @@ const publicProfile = asyncHandler(async (req, res) => {
   res.json(await settingsService.publicProfile());
 });
 
+/** The website's Membership page: the tiers and the warranty each carries. */
+const publicMembership = asyncHandler(async (req, res) => {
+  res.set('Cache-Control', 'public, max-age=60');
+  res.json(await settingsService.publicMembership());
+});
+
 /**
  * Every settings write is audited (§7.5, phase 11b).
  *
@@ -151,4 +157,4 @@ const updateInventory = auditedWrite(
   'inventory defaults',
 );
 
-export { get, publicProfile, updateBusiness, updateSale, updateShipping, updatePaymentMethods, updateCommunications, updateInventory, updateKiosk };
+export { get, publicProfile, publicMembership, updateBusiness, updateSale, updateShipping, updatePaymentMethods, updateCommunications, updateInventory, updateKiosk };

@@ -93,6 +93,11 @@ function createApp() {
           'img-src': ["'self'", 'data:', 'https://s.whc.ca', ...uploadOrigin],
           // Product videos are served from the same bucket as the images.
           'media-src': ["'self'", ...uploadOrigin],
+          // The Location section at the foot of every website page embeds the
+          // business's Google map. That one origin only: the ERP field accepts
+          // nothing but Google's embed link (`shared/mapEmbed.js`), so any wider
+          // allowance would admit frames nobody can save.
+          'frame-src': ["'self'", 'https://www.google.com'],
         },
       },
     }),

@@ -68,6 +68,30 @@ export function useApplyFilterPath() {
 }
 
 /**
+ * A component type plus a path beneath it, applied together - the mobile
+ * menu's Shop › Parts drill-down, which walks the same order as the tab
+ * wizard (Component Type → Device Type → Brand → Series → Model).
+ *
+ * `setComponentTypes` resets the path, so it runs first and the path is laid
+ * over it; the other way round the component would wipe the path it was just
+ * given.
+ */
+export function useApplyPartsPath() {
+  const setComponentTypes = useFilterStore((s) => s.setComponentTypes);
+  const setPath = useFilterStore((s) => s.setPath);
+  const goToShop = useGoToFilteredShop();
+
+  return useCallback(
+    (component, partial = {}, labels = {}) => {
+      setComponentTypes(component ? [component.slug] : null, component ? { [component.slug]: component.name } : {});
+      setPath(partial, labels);
+      goToShop();
+    },
+    [setComponentTypes, setPath, goToShop],
+  );
+}
+
+/**
  * The same escape hatch for the header's search field, which has the identical
  * problem: submitting a search from /about set `q` on a store with no grid
  * listening, and the field just cleared itself.

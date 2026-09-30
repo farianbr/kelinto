@@ -151,7 +151,9 @@ export function ChannelScreen({
   const { sendMessage } = useAdminMutations();
 
   const status = summary?.channels?.[channel];
-  const templates = templateData?.templates ?? [];
+  // A template switched off in Message Templates keeps its words but is not
+  // offered here: "off" has to mean something somewhere.
+  const templates = (templateData?.templates ?? []).filter((row) => row.isActive !== false);
 
   const accountOptions = useMemo(
     () =>

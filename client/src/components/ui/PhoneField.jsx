@@ -29,8 +29,40 @@ export const DIAL_CODES = COUNTRIES.map((entry) => ({
 
 const DEFAULT_CODE = DEFAULT_DIAL;
 
-/** Height of one country row - px-3 py-2 around a 13px line. */
-const OPTION_H = 36;
+/**
+ * The country menu's sizes, by density.
+ *
+ * The menu used to be one size everywhere, a 36px row of 13px text. That is
+ * right beside a desktop form and too small on the kiosk, where the field above
+ * it is 64px and somebody is reaching out to a tablet on a stand: the rows were
+ * a third of the height of every other target on the screen. Only `touch`
+ * grows; the storefront and the ERP keep the size they always had.
+ *
+ * `rowH` is the row's real height (padding plus line), so the panel's height
+ * cap stays in step with the rows it holds.
+ */
+const MENU_SIZES = {
+  touch: {
+    rowH: 56,
+    panel: 'w-96',
+    list: 'max-h-84',
+    row: 'px-4 py-3.5 text-lg',
+    dial: 'w-16',
+    search: 'h-12 pl-10 pr-3 text-lg',
+    searchIcon: 'left-3.5 size-4',
+    note: 'px-4 py-3 text-md',
+  },
+  default: {
+    rowH: 36,
+    panel: 'w-[300px]',
+    list: 'max-h-72',
+    row: 'px-3 py-2 text-sm',
+    dial: 'w-[52px]',
+    search: 'h-9 pl-8 pr-2.5 text-sm',
+    searchIcon: 'left-2.5 size-3.5',
+    note: 'px-3 py-2 text-xs',
+  },
+};
 
 /**
  * How many countries render before somebody searches.
@@ -112,7 +144,9 @@ export function splitPhone(value) {
  * inside a modal with its own scroll container, and a menu in the normal flow
  * would be clipped by it.
  */
-function CountryCodeMenu({ dial, onSelect, disabled }) {
+function CountryCodeMenu({ dial, onSelect, disabled, density }) {
+  const size = MENU_SIZES[density] ?? MENU_SIZES.default;
+  const touch = density === 'touch';
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
@@ -151,7 +185,7 @@ function CountryCodeMenu({ dial, onSelect, disabled }) {
 
   const [panelStyle] = useAnchoredPosition(buttonRef, open, {
     align: 'left',
-    maxHeight: OPTION_H * 8 + 60,
+    maxHeight: size.rowH * (touch ? 6 : 8) + (touch ? 76 : 60),
     padding: 8,
     // The panel sizes itself rather than matching the trigger: the code button
     // is about 64px wide and the list has to fit "Saint Vincent and the
@@ -246,17 +280,23 @@ function CountryCodeMenu({ dial, onSelect, disabled }) {
         aria-label={`Country calling code, ${dial}`}
         onClick={() => setOpen((value) => !value)}
         className={cn(
-          'flex h-full items-center gap-1 py-0 pl-3 pr-2.5',
-          'tnum text-lg text-ink-900 sm:text-md',
+          touch ? 'gap-1.5 pl-4 pr-3' : 'gap-1 pl-3 pr-2.5',
+          // The code takes the number's size from the shell, like the input
+          // beside it. It had its own 16/14px, which on the kiosk put a small
+          // `+1` next to a 20px number and read as two different fields.
+          'flex h-full items-center py-0 tnum text-[length:inherit] text-ink-900',
           pressable,
-          'focus:outline-none',
+          // Same clipped-ring problem as the number input. The shell rings on
+          // focus either way, so the tint is what says the code has it.
+          'focus:shadow-none focus:outline-none focus-visible:bg-surface-2',
           'hover:bg-surface-2 disabled:cursor-not-allowed disabled:text-ink-400',
         )}
       >
         {dial}
         <ChevronDown
           className={cn(
-            'size-3.5 shrink-0 text-ink-400 transition-transform duration-press',
+            touch ? 'size-4' : 'size-3.5',
+            'shrink-0 text-ink-400 transition-transform duration-press',
             open && 'rotate-180',
           )}
           strokeWidth={2.25}
@@ -274,7 +314,10 @@ function CountryCodeMenu({ dial, onSelect, disabled }) {
               exit={{ opacity: 0, y: -4 }}
               transition={{ duration: 0.12, ease: ease.entrance }}
               style={panelStyle}
-              className="z-[70] w-[300px] max-w-[calc(100vw-24px)] overflow-hidden rounded-lg bg-surface shadow-pop"
+              className={cn(
+                'z-[70] max-w-[calc(100vw-24px)] overflow-hidden rounded-lg bg-surface shadow-pop',
+                size.panel,
+              )}
             >
               {/* The search box is pinned above the scrolling list rather than
                   scrolling with it: it is the control that makes a 200-row list
@@ -283,7 +326,10 @@ function CountryCodeMenu({ dial, onSelect, disabled }) {
               <div className="border-b border-line p-2">
                 <div className="relative">
                   <Search
-                    className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-ink-400"
+                    className={cn(
+                      'pointer-events-none absolute top-1/2 -translate-y-1/2 text-ink-400',
+                      size.searchIcon,
+                    )}
                     strokeWidth={2.25}
                     aria-hidden="true"
                   />
@@ -305,8 +351,9 @@ function CountryCodeMenu({ dial, onSelect, disabled }) {
                     }}
                     onKeyDown={onSearchKeyDown}
                     className={cn(
-                      'h-9 w-full rounded-md border border-line bg-surface pl-8 pr-2.5',
-                      'text-sm text-ink-900 placeholder:text-ink-300',
+                      'w-full rounded-md border border-line bg-surface',
+                      size.search,
+                      'text-ink-900 placeholder:text-ink-300',
                       'transition-[border-color,box-shadow] duration-press',
                       'focus:border-ink-400 focus:outline-none focus:ring-2 focus:ring-ink-900/15',
                     )}
@@ -319,7 +366,7 @@ function CountryCodeMenu({ dial, onSelect, disabled }) {
                 id={listId}
                 role="listbox"
                 aria-label="Country calling code"
-                className="scroll-slim max-h-[288px] overflow-y-auto py-1"
+                className={cn('scroll-slim overflow-y-auto py-1', size.list)}
               >
                 {matches.map((entry, index) => (
                   <li
@@ -330,13 +377,15 @@ function CountryCodeMenu({ dial, onSelect, disabled }) {
                     onMouseEnter={() => setActiveIndex(index)}
                     onClick={() => commit(index)}
                     className={cn(
-                      'flex cursor-pointer items-center gap-3 px-3 py-2 text-sm',
+                      'flex cursor-pointer items-center gap-3',
+                      size.row,
                       index === activeIndex ? 'bg-surface-2' : 'bg-transparent',
                     )}
                   >
                     <span
                       className={cn(
-                        'tnum w-[52px] shrink-0 font-medium',
+                        'tnum shrink-0 font-medium',
+                        size.dial,
                         entry.dial === dial ? 'text-brand' : 'text-ink-500',
                       )}
                     >
@@ -347,7 +396,7 @@ function CountryCodeMenu({ dial, onSelect, disabled }) {
                 ))}
 
                 {matches.length === 0 && (
-                  <li className="px-3 py-6 text-center text-sm text-ink-400">
+                  <li className={cn(size.row, 'py-6 text-center text-ink-400')}>
                     No country matches “{search}”.
                   </li>
                 )}
@@ -359,7 +408,7 @@ function CountryCodeMenu({ dial, onSelect, disabled }) {
                   resolve. It says the short list is deliberate - without it the
                   menu looks like it simply does not have your country. */}
               {capped && (
-                <p className="border-t border-line px-3 py-2 text-xs text-ink-400">
+                <p className={cn('border-t border-line text-ink-400', size.note)}>
                   Type to search all {COUNTRIES.length} countries.
                 </p>
               )}
@@ -453,7 +502,11 @@ export const PhoneField = forwardRef(function PhoneField(
         className={cn(
           'flex w-full items-stretch overflow-hidden rounded-md border bg-surface',
           'transition-[border-color,box-shadow] duration-press',
-          'focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/25',
+          // The same hover and focus as `Input`, `Textarea` and `Select`.
+          // This field alone went brand purple on focus, so in any form with a
+          // phone in it one field lit up in a different colour from the rest.
+          'hover:border-line-strong',
+          'focus-within:border-ink-400 focus-within:ring-2 focus-within:ring-ink-900/15',
           error ? 'border-danger focus-within:border-danger focus-within:ring-danger/20' : 'border-line',
           disabled && 'cursor-not-allowed bg-surface-2',
           // `fieldSize` carries the height AND the text size; the height
@@ -465,6 +518,7 @@ export const PhoneField = forwardRef(function PhoneField(
         <CountryCodeMenu
           dial={dial}
           disabled={disabled}
+          density={density}
           onSelect={(next) => {
             setPendingDial(next);
             onChange?.(composePhone(next, formatNational(national, next)));
@@ -496,7 +550,10 @@ export const PhoneField = forwardRef(function PhoneField(
             // hint is load-bearing - a bare `text-inherit` is a COLOUR utility
             // in Tailwind and would fight `text-ink-900` beside it.
             'h-full min-w-0 flex-1 bg-transparent px-3 text-[length:inherit] text-ink-900',
-            'placeholder:text-ink-300 focus:outline-none',
+            // `focus:shadow-none` clears the global `:focus-visible` ring,
+            // which the shell's `overflow-hidden` clipped to a purple sliver
+            // down the divider. Focus stays visible: the shell rings instead.
+            'placeholder:text-ink-300 focus:shadow-none focus:outline-none',
             'disabled:cursor-not-allowed disabled:text-ink-400',
           )}
         />

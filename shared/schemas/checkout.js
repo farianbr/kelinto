@@ -89,19 +89,55 @@ const DELIVERY_METHODS = [
   { code: 'pickup', label: 'Warehouse pickup', detail: 'Ready in 2 hours', cost: 0, etaDays: 0 },
 ];
 
-const checkoutSchema = z.object({
-  email: z.string().trim().toLowerCase().email('Enter a valid email address.'),
-  shippingAddress: addressSchema,
-  billingSameAsShipping: z.boolean().default(true),
-  billingAddress: addressSchema.optional(),
-  deliveryMethod: z.enum(['ground', 'express', 'pickup']),
-  paymentMethod: z.enum(['card', 'terms']),
-  // A flag, never an amount: how much store credit an order draws is decided
-  // server-side from the live balance (PROJECT_INSTRUCTIONS.md §5.3).
-  useStoreCredit: z.boolean().default(false),
-  poNumber: z.string().trim().max(40).optional(),
-  deliveryNotes: z.string().trim().max(500).optional(),
-});
+/**
+ * How an order is paid.
+ *
+ * `counter` is the kiosk's: a customer shopping on the tablet in the shop picks
+ * the parts up there and pays a person for them. It is only accepted from a
+ * request carrying the kiosk's session (`orderController.create`), because
+ * from a phone at home "pay at the counter" is an order nobody has agreed to
+ * pay for.
+ */
+const PAYMENT_METHODS = ['card', 'terms', 'counter'];
+
+const checkoutSchema = z
+  .object({
+    email: z.string().trim().toLowerCase().email('Enter a valid email address.'),
+    /**
+     * Required everywhere except a counter order, which is collected in the shop
+     * the tablet stands in. Asking a customer at a kiosk to type a street
+     * address for a parcel nobody will post is a form asking for the sake of it.
+     */
+    shippingAddress: addressSchema.optional(),
+    billingSameAsShipping: z.boolean().default(true),
+    billingAddress: addressSchema.optional(),
+    deliveryMethod: z.enum(['ground', 'express', 'pickup']),
+    paymentMethod: z.enum(PAYMENT_METHODS),
+    // A flag, never an amount: how much store credit an order draws is decided
+    // server-side from the live balance (PROJECT_INSTRUCTIONS.md §5.3).
+    useStoreCredit: z.boolean().default(false),
+    poNumber: z.string().trim().max(40).optional(),
+    deliveryNotes: z.string().trim().max(500).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.paymentMethod === 'counter') {
+      if (value.deliveryMethod !== 'pickup') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['deliveryMethod'],
+          message: 'An order paid at the counter is picked up there.',
+        });
+      }
+      return;
+    }
+    if (!value.shippingAddress) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['shippingAddress', 'line1'],
+        message: 'Enter a shipping address.',
+      });
+    }
+  });
 
 /** The checkout sections, in the order the conversational flow opens them. */
 const CHECKOUT_STEPS = [
@@ -115,4 +151,4 @@ const CHECKOUT_STEPS = [
 /** Placeholder rate - awaiting the client's real tax rules (PROGRESS.md Q4). */
 const TAX_RATE = 0.13;
 
-export { PROVINCES, addressShape, withPostalRule, addressSchema, DELIVERY_METHODS, checkoutSchema, CHECKOUT_STEPS, TAX_RATE };
+export { PROVINCES, addressShape, withPostalRule, addressSchema, DELIVERY_METHODS, PAYMENT_METHODS, checkoutSchema, CHECKOUT_STEPS, TAX_RATE };

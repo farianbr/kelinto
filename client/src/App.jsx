@@ -31,7 +31,11 @@ const BlogPostPage = lazy(() => import('@/pages/BlogPostPage'));
 const FaqPage = lazy(() => import('@/pages/FaqPage'));
 const OffersPage = lazy(() => import('@/pages/OffersPage'));
 const DealPage = lazy(() => import('@/pages/DealPage'));
+const DealsIndexPage = lazy(() => import('@/pages/DealsIndexPage'));
+const ServicesPage = lazy(() => import('@/pages/ServicesPage'));
+const MembershipPage = lazy(() => import('@/pages/MembershipPage'));
 const ClearancePage = lazy(() => import('@/pages/ClearancePage'));
+const PreownedPage = lazy(() => import('@/pages/PreownedPage'));
 // Public and outside RootLayout: somebody arriving here is leaving, and the
 // shop header would be reading the moment badly (phase 9, §6.13).
 const UnsubscribePage = lazy(() => import('@/pages/UnsubscribePage'));
@@ -68,6 +72,7 @@ const AccountInvoicesPage = lazy(() => import('@/pages/account/AccountInvoicesPa
 const AccountCreditPage = lazy(() => import('@/pages/account/AccountCreditPage'));
 const AccountActivityPage = lazy(() => import('@/pages/account/AccountActivityPage'));
 const AccountReferralsPage = lazy(() => import('@/pages/account/AccountReferralsPage'));
+const AccountSoldPhonesPage = lazy(() => import('@/pages/account/AccountSoldPhonesPage'));
 const AccountQuickOrderPage = lazy(() => import('@/pages/account/AccountQuickOrderPage'));
 const AccountAddressesPage = lazy(() => import('@/pages/account/AccountAddressesPage'));
 const AccountPaymentMethodsPage = lazy(() => import('@/pages/account/AccountPaymentMethodsPage'));
@@ -86,6 +91,7 @@ const AdminOfferFormPage = lazy(() => import('@/pages/admin/AdminOfferFormPage')
 const AdminBlogPage = lazy(() => import('@/pages/admin/AdminBlogPage'));
 const AdminProductArticlesPage = lazy(() => import('@/pages/admin/AdminProductArticlesPage'));
 const AdminReviewsPage = lazy(() => import('@/pages/admin/AdminReviewsPage'));
+const AdminPageContentEditPage = lazy(() => import('@/pages/admin/AdminPageContentEditPage'));
 const AdminProductArticleEditPage = lazy(
   () => import('@/pages/admin/AdminProductArticleEditPage'),
 );
@@ -109,6 +115,8 @@ const AdminExpenseCategoriesPage = lazy(
   () => import('@/pages/admin/AdminExpenseCategoriesPage'),
 );
 const AdminInventoryDetailPage = lazy(() => import('@/pages/admin/AdminInventoryDetailPage'));
+const AdminPreownedPage = lazy(() => import('@/pages/admin/AdminPreownedPage'));
+const AdminBuybackDetailPage = lazy(() => import('@/pages/admin/AdminBuybackDetailPage'));
 const AdminReportsPage = lazy(() => import('@/pages/admin/AdminReportsPage'));
 const AdminBusinessReportPage = lazy(() => import('@/pages/admin/AdminBusinessReportPage'));
 const AdminQuotesPage = lazy(() => import('@/pages/admin/AdminQuotesPage'));
@@ -193,13 +201,14 @@ const adminRoutes = (
     <Route path="orders" element={<AdminOrdersPage />} />
     <Route path="inventory" element={<AdminProductsPage />} />
     <Route path="inventory/:id" element={<AdminInventoryDetailPage />} />
+    <Route path="preowned" element={<AdminPreownedPage />} />
+    <Route path="preowned/requests/:id" element={<AdminBuybackDetailPage />} />
     <Route path="invoices" element={<AdminInvoicesPage />} />
 
     {/* Purchase (phase 5). */}
     <Route path="suppliers" element={<AdminSuppliersPage />} />
     <Route path="suppliers/:id" element={<AdminSupplierProfilePage />} />
     <Route path="supplier-returns" element={<AdminSupplierReturnsPage />} />
-    <Route path="supplier-services" element={<AdminSupplierServicesPage mode="service" />} />
     <Route path="supplier-subscriptions" element={<AdminSupplierServicesPage mode="subscription" />} />
     {/* Supplier bidding lives on the purchase order itself (§6.8a) - the
         separate `/admin/rfqs` screens folded in on 2026-09-11, and
@@ -254,6 +263,7 @@ const adminRoutes = (
     <Route path="marketing/blog" element={<AdminBlogPage />} />
     <Route path="marketing/faq" element={<AdminFaqPage />} />
     <Route path="marketing/articles" element={<AdminProductArticlesPage />} />
+    <Route path="marketing/articles/pages/:page" element={<AdminPageContentEditPage />} />
     <Route path="marketing/articles/:productId" element={<AdminProductArticleEditPage />} />
     <Route path="marketing/reviews" element={<AdminReviewsPage />} />
 
@@ -335,6 +345,11 @@ const adminRoutes = (
     <Route
       path="settings/invoice-status"
       element={<Navigate to="/admin/settings/invoice-labels" replace />}
+    />
+    {/* Service Products became a tab on Purchase › Services (2026-09-30). */}
+    <Route
+      path="supplier-services"
+      element={<Navigate to="/admin/services?tab=products" replace />}
     />
 
     <Route path="*" element={<Navigate to="/admin" replace />} />
@@ -529,11 +544,51 @@ function SiteRoutes() {
           }
         />
 
+        {/* Phones bought from customers at the kiosk, one of each. */}
+        <Route
+          path="pre-owned"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <PreownedPage />
+            </Suspense>
+          }
+        />
+
+        {/* Offers › Exclusive Deals: forwards to the live deal, or says there
+            is none (2026-09-30). */}
+        <Route
+          path="deals"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <DealsIndexPage />
+            </Suspense>
+          }
+        />
         <Route
           path="deals/:slug"
           element={
             <Suspense fallback={<RouteFallback />}>
               <DealPage />
+            </Suspense>
+          }
+        />
+
+        {/* Shop › Services: the repair price list (2026-09-30). */}
+        <Route
+          path="services"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <ServicesPage />
+            </Suspense>
+          }
+        />
+
+        {/* The membership tiers and the warranty each carries (2026-09-30). */}
+        <Route
+          path="membership"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <MembershipPage />
             </Suspense>
           }
         />
@@ -599,6 +654,7 @@ function SiteRoutes() {
           <Route path="credit" element={<AccountCreditPage />} />
           <Route path="activity" element={<AccountActivityPage />} />
           <Route path="referrals" element={<AccountReferralsPage />} />
+          <Route path="sold-phones" element={<AccountSoldPhonesPage />} />
           <Route path="quick-order" element={<AccountQuickOrderPage />} />
           <Route path="addresses" element={<AccountAddressesPage />} />
           <Route path="payment-methods" element={<AccountPaymentMethodsPage />} />

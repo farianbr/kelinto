@@ -1,34 +1,11 @@
-import { useState } from 'react';
-import { Link, useSearchParams } from 'react-router';
-import { useForm, Controller } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useMutation } from '@tanstack/react-query';
+import { Link } from 'react-router';
 import { motion, useReducedMotion } from 'motion/react';
-import {
-  AlertCircle,
-  ArrowRight,
-  Check,
-  Clock,
-  Mail,
-  MapPin,
-  MessageCircleQuestion,
-  Package,
-  Phone,
-  Send,
-  Truck,
-} from 'lucide-react';
+import { ArrowRight, Mail, MessageCircleQuestion, Package, Phone, Truck } from 'lucide-react';
 import cn from '@/lib/cn';
-import api from '@/lib/api';
 import useBusinessInfo from '@/hooks/useBusinessInfo';
-import { contactSchema, CONTACT_TOPICS } from '@shared/schemas/contact';
-import Input from '@/components/ui/Input';
-import PhoneField from '@/components/ui/PhoneField';
-import SelectField from '@/components/ui/SelectField';
-import Textarea from '@/components/ui/Textarea';
-import Button from '@/components/ui/Button';
 import Slab, { EyebrowPill, SectionHeader } from '@/components/ui/Slab';
 import Reveal from '@/components/motion/Reveal';
-import { useAuth } from '@/hooks/useAuth';
+import ContactForm from '@/components/website/ContactForm';
 import { ease, pressable } from '@/lib/motion';
 
 /**
@@ -89,141 +66,20 @@ const PROMISES = [
 ];
 
 /**
- * A drawn map card rather than an embedded tile service.
- *
- * An iframe map would need a third-party key, would leak a request to that
- * provider on every page view, and cannot be styled to the palette. The
- * micro-interaction the brief asks for is the pin, which lifts on hover.
- */
-function MapCard({ className }) {
-  const info = useBusinessInfo();
-
-  return (
-    <div className={cn('group overflow-hidden rounded-xl border border-line bg-surface', className)}>
-      <svg
-        viewBox="0 0 400 260"
-        className="h-auto w-full"
-        role="img"
-        aria-label={`Map showing the ${info.address.city} warehouse`}
-      >
-        {/* street grid */}
-        <g stroke="var(--color-line-strong)" strokeWidth="1.6" fill="none">
-          <path d="M0 70h400M0 130h400M0 196h400" />
-          <path d="M74 0v260M168 0v260M262 0v260M336 0v260" />
-        </g>
-        <g stroke="var(--color-surface-3)" strokeWidth="8" fill="none">
-          <path d="M0 130h400" />
-          <path d="M168 0v260" />
-        </g>
-
-        {/* blocks */}
-        <g fill="var(--color-surface-3)" stroke="var(--color-line-strong)" strokeWidth="1">
-          <rect x="12" y="14" width="54" height="46" rx="2" />
-          <rect x="84" y="14" width="74" height="46" rx="2" />
-          <rect x="272" y="80" width="56" height="42" rx="2" />
-          <rect x="12" y="140" width="54" height="46" rx="2" />
-          <rect x="272" y="140" width="56" height="46" rx="2" />
-          <rect x="346" y="206" width="44" height="42" rx="2" />
-        </g>
-
-        {/* the warehouse block, highlighted */}
-        <rect
-          x="180"
-          y="80"
-          width="72"
-          height="42"
-          rx="3"
-          fill="var(--color-brand-50)"
-          stroke="var(--color-brand)"
-          strokeWidth="1.4"
-        />
-
-        {/* pin - the micro-interaction */}
-        <g className="transition-transform duration-300 ease-[var(--ease-entrance)] group-hover:-translate-y-1.5">
-          <path
-            d="M216 74c-8.8 0-16 7-16 15.6 0 11.7 16 25.4 16 25.4s16-13.7 16-25.4C232 81 224.8 74 216 74z"
-            fill="var(--color-brand)"
-          />
-          <circle cx="216" cy="89.5" r="5.4" fill="var(--color-surface)" />
-        </g>
-        <ellipse
-          cx="216"
-          cy="118"
-          rx="9"
-          ry="2.5"
-          fill="var(--color-ink-900)"
-          opacity="0.14"
-          className="transition-all duration-300 group-hover:opacity-20"
-        />
-      </svg>
-    </div>
-  );
-}
-
-/**
- * Reads a question that was started somewhere else.
- *
- * The product page links here carrying the SKU it was on, so a buyer asking
- * about a part does not have to go back and find the part number. Only the two
- * parameters below are honoured, and the message is composed here rather than
- * taken from the URL - a link that can type into a form somebody else submits
- * is not a link worth accepting.
- */
-function usePrefill() {
-  const [params] = useSearchParams();
-  const sku = (params.get('sku') ?? '').trim().slice(0, 40);
-  const requested = params.get('topic') ?? '';
-  const topic = CONTACT_TOPICS.some((option) => option.value === requested) ? requested : 'other';
-
-  return {
-    topic,
-    message: sku ? `I have a question about ${sku}:\n\n` : '',
-  };
-}
-
-/**
  * Contact Us (brief §9): functional-first, checkout-style fields, minimal
  * friction - laid out as the same slab stack the About page uses, so the two
  * editorial pages read as one site rather than as two templates.
  */
+/**
+ * The drawn map card and the "Find us" slab that used to close this page are
+ * gone (2026-09-30): the Location section every website page now ends with
+ * carries the address, the hours and the business's real Google map, and
+ * printing them twice on one page would be two answers to one question.
+ */
 export function ContactPage() {
-  const { user } = useAuth();
   const info = useBusinessInfo();
   const channels = channelsFor(info);
-  const prefill = usePrefill();
-  const [sent, setSent] = useState(null);
   const reduce = useReducedMotion();
-
-  const {
-    register,
-    handleSubmit,
-    watch,
-    reset,
-    control,
-    formState: { errors },
-  } = useForm({
-    resolver: zodResolver(contactSchema),
-    // Autofill from the account when there is one - same courtesy as checkout.
-    values: {
-      name: user?.contactName ?? '',
-      business: user?.businessName ?? '',
-      email: user?.email ?? '',
-      phone: user?.phone ?? '',
-      topic: prefill.topic,
-      orderNumber: '',
-      message: prefill.message,
-    },
-  });
-
-  const topic = watch('topic');
-
-  const submit = useMutation({
-    mutationFn: (payload) => api.post('/contact', payload),
-    onSuccess: (response) => {
-      setSent(response.message);
-      reset({ ...watch(), message: '', orderNumber: '' });
-    },
-  });
 
   const headerMotion = reduce
     ? { initial: { opacity: 0 }, animate: { opacity: 1 } }
@@ -295,7 +151,7 @@ export function ContactPage() {
         </ul>
       </Slab>
 
-      {/* ---- the form, with the hours beside it ---------------------------- */}
+      {/* ---- the form ------------------------------------------------------ */}
       <Slab aria-labelledby="message-heading">
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:gap-14">
           <div className="min-w-0">
@@ -314,120 +170,14 @@ export function ContactPage() {
             </Reveal>
 
             <Reveal delay={0.08}>
-              <form
-                onSubmit={handleSubmit((values) => submit.mutate(values))}
-                className="mt-8 rounded-xl border border-line bg-surface-2 p-5 sm:p-7"
-              >
-                {sent && (
-                  <p className="mb-5 flex items-start gap-2.5 rounded-lg bg-ok-50 px-4 py-3 text-md text-ok">
-                    <Check className="mt-0.5 size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
-                    {sent}
-                  </p>
-                )}
-
-                {submit.isError && (
-                  <p className="mb-5 flex items-start gap-2.5 rounded-lg bg-danger-50 px-4 py-3 text-md text-danger">
-                    <AlertCircle
-                      className="mt-0.5 size-4 shrink-0"
-                      strokeWidth={2}
-                      aria-hidden="true"
-                    />
-                    {submit.error.message}
-                  </p>
-                )}
-
-                <div className="space-y-4">
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <Input label="Your name" error={errors.name?.message} {...register('name')} />
-                    <Input label="Business" placeholder="Optional" {...register('business')} />
-                  </div>
-
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <Input
-                      label="Email"
-                      type="email"
-                      autoComplete="email"
-                      error={errors.email?.message}
-                      {...register('email')}
-                    />
-                    <Controller
-                      name="phone"
-                      control={control}
-                      render={({ field }) => (
-                        <PhoneField
-                          label="Phone"
-                          value={field.value}
-                          onChange={field.onChange}
-                          onBlur={field.onBlur}
-                          hint="Optional."
-                        />
-                      )}
-                    />
-                  </div>
-
-                  <SelectField
-                    control={control}
-                    name="topic"
-                    label="What is this about?"
-                    options={CONTACT_TOPICS}
-                  />
-
-                  {/* Only asked for when it is actually relevant. */}
-                  {topic === 'order' && (
-                    <Input
-                      label="Order number"
-                      placeholder="CVX-2026-10042"
-                      className="font-mono"
-                      {...register('orderNumber')}
-                    />
-                  )}
-
-                  <Textarea
-                    // Stable id rather than the generated one: the screenshot
-                    // runner waits on this field to know the form has painted.
-                    id="contact-message"
-                    label="Message"
-                    rows={6}
-                    placeholder="Which part, which model, and what you need…"
-                    error={errors.message?.message}
-                    {...register('message')}
-                  />
-
-                  <Button type="submit" size="lg" icon={Send} loading={submit.isPending} fullWidth>
-                    Send message
-                  </Button>
-                </div>
-              </form>
+              <ContactForm className="mt-8" />
             </Reveal>
           </div>
 
-          {/* ---- hours and pickup ------------------------------------------ */}
+          {/* ---- pickup and ordering ---------------------------------------
+              The hours card that sat here moved to the Location section at the
+              foot of the page, beside the map. */}
           <div className="space-y-3 lg:pt-2">
-            {/* The card goes entirely when the business has not entered its
-                hours - a Hours panel with no rows in it is a question the page
-                raises and then refuses to answer. */}
-            {info.hours.length > 0 && (
-              <Reveal delay={0.12}>
-                <div className="rounded-xl border border-line bg-surface-2 p-5 sm:p-6">
-                  <p className="eyebrow mb-4 flex items-center gap-1.5 text-ink-400">
-                    <Clock className="size-3.5" strokeWidth={2.25} aria-hidden="true" />
-                    Hours
-                  </p>
-                  <ul className="space-y-2.5">
-                    {info.hours.map((row) => (
-                      <li
-                        key={row.days}
-                        className="flex justify-between gap-4 border-b border-line pb-2.5 text-md last:border-0 last:pb-0"
-                      >
-                        <span className="text-ink-500">{row.days}</span>
-                        <span className="font-medium text-ink-900">{row.time}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </Reveal>
-            )}
-
             <Reveal delay={0.2}>
               <div className="rounded-xl border border-line bg-surface-2 p-5 sm:p-6">
                 <span
@@ -497,43 +247,6 @@ export function ContactPage() {
               <p className="mt-1.5 text-sm leading-relaxed text-white/60">{hint}</p>
             </Reveal>
           ))}
-        </div>
-      </Slab>
-
-      {/* ---- where we are -------------------------------------------------- */}
-      <Slab aria-labelledby="warehouse-heading">
-        <div className="grid gap-10 lg:grid-cols-2 lg:items-center lg:gap-16">
-          <Reveal>
-            <EyebrowPill>Find us</EyebrowPill>
-            <h2
-              id="warehouse-heading"
-              className="mt-5 text-3xl leading-[1.06] tracking-[-0.03em] sm:text-d-sm lg:text-d-md"
-            >
-              One warehouse, in {info.address.city}
-            </h2>
-
-            <address className="mt-6 not-italic">
-              <p className="flex items-start gap-3 text-lg leading-relaxed text-ink-700">
-                <MapPin className="mt-1 size-4 shrink-0 text-brand" strokeWidth={2} aria-hidden="true" />
-                <span>
-                  {info.address.line1}
-                  <br />
-                  {info.address.city}, {info.address.region} {info.address.postal}
-                  <br />
-                  {info.address.country}
-                </span>
-              </p>
-            </address>
-
-            <p className="mt-6 max-w-lg text-md leading-relaxed text-ink-400">
-              Everything in the catalogue ships from this building - Canadian stock, no customs step
-              between the order and the workshop.
-            </p>
-          </Reveal>
-
-          <Reveal delay={0.12}>
-            <MapCard />
-          </Reveal>
         </div>
       </Slab>
 

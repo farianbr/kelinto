@@ -1,4 +1,5 @@
-import { asyncHandler } from '../utils/ApiError.js';
+import ApiError, { asyncHandler } from '../utils/ApiError.js';
+import { readKioskSession } from '../middleware/kioskAuth.js';
 import * as orderService from '../services/orderService.js';
 
 /**
@@ -42,6 +43,21 @@ const quote = asyncHandler(async (req, res) => {
 });
 
 const create = asyncHandler(async (req, res) => {
+  /**
+   * "Pay at the counter" is the kiosk's, and only the kiosk's.
+   *
+   * Checked here against the tablet's own session cookie, not against anything
+   * in the body: a customer at home could otherwise send `counter` and walk
+   * away with stock reserved and nothing charged. The tablet's cookie is set
+   * only by staff entering the shop PIN.
+   */
+  if (req.body.paymentMethod === 'counter' && !readKioskSession(req)) {
+    throw ApiError.forbidden(
+      'Paying at the counter is only available on the in-store kiosk.',
+      'PAYMENT_METHOD_UNAVAILABLE',
+    );
+  }
+
   const order = await orderService.createOrder(req.user, req.body);
   res.status(201).json({ order: orderService.serializeOrder(order) });
 });

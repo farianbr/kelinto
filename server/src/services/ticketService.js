@@ -152,6 +152,8 @@ function shapeTicket(ticket, slaDays) {
       reviewedAt: ticket.intake?.reviewedAt ?? null,
       termsAcceptedAt: ticket.intake?.termsAcceptedAt ?? null,
       updatesConsentAt: ticket.intake?.updatesConsentAt ?? null,
+      alternateContact: ticket.intake?.alternateContact === true,
+      returningCustomer: ticket.intake?.returningCustomer === true,
     },
 
     technician: shapeTechnician(ticket.technician),
@@ -169,6 +171,9 @@ function shapeTicket(ticket, slaDays) {
       solution: device.solution ?? null,
       notes: device.notes ?? null,
       condition: device.condition ? Object.fromEntries(device.condition) : {},
+      customerCondition: device.customerCondition
+        ? Object.fromEntries(device.customerCondition)
+        : {},
       services: device.services ?? [],
       parts: device.parts ?? [],
     })),

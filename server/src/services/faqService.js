@@ -15,6 +15,7 @@ function serialize(faq) {
     scope: faq.scope,
     partType: faq.partType || '',
     deviceTypeSlug: faq.deviceTypeSlug || '',
+    page: faq.page || '',
     order: faq.order ?? 0,
     isPublished: faq.isPublished !== false,
     updatedAt: faq.updatedAt,
@@ -98,8 +99,10 @@ function fill(text, product) {
 // --- admin -------------------------------------------------------------------
 
 async function listAll({ scope, q } = {}) {
-  const query = {};
-  if (scope && scope !== 'all') query.scope = String(scope);
+  // Page questions are edited beside their page's article (SEO › Articles), not
+  // on this screen, so "all" here means all of THIS screen's: general and product.
+  const query = { scope: { $in: ['general', 'product'] } };
+  if (scope && scope !== 'all') query.scope = String(scope) === 'page' ? '' : String(scope);
   if (q) {
     const rx = likeRegex(q);
     query.$or = [{ question: rx }, { answer: rx }];
@@ -107,7 +110,7 @@ async function listAll({ scope, q } = {}) {
 
   const [faqs, counts] = await Promise.all([
     db().Faq.find(query).sort({ scope: 1, order: 1, createdAt: 1 }).limit(400).lean(),
-    db().Faq.aggregate([{ $group: { _id: '$scope', count: { $sum: 1 } } }]),
+    db().Faq.aggregate([{ $match: { scope: { $ne: 'page' } } }, { $group: { _id: '$scope', count: { $sum: 1 } } }]),
   ]);
 
   return {
@@ -138,16 +141,68 @@ async function createFaq(data) {
 
 async function updateFaq(id, data) {
   const faq = await db().Faq.findById(id);
-  if (!faq) throw ApiError.notFound('FAQ entry not found.', 'FAQ_NOT_FOUND');
+  // A page question is not this screen's to edit: saving it through here would
+  // re-scope it off its page. Same answer as a missing one.
+  if (!faq || faq.scope === 'page') throw ApiError.notFound('FAQ entry not found.', 'FAQ_NOT_FOUND');
   Object.assign(faq, shapeWrite(data));
   await faq.save();
   return serialize(faq.toObject());
 }
 
 async function deleteFaq(id) {
-  const faq = await db().Faq.findByIdAndDelete(id).lean();
+  const faq = await db().Faq.findOneAndDelete({ _id: id, scope: { $ne: 'page' } }).lean();
   if (!faq) throw ApiError.notFound('FAQ entry not found.', 'FAQ_NOT_FOUND');
   return serialize(faq);
 }
 
-export { listGeneral, listForProduct, listAll, createFaq, updateFaq, deleteFaq };
+// --- page questions ----------------------------------------------------------
+//
+// The FAQ section at the foot of one website page (`shared/websitePages.js`),
+// written in the ERP beside that page's article. Every write names its page and
+// matches on it, so a question id from one page cannot be edited through another.
+
+async function listForPage(page, { publishedOnly = true } = {}) {
+  const query = { scope: 'page', page };
+  if (publishedOnly) query.isPublished = true;
+  const faqs = await db().Faq.find(query).sort({ order: 1, createdAt: 1 }).limit(60).lean();
+  return faqs.map(serialize);
+}
+
+function shapePageWrite(data) {
+  return {
+    question: data.question,
+    answer: data.answer,
+    order: data.order ?? 0,
+    isPublished: data.isPublished !== false,
+  };
+}
+
+async function createPageFaq(page, data) {
+  const faq = await db().Faq.create({ ...shapePageWrite(data), scope: 'page', page });
+  return serialize(faq.toObject());
+}
+
+async function updatePageFaq(page, id, data) {
+  const faq = await db()
+    .Faq.findOneAndUpdate({ _id: id, scope: 'page', page }, { $set: shapePageWrite(data) }, { new: true })
+    .lean();
+  if (!faq) throw ApiError.notFound('FAQ entry not found.', 'FAQ_NOT_FOUND');
+  return serialize(faq);
+}
+
+async function deletePageFaq(page, id) {
+  const faq = await db().Faq.findOneAndDelete({ _id: id, scope: 'page', page }).lean();
+  if (!faq) throw ApiError.notFound('FAQ entry not found.', 'FAQ_NOT_FOUND');
+  return serialize(faq);
+}
+
+/** Question count per page, for the ERP's list of pages. */
+async function countByPage() {
+  const rows = await db().Faq.aggregate([
+    { $match: { scope: 'page' } },
+    { $group: { _id: '$page', count: { $sum: 1 } } },
+  ]);
+  return Object.fromEntries(rows.map((row) => [row._id, row.count]));
+}
+
+export { listGeneral, listForProduct, listAll, createFaq, updateFaq, deleteFaq, listForPage, createPageFaq, updatePageFaq, deletePageFaq, countByPage };

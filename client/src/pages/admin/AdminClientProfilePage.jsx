@@ -353,7 +353,7 @@ const TICKET_COLUMNS = [
   },
   {
     key: 'status',
-    header: 'Status',
+    header: 'Repair Status',
     priority: 1,
     width: '20%',
     render: (ticket) => (
@@ -531,7 +531,7 @@ const INVOICE_COLUMNS = [
   },
   {
     key: 'status',
-    header: 'Status',
+    header: 'Payment Status',
     priority: 1,
     width: '16%',
     render: (invoice) => <InvoiceStatusBadge status={invoice.status} size="sm" />,

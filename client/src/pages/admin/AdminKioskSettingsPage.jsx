@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { ExternalLink, KeyRound, Volume2 } from 'lucide-react';
 
 import { kioskSettingsSchema } from '@shared/schemas/admin';
+import { KIOSK_CLOCKS } from '@shared/kiosk';
 import cn from '@/lib/cn';
 import Panel from '@/components/ui/Panel';
 import Input from '@/components/ui/Input';
@@ -198,6 +199,9 @@ export function AdminKioskSettingsPage() {
       readAloud: true,
       requireTerms: true,
       termsText: '',
+      ...Object.fromEntries(
+        Object.entries(KIOSK_CLOCKS).map(([key, rule]) => [key, rule.default]),
+      ),
     },
   });
 
@@ -402,6 +406,52 @@ export function AdminKioskSettingsPage() {
                   Long terms are read aloud in full. Keep them to what the customer has to hear.
                 </p>
               )}
+            </div>
+          </Panel>
+
+          {/* The clocks. Three short numbers, so three columns: a full-width
+              box says "type a lot here" about a two-digit value. */}
+          <Panel
+            title="Timeouts"
+            description="How long the tablet waits for somebody who has walked away, before it signs them out and goes back to the welcome screen."
+          >
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={KIOSK_CLOCKS.idleTimeoutSeconds.min}
+                max={KIOSK_CLOCKS.idleTimeoutSeconds.max}
+                required
+                label="No touch for"
+                placeholder={String(KIOSK_CLOCKS.idleTimeoutSeconds.default)}
+                hint="Seconds, on any screen after the welcome, including the website while a customer shops."
+                error={errors.idleTimeoutSeconds?.message}
+                {...register('idleTimeoutSeconds')}
+              />
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={KIOSK_CLOCKS.idleWarningSeconds.min}
+                max={KIOSK_CLOCKS.idleWarningSeconds.max}
+                required
+                label="Then warn for"
+                placeholder={String(KIOSK_CLOCKS.idleWarningSeconds.default)}
+                hint="Seconds of the “Still there?” countdown before it signs out."
+                error={errors.idleWarningSeconds?.message}
+                {...register('idleWarningSeconds')}
+              />
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={KIOSK_CLOCKS.orderAgainSeconds.min}
+                max={KIOSK_CLOCKS.orderAgainSeconds.max}
+                required
+                label="“Order again?” waits"
+                placeholder={String(KIOSK_CLOCKS.orderAgainSeconds.default)}
+                hint="Seconds after a purchase before the shopper is signed out."
+                error={errors.orderAgainSeconds?.message}
+                {...register('orderAgainSeconds')}
+              />
             </div>
           </Panel>
 

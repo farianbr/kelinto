@@ -47,7 +47,8 @@ export const SETTINGS_CATEGORIES = [
   {
     key: 'communications',
     label: 'Communications & Notifications',
-    description: 'Automatic emails, reminders and the message templates behind them.',
+    description:
+      'Automatic emails, reminders, after sales statuses and the message templates behind them.',
   },
   {
     key: 'system',
@@ -261,26 +262,33 @@ export const ADMIN_ROUTES = {
     title: 'Quotes',
     description: 'Price quotes built for an account, and what became of them.',
   },
+  /**
+   * Purchase › Services - one screen, two tabs (2026-09-30, client request).
+   *
+   * The labour price list a quote and a ticket charge from, and Service
+   * Products (what is bought in), which had its own row at
+   * `/admin/supplier-services` and now answers `?tab=products` here. The price
+   * list was a Sales row and a Financial settings tab before this; it lives
+   * in Purchase only now, and editing it takes Purchase access.
+   */
   '/admin/services': {
-    tabOrder: 5,
     label: 'Services',
-    parent: 'sales',
+    parent: 'purchase',
     icon: 'Wrench',
-    section: 'sales',
+    section: 'purchase',
     phase: 7,
-    /**
-     * Also in Financial settings - both as a tab and as a card on the hub.
-     *
-     * The price list IS configuration: it is the master list a quote and a
-     * ticket pick their labour from. Unlike Discount Codes and Referrals,
-     * which moved out of Marketing entirely, this keeps its Sales nav row -
-     * the counter reaches it several times a day, and it was not asked to
-     * move. So `parent` stays `sales`, which keeps the breadcrumb honest, and
-     * `settingsTab` lends it to the Financial row and grid.
-     */
-    settingsTab: 'financial',
     title: 'Services',
     description: 'The labour a quote or a ticket is priced from.',
+  },
+  '/admin/services/import': {
+    label: 'Import CSV',
+    parent: '/admin/services',
+    icon: 'Wrench',
+    section: 'purchase',
+    phase: 7,
+    feature: 'sales.services',
+    title: 'Import services',
+    description: 'Bulk-add or update the service price list.',
   },
   '/admin/quotes/create': {
     label: 'New quote',
@@ -374,15 +382,6 @@ export const ADMIN_ROUTES = {
     title: 'Supplier return',
     description: 'What is going back, where it is, and what the supplier credited.',
   },
-  '/admin/supplier-services': {
-    label: 'Service Products',
-    parent: 'purchase',
-    icon: 'Wrench',
-    section: 'purchase',
-    phase: 5,
-    title: 'Service products',
-    description: 'Things bought in that are not stock - outsourced repair, freight, disposal.',
-  },
   '/admin/supplier-subscriptions': {
     label: 'Subscription Plans',
     parent: 'purchase',
@@ -409,6 +408,28 @@ export const ADMIN_ROUTES = {
     phase: 1,
     title: 'Inventory',
     description: 'The product catalogue, stock on hand and wholesale pricing.',
+  },
+  '/admin/preowned': {
+    label: 'Pre-owned',
+    parent: 'purchase',
+    icon: 'Smartphone',
+    section: 'purchase',
+    phase: 12,
+    built: true,
+    feature: 'sales.buyback',
+    title: 'Pre-owned',
+    description: 'Phones customers sold us at the kiosk: price them, then sell them on the website.',
+  },
+  '/admin/preowned/requests/:id': {
+    label: 'Request',
+    parent: '/admin/preowned',
+    icon: 'Smartphone',
+    section: 'purchase',
+    phase: 12,
+    built: true,
+    feature: 'sales.buyback',
+    title: 'Buyback request',
+    description: 'A phone a customer sold at the kiosk, and its price.',
   },
   '/admin/inventory/:id': {
     label: 'Product',
@@ -577,8 +598,8 @@ export const ADMIN_ROUTES = {
     icon: 'FileText',
     section: 'seo',
     phase: 1,
-    title: 'Product articles',
-    description: 'Long-form copy rendered on a product page.',
+    title: 'Articles',
+    description: 'Long-form copy for each website page and each part.',
   },
   '/admin/marketing/reviews': {
     label: 'Reviews',
@@ -586,8 +607,17 @@ export const ADMIN_ROUTES = {
     icon: 'Star',
     section: 'seo',
     phase: 1,
-    title: 'Product reviews',
-    description: 'What buyers said, and the lever to hide one.',
+    title: 'Reviews',
+    description: 'Google reviews of the business, and buyers’ reviews of parts.',
+  },
+  '/admin/marketing/articles/pages/:page': {
+    label: 'Edit page',
+    parent: '/admin/marketing/articles',
+    icon: 'Pencil',
+    section: 'seo',
+    phase: 1,
+    title: 'Edit page',
+    description: 'The article, questions and sections at the foot of this page.',
   },
   '/admin/marketing/articles/:productId': {
     label: 'Edit article',
@@ -669,19 +699,25 @@ export const ADMIN_ROUTES = {
     title: 'Sale settings',
     description: 'Regional defaults, invoice numbering, warranty by grade and shipping.',
   },
+  /**
+   * After Sales Statuses - was "Invoice Statuses" under Financial, moved to
+   * Communications and renamed on 2026-09-30 at the client's request. Every
+   * message a customer is sent lives in Communications now, and this page
+   * carries the timed invoice messages. The URL is unchanged for bookmarks.
+   */
   '/admin/settings/invoice-labels': {
-    tabOrder: 2,
-    label: 'Invoice Statuses',
-    parent: 'settings:financial',
+    tabOrder: 3,
+    label: 'After Sales Statuses',
+    parent: 'settings:communications',
     icon: 'Tag',
     section: 'settings',
     phase: 12,
     built: true,
-    title: 'Invoice statuses',
-    // Both halves live here now, as tabs: the manual list somebody sets by
-    // hand, and the timed messages that go out on their own.
+    title: 'After sales statuses',
+    // Both halves live here, as tabs: the manual list somebody sets by hand,
+    // and the timed messages that go out on their own.
     description:
-      'The statuses an admin sets on an invoice, and the timed messages invoices send.',
+      'The after sales statuses an admin sets on an invoice, and the timed messages invoices send.',
   },
   '/admin/settings/devices': {
     tabOrder: 12,
@@ -893,6 +929,7 @@ export const ADMIN_ROUTES = {
     description: 'The booking grid.',
   },
   '/admin/settings/email': {
+    tabOrder: 1,
     label: 'Email Settings',
     parent: 'settings:communications',
     icon: 'Mail',
@@ -903,6 +940,7 @@ export const ADMIN_ROUTES = {
     description: 'Which emails send automatically, and the reminder schedule.',
   },
   '/admin/settings/templates': {
+    tabOrder: 2,
     label: 'Message Templates',
     parent: 'settings:communications',
     icon: 'MessageSquare',

@@ -9,6 +9,7 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Skeleton from '@/components/ui/Skeleton';
 import CartLine from '@/components/cart/CartLine';
 import CartBundleLine from '@/components/cart/CartBundleLine';
+import CartPreownedLine from '@/components/cart/CartPreownedLine';
 import PromoCodeField from '@/components/cart/PromoCodeField';
 import { useCart } from '@/hooks/useCart';
 import { useAuth } from '@/hooks/useAuth';
@@ -20,6 +21,7 @@ export function CartPage() {
   const {
     items,
     bundles,
+    preowned,
     count,
     subtotal,
     payable,
@@ -35,6 +37,7 @@ export function CartPage() {
     removeItem,
     setBundleQty,
     removeBundle,
+    removePreowned,
     saveForLater,
     isSaving,
   } = useCart();
@@ -75,7 +78,7 @@ export function CartPage() {
     );
   }
 
-  if (items.length === 0 && bundles.length === 0) {
+  if (items.length === 0 && bundles.length === 0 && preowned.length === 0) {
     return (
       <div className="mx-auto flex max-w-xl flex-col items-center px-4 py-20 text-center">
         <span className="mb-5 flex size-16 items-center justify-center rounded-full bg-surface-3 text-ink-300">
@@ -128,6 +131,9 @@ export function CartPage() {
                 onQtyChange={setBundleQty}
                 onRemove={removeBundle}
               />
+            ))}
+            {preowned.map((line) => (
+              <CartPreownedLine key={line.deviceId} line={line} onRemove={removePreowned} />
             ))}
             {items.map((item) => (
               <CartLine key={item.productId} item={item} onQtyChange={setQty} onRemove={removeItem} />

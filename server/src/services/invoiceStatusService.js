@@ -9,12 +9,14 @@ import InvoiceStatusRule, {
 } from '../models/InvoiceStatusRule.js';
 import { db } from '../db/models.js';
 import '../models/Invoice.js';
+import '../models/InvoiceLabel.js';
 import '../models/User.js';
 import '../models/MessageLog.js';
 import '../models/Settings.js';
 import ApiError from '../utils/ApiError.js';
 import { sendMail, mailerConfigured } from './mailer.js';
 import { channelStatus } from './marketingService.js';
+import { toEmailHtml, toPlainText, looksLikeHtml } from './messageBody.js';
 
 /**
  * Cents to `$1,234.56`, for the `{{amount}}` placeholder.
@@ -150,6 +152,20 @@ async function remove(id) {
 
 /** Every invoice a rule would fire against right now, unsent. */
 async function candidatesFor(rule, now) {
+  // A manual status's message counts from the day the status was set, and only
+  // on invoices still carrying it: one that has moved on to another status is
+  // no longer where the message was written for.
+  if (rule.trigger === 'label_set') {
+    const invoices = await db()
+      .Invoice.find({ label: rule.labelId, labelSetAt: { $ne: null } })
+      .lean();
+    return invoices.filter((invoice) => {
+      const fireAt = new Date(invoice.labelSetAt);
+      fireAt.setDate(fireAt.getDate() + (rule.delayDays ?? 0));
+      return fireAt <= now;
+    });
+  }
+
   // Paid invoices are only candidates for the paid trigger; the rest are about
   // money still owed and must stop the moment it is settled.
   const statusFilter =
@@ -208,7 +224,28 @@ async function run({ dryRun = false, now = new Date() } = {}) {
     };
   }
 
-  const rules = await InvoiceStatusRule.find({ isActive: true }).lean();
+  /*
+    Manual status messages (2026-10-01) ride the same pass as the scheduled
+    ones. Shaped as a rule so everything below treats them alike; the run row
+    keys on the status's own id, so "once per invoice" holds for them too and
+    can never collide with a rule's rows. `fromLabel` stops the pass stamping
+    `lastRunAt` on a rule that does not exist.
+  */
+  const statusMessages = (await db().InvoiceLabel.find({ messageActive: true }).lean())
+    .filter((label) => label.message?.trim())
+    .map((label) => ({
+      _id: label._id,
+      label: label.name,
+      trigger: 'label_set',
+      labelId: label._id,
+      delayDays: label.delayDays ?? 0,
+      channel: label.channel ?? 'email',
+      subject: label.subject,
+      message: label.message,
+      fromLabel: true,
+    }));
+
+  const rules = [...(await InvoiceStatusRule.find({ isActive: true }).lean()), ...statusMessages];
   const results = [];
 
   for (const rule of rules) {
@@ -242,7 +279,13 @@ async function run({ dryRun = false, now = new Date() } = {}) {
       const user = await db().User.findById(invoice.user).lean();
 
       const outstanding = Math.max((invoice.amount ?? 0) - (invoice.amountPaid ?? 0), 0);
-      const context = { invoice, user, money: formatCents(outstanding) };
+      // On a status message, {{status}} is the status that sent it, not the
+      // payment state underneath.
+      const context = {
+        invoice: rule.fromLabel ? { ...invoice, status: rule.label } : invoice,
+        user,
+        money: formatCents(outstanding),
+      };
       const body = InvoiceStatusRule.render(rule.message, context);
       const subject = InvoiceStatusRule.render(rule.subject || `Invoice ${invoice.number}`, context);
 
@@ -277,7 +320,14 @@ async function run({ dryRun = false, now = new Date() } = {}) {
 
       if (outcome === 'sent') {
         try {
-          const result = await sendMail({ to: user.email, subject, text: body, html: undefined });
+          const result = await sendMail({
+            to: user.email,
+            subject,
+            text: toPlainText(body),
+            // Plain bodies still go as text alone, as they always did; an HTML
+            // one is sanitised first (services/messageBody.js).
+            html: looksLikeHtml(body) ? toEmailHtml(body) : undefined,
+          });
           if (!result.delivered) {
             outcome = 'skipped';
             detail = `Sending failed: ${result.error ?? 'the message could not be delivered.'}`;
@@ -316,7 +366,7 @@ async function run({ dryRun = false, now = new Date() } = {}) {
       }
     }
 
-    if (!dryRun && (sent || skipped)) {
+    if (!dryRun && !rule.fromLabel && (sent || skipped)) {
       await InvoiceStatusRule.updateOne({ _id: rule._id }, { $set: { lastRunAt: new Date() } });
     }
 

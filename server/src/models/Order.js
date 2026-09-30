@@ -39,6 +39,9 @@ const orderItemSchema = new mongoose.Schema(
       offer: { type: mongoose.Schema.Types.ObjectId, ref: 'Offer' },
       title: String,
     },
+    // Set on a pre-owned phone's line instead of `product`: one handset, sold
+    // once, with its stock number as the SKU.
+    preowned: { type: mongoose.Schema.Types.ObjectId, ref: 'PreownedDevice' },
   },
   { _id: false },
 );
@@ -142,7 +145,8 @@ const orderSchema = new mongoose.Schema(
     payment: {
       // 'store-credit' is the method when held credit covered the whole total
       // and the gateway was never called.
-      method: { type: String, enum: ['card', 'terms', 'ach', 'store-credit'], default: 'card' },
+      // `counter`: placed on the kiosk, picked up and paid for in the shop.
+      method: { type: String, enum: ['card', 'terms', 'ach', 'store-credit', 'counter'], default: 'card' },
       status: { type: String, enum: ['pending', 'paid', 'failed'], default: 'pending' },
       // Reference from the mock gateway. Swap for a real charge id later.
       mockRef: String,

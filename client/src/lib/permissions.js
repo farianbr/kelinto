@@ -1,5 +1,5 @@
 import { PERMISSION_LEVELS } from '@shared/schemas/admin';
-import { featureEnabled, featureForNav } from '@shared/schemas/features';
+import { featureEnabled, featuresForNav } from '@shared/schemas/features';
 
 /**
  * Client-side permission reads (ERP rework §7.6).
@@ -73,8 +73,9 @@ export function visibleNav(nav, permissions, features = null) {
   const allowed = (row) => {
     if (row.hidden) return false;
     if (!features) return true;
-    const feature = featureForNav(row.key);
-    return !feature || featureEnabled(features, feature.key);
+    // A row two features share (Purchase › Services) shows while either is on.
+    const gates = featuresForNav(row.key);
+    return gates.length === 0 || gates.some((feature) => featureEnabled(features, feature.key));
   };
 
   return nav

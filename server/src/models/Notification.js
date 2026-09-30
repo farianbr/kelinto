@@ -72,6 +72,8 @@ const NOTIFICATION_TYPES = [
   'new_order',
   'quote_accepted',
   'new_rma',
+  // A customer sold us a phone at the kiosk and it is waiting to be priced.
+  'new_buyback',
 ];
 
 /** Tints the row (§6.15): `danger` for out of stock, `warn` for low stock. */

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Eye, EyeOff, ExternalLink, Search, Star } from 'lucide-react';
+import { useSearchParams } from 'react-router';
+import { Eye, EyeOff, ExternalLink, Package, Search, Star } from 'lucide-react';
 import cn from '@/lib/cn';
 import { pressable } from '@/lib/motion';
 import { date } from '@/lib/format';
@@ -11,6 +12,8 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Pagination from '@/components/ui/Pagination';
 import PageHeader from '@/components/admin/PageHeader';
 import Skeleton from '@/components/ui/Skeleton';
+import TabRow from '@/components/ui/TabRow';
+import GoogleReviewsPanel from '@/components/admin/GoogleReviewsPanel';
 import useTablePage from '@/hooks/useTablePage';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { useAdminReviews, useAdminMutations } from '@/hooks/useAdmin';
@@ -25,7 +28,17 @@ const FILTERS = [
 ];
 
 /**
- * SEO, product reviews.
+ * SEO, reviews, in two tabs (2026-09-30):
+ *
+ * **Google** - the business's Google reviews, typed in by hand, shown at the foot
+ * of every website page (`GoogleReviewsPanel`). About the business.
+ *
+ * **Products** - buyers' reviews of parts they bought, as below. About a part.
+ *
+ * The two never mix: a product review is verified by a delivered order and a
+ * Google review is not, so they are different records with different rules.
+ *
+ * Product reviews:
  *
  * Reviews publish the moment a buyer writes one: these are approved wholesale
  * accounts who bought the part on a delivered order, not anonymous visitors, and
@@ -43,6 +56,32 @@ const FILTERS = [
  * let the text be the row.
  */
 export function AdminReviewsPage() {
+  const [params, setParams] = useSearchParams();
+  const tab = params.get('tab') === 'products' ? 'products' : 'google';
+
+  return (
+    <div className="space-y-4">
+      <PageHeader
+        icon={PAGE_ICON}
+        title="Reviews"
+        description="What customers say about the business on Google, and what buyers said about parts."
+      />
+
+      <TabRow
+        tabs={[
+          { key: 'google', label: 'Google', icon: Star },
+          { key: 'products', label: 'Products', icon: Package },
+        ]}
+        value={tab}
+        onChange={(next) => setParams(next === 'products' ? { tab: 'products' } : {}, { replace: true })}
+      />
+
+      {tab === 'google' ? <GoogleReviewsPanel /> : <ProductReviewsPanel />}
+    </div>
+  );
+}
+
+function ProductReviewsPanel() {
   const storefrontUrl = useStorefrontUrl();
   const [q, setQ] = useState('');
   const [hidden, setHidden] = useState('');
@@ -57,13 +96,7 @@ export function AdminReviewsPage() {
   const { pageRows, page, totalPages, setPage } = useTablePage(rows);
 
   return (
-    <div className="space-y-4">
-      <PageHeader
-        icon={PAGE_ICON}
-        title="Product reviews"
-        description="What buyers said, and the lever to hide one."
-      />
-
+    <>
       <Panel
         title="Reviews"
         description="Published on submission by accounts that bought the part."
@@ -238,7 +271,7 @@ export function AdminReviewsPage() {
           setActing(null);
         }}
       />
-    </div>
+    </>
   );
 }
 

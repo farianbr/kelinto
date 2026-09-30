@@ -122,7 +122,7 @@ async function isRevoked(claims) {
   return Boolean(await controlModels().RevokedToken.exists({ _id: { $in: ids } }));
 }
 
-async function register(data, { ip } = {}) {
+async function register(data, { ip, via = null } = {}) {
   const existing = await db().User.findOne({ email: data.email });
   if (existing) {
     throw ApiError.conflict(
@@ -173,6 +173,9 @@ async function register(data, { ip } = {}) {
     // Set once, at signup, and never editable afterwards (§6.13) - a referrer
     // that can be changed later is a way to redirect money already earned.
     referredBy,
+    // Where a customer came from. Only the kiosk sets it at sign-up: a website
+    // registration is the default, and recording it on every row says nothing.
+    ...(via === 'kiosk' ? { source: 'kiosk' } : {}),
     addresses: data.address
       ? [{ ...data.address, country: data.address.country || 'Canada', isDefaultShipping: true, isDefaultBilling: true }]
       : [],
@@ -190,7 +193,9 @@ async function register(data, { ip } = {}) {
     type: 'new_registration',
     severity: 'info',
     title: `${displayNameOf(user)} registered`,
-    detail: `${user.contactName} · ${user.email} · awaiting approval`,
+    // A kiosk sign-up is approved the moment it is written (`kioskService`),
+    // so the bell must not send somebody to approve an account that is not waiting.
+    detail: `${user.contactName} · ${user.email} · ${via === 'kiosk' ? 'signed up at the kiosk' : 'awaiting approval'}`,
     entity: { kind: 'user', id: user._id.toString(), label: displayNameOf(user) },
     href: `/admin/clients/${user._id}`,
   });

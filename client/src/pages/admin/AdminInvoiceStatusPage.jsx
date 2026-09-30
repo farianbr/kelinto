@@ -1,19 +1,23 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { AlertCircle, CheckCircle2, Clock, Mail, Play, Save, Trash2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Clock, Mail, Pencil, Play, Power, Save, Trash2 } from 'lucide-react';
 
 import cn from '@/lib/cn';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
+import DataTable, { CountLine } from '@/components/admin/DataTable';
 import Input from '@/components/ui/Input';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Modal from '@/components/ui/Modal';
 import DeleteWithPreview from '@/components/admin/DeleteWithPreview';
-import { useAdminInvoiceRules, useAdminMutations } from '@/hooks/useAdmin';
+import { useAdminInvoiceLabels, useAdminInvoiceRules, useAdminMutations } from '@/hooks/useAdmin';
 import { dateTime } from '@/lib/format';
 import { pressable } from '@/lib/motion';
 import SelectMenu from '@/components/ui/SelectMenu';
+import MessageBodyField from '@/components/admin/MessageBodyField';
+import ActiveSwitch from '@/components/admin/ActiveSwitch';
+import { MESSAGE_BODY_MAX } from '@shared/messageHtml.js';
 
 /**
  * Time-lapse invoice messages (§6.15 category 2, phase 11d).
@@ -41,6 +45,8 @@ const EMPTY_RULE = {
   isActive: false,
 };
 
+const CHANNEL_NAMES = { email: 'Email', sms: 'SMS', whatsapp: 'WhatsApp' };
+
 /** "3 days before the invoice falls due" - the timing, in words. */
 function timingText(rule, triggers) {
   const trigger = triggers.find((t) => t.value === rule.trigger);
@@ -52,21 +58,93 @@ function timingText(rule, triggers) {
 }
 
 /**
- * One status, as an open form on the page.
+ * Channel, subject, body and placeholders: the part of a timed message that is
+ * the message itself.
  *
- * **It was a modal.** Each status carries a label, a delay, a trigger, a
- * channel, an email subject, a message with five placeholders and an active
- * switch - and a staff member setting these up is comparing them against each
- * other, which a dialog that shows one at a time actively prevents. Open on the
- * page they read as the list they are.
- *
- * The optional `onDone` callback fires after a save: the create form clears
- * itself, and an existing status stays where it is with a saved confirmation.
+ * Exported because a manual after sales status carries the same message
+ * (2026-10-01) and its form must read exactly like this one; only the timing
+ * differs. `form` holds `channel`, `subject` and `message`; `set` patches it.
  */
-// `tokens` and `triggers` default here rather than at each call site: this
-// renders once per status plus once for the create form, and the placeholder
-// list arrives a tick after the first paint.
-function RuleCard({ rule, triggers = [], tokens = [], channels, onDone, onDelete, bare = false }) {
+export function MessageFields({ form, set, tokens = [], channels, messageError }) {
+  const channelStatus = channels?.[form.channel];
+
+  return (
+    <>
+      <label className="block">
+        <span className="mb-1.5 block text-sm font-medium text-ink-700">Channel</span>
+        <SelectMenu
+          srLabel="Channel"
+          size="md"
+          value={form.channel}
+          onChange={(next) => set({ channel: next })}
+          options={[
+            { value: 'email', label: 'Email' },
+            { value: 'sms', label: 'SMS' },
+            { value: 'whatsapp', label: 'WhatsApp' },
+          ]}
+          containerClassName="w-full"
+        />
+        {/* Named at the point of choosing, not after saving: picking a channel
+            that cannot send is a decision worth interrupting. */}
+        {channelStatus && !channelStatus.delivers && (
+          <span className="mt-1.5 flex items-start gap-1.5 text-sm text-warn">
+            <AlertCircle className="mt-px size-3.5 shrink-0" strokeWidth={2.25} aria-hidden="true" />
+            {channelStatus.reason}
+          </span>
+        )}
+      </label>
+
+      {form.channel === 'email' && (
+        <Input
+          label="Subject"
+          value={form.subject ?? ''}
+          onChange={(event) => set({ subject: event.target.value })}
+        />
+      )}
+
+      <MessageBodyField
+        channel={form.channel}
+        value={form.message ?? ''}
+        counter={MESSAGE_BODY_MAX}
+        onChange={(next) => set({ message: next })}
+        error={messageError}
+      />
+
+      <div className="rounded-md bg-surface-2 px-3 py-2.5">
+        <p className="mb-1.5 text-sm font-medium text-ink-700">Placeholders</p>
+        <div className="flex flex-wrap gap-1.5">
+          {tokens.map((token) => (
+            <button
+              key={token.token}
+              type="button"
+              onClick={() => set({ message: `${form.message ?? ''}${token.token}` })}
+              title={token.label}
+              className={cn(pressable, 'rounded-sm bg-surface px-1.5 py-1 font-mono text-xs text-ink-600 hover:bg-brand-50 hover:text-brand')}
+            >
+              {token.token}
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-ink-400">
+          An unrecognised placeholder is left as written rather than replaced with a blank, so a
+          typo is visible instead of silently sending a sentence with a hole in it.
+        </p>
+      </div>
+    </>
+  );
+}
+
+/**
+ * One message's form, drawn inside the add and edit modals.
+ *
+ * It was an open card per message on the page for a while, so they could be
+ * compared side by side; the client asked for a list instead (2026-10-01), and
+ * the list's columns now carry the comparison. The optional `onDone` callback
+ * fires after a save, which closes the modal.
+ */
+// `tokens` and `triggers` default here rather than at each call site: the
+// placeholder list arrives a tick after the first paint.
+function RuleCard({ rule, triggers = [], tokens = [], channels, onDone, onDelete }) {
   const editing = Boolean(rule.id);
   const [form, setForm] = useState({ ...EMPTY_RULE, ...rule });
   const [error, setError] = useState(null);
@@ -77,7 +155,6 @@ function RuleCard({ rule, triggers = [], tokens = [], channels, onDone, onDelete
     setForm((current) => ({ ...current, ...patch }));
     setSaved(false);
   };
-  const channelStatus = channels?.[form.channel];
 
   async function save(event) {
     event.preventDefault();
@@ -140,83 +217,13 @@ function RuleCard({ rule, triggers = [], tokens = [], channels, onDone, onDelete
           </label>
         </div>
 
-        <label className="block">
-          <span className="mb-1.5 block text-sm font-medium text-ink-700">Channel</span>
-          <SelectMenu
-            srLabel="Channel"
-            size="md"
-            value={form.channel}
-            onChange={(next) => set({ channel: next })}
-            options={[
-              { value: 'email', label: 'Email' },
-              { value: 'sms', label: 'SMS' },
-              { value: 'whatsapp', label: 'WhatsApp' },
-            ]}
-            containerClassName="w-full"
-          />
-          {/* Named at the point of choosing, not after saving: picking a channel
-              that cannot send is a decision worth interrupting. */}
-          {channelStatus && !channelStatus.delivers && (
-            <span className="mt-1.5 flex items-start gap-1.5 text-sm text-warn">
-              <AlertCircle className="mt-px size-3.5 shrink-0" strokeWidth={2.25} aria-hidden="true" />
-              {channelStatus.reason}
-            </span>
-          )}
-        </label>
+        <MessageFields form={form} set={set} tokens={tokens} channels={channels} />
 
-        {form.channel === 'email' && (
-          <Input
-            label="Subject"
-            value={form.subject}
-            onChange={(event) => set({ subject: event.target.value })}
-          />
-        )}
-
-        <label className="block">
-          <span className="mb-1.5 block text-sm font-medium text-ink-700">Message</span>
-          <textarea
-            rows={7}
-            value={form.message}
-            onChange={(event) => set({ message: event.target.value })}
-            className="w-full rounded-md border border-line bg-surface px-3 py-2.5 text-md leading-relaxed text-ink-900 focus:border-ink-400 focus:ring-2 focus:ring-ink-900/15 focus:outline-none"
-          />
-        </label>
-
-        <div className="rounded-md bg-surface-2 px-3 py-2.5">
-          <p className="mb-1.5 text-sm font-medium text-ink-700">Placeholders</p>
-          <div className="flex flex-wrap gap-1.5">
-            {tokens.map((token) => (
-              <button
-                key={token.token}
-                type="button"
-                onClick={() => set({ message: `${form.message}${token.token}` })}
-                title={token.label}
-                className={cn(pressable, 'rounded-sm bg-surface px-1.5 py-1 font-mono text-xs text-ink-600 hover:bg-brand-50 hover:text-brand')}
-              >
-                {token.token}
-              </button>
-            ))}
-          </div>
-          <p className="mt-2 text-xs text-ink-400">
-            An unrecognised placeholder is left as written rather than replaced with a blank, so a
-            typo is visible instead of silently sending a sentence with a hole in it.
-          </p>
-        </div>
-
-        <label className="flex items-start gap-2.5 rounded-md bg-surface-2 px-3 py-2.5">
-          <input
-            type="checkbox"
-            checked={form.isActive}
-            onChange={(event) => set({ isActive: event.target.checked })}
-            className="mt-0.5 size-4 accent-[var(--color-brand)]"
-          />
-          <span className="text-sm leading-relaxed text-ink-700">
-            <span className="font-medium">Active</span>
-            <span className="mt-0.5 block text-sm text-ink-500">
-              Included the next time the messages are run. Each invoice receives this once.
-            </span>
-          </span>
-        </label>
+        <ActiveSwitch
+          checked={Boolean(form.isActive)}
+          onChange={(next) => set({ isActive: next })}
+          detail="Included the next time the messages are run. Each invoice receives this once."
+        />
 
         {error && (
           <p role="alert" className="rounded-md bg-danger-50 px-3 py-2.5 text-sm text-danger">
@@ -230,7 +237,7 @@ function RuleCard({ rule, triggers = [], tokens = [], channels, onDone, onDelete
             icon={Save}
             loading={createInvoiceRule.isPending || saveInvoiceRule.isPending}
           >
-            {editing ? 'Save' : 'Add status'}
+            {editing ? 'Save' : 'Add message'}
           </Button>
 
           {/* Delete sits with the status it deletes, at the opposite end of the
@@ -262,32 +269,9 @@ function RuleCard({ rule, triggers = [], tokens = [], channels, onDone, onDelete
         </div>
       </form>;
 
-  /*
-    `bare` drops the Panel.
-
-    The create form renders inside a Modal, which already draws a titled
-    surface - a Panel in there is a bordered box inside a bordered box, which
-    §2.4 rules out. An existing message keeps its Panel, because on the page
-    the cards ARE the list.
-  */
-  if (bare) return body;
-
-  return (
-    <Panel
-      title={
-        <span className="flex flex-wrap items-center gap-2">
-          {rule.label}
-          <Badge tone={form.channel === 'email' ? 'info' : 'warn'} size="sm">
-            {form.channel}
-          </Badge>
-          {rule.isBuiltIn && <Badge tone="neutral" size="sm">Built-in</Badge>}
-        </span>
-      }
-      description={timingText(rule, triggers)}
-    >
-      {body}
-    </Panel>
-  );
+  // No Panel: the modal already draws a titled surface, and a bordered box
+  // inside it is the box-in-a-box §2.4 rules out.
+  return body;
 }
 
 /**
@@ -301,26 +285,20 @@ function RuleCard({ rule, triggers = [], tokens = [], channels, onDone, onDelete
  */
 export function InvoiceMessagesBody({ adding = false, onAddingChange }) {
   const { data, isLoading } = useAdminInvoiceRules();
+  const { data: labelData } = useAdminInvoiceLabels({ status: 'all' });
   const { saveInvoiceRule, deleteInvoiceRule, runInvoiceRules } = useAdminMutations();
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   // The trash icon used to delete on the click itself.
   const [deleting, setDeleting] = useState(null);
+  // The message open in the edit modal.
+  const [editing, setEditing] = useState(null);
   // A real run mails customers, so it is typed back, not clicked (§3.0.1).
   // The dry run sends nothing and needs no dialog.
   const [confirmingRun, setConfirmingRun] = useState(false);
 
   const rules = data?.rules ?? [];
   const triggers = data?.triggers ?? [];
-
-  async function toggle(rule) {
-    setError(null);
-    try {
-      await saveInvoiceRule.mutateAsync({ ...rule, id: rule.id, isActive: !rule.isActive });
-    } catch (err) {
-      setError(err.message);
-    }
-  }
 
   async function run(dryRun) {
     setError(null);
@@ -335,7 +313,11 @@ export function InvoiceMessagesBody({ adding = false, onAddingChange }) {
 
   if (isLoading) return <p className="text-sm text-ink-500">Loading messages…</p>;
 
-  const activeCount = rules.filter((rule) => rule.isActive).length;
+  // Manual statuses with a message switched on go out in the same run, so they
+  // count towards what Send now will send.
+  const activeCount =
+    rules.filter((rule) => rule.isActive).length +
+    (labelData?.labels ?? []).filter((label) => label.messageActive && label.message?.trim()).length;
 
   return (
     <>
@@ -352,30 +334,96 @@ export function InvoiceMessagesBody({ adding = false, onAddingChange }) {
       </p>
 
       <div className="space-y-4">
-        {/* One card per message, each editable in place. The create form used
-            to sit at the BOTTOM of this list as an unlabelled extra card,
-            which put "add a message" below everything else with nothing
-            separating it - on a shop with eight messages it was off-screen and
-            read as a ninth message somebody had failed to name. It is a modal
-            off the page's one Add button now, the same way statuses work. */}
-        {rules.map((rule) => (
-          <RuleCard
-            key={rule.id}
-            rule={rule}
-            triggers={triggers}
-            tokens={data?.tokens}
-            channels={data?.channels}
-            onDelete={setDeleting}
-          />
-        ))}
+        {/* A list, and a click opens the message in a modal (2026-10-01,
+            client request). It was one open form per message, which made a
+            shop with eight messages a page of eight forms to scroll through
+            to find the one to change; the list reads the whole set at once,
+            the way Manual Status does. */}
+        <Panel flush>
+          <div className="border-b border-line px-3 py-2 sm:px-4">
+            <CountLine
+              total={rules.length}
+              shown={rules.length}
+              from={0}
+              noun={rules.length === 1 ? 'message' : 'messages'}
+            />
+          </div>
 
-        {rules.length === 0 && (
-          <PanelEmpty
-            icon={Mail}
-            title="No timed messages yet"
-            body="A message goes out once per invoice, a set number of days after it is issued or falls overdue."
+          <DataTable
+            columns={[
+              {
+                key: 'label',
+                header: 'Message',
+                priority: 1,
+                render: (rule) => (
+                  <span className="flex min-w-0 flex-col gap-0.5">
+                    <span className="flex items-center gap-2">
+                      <span className="truncate text-sm text-ink-900">{rule.label}</span>
+                      {rule.isBuiltIn && <Badge tone="neutral" size="sm">Built-in</Badge>}
+                    </span>
+                    <span className="truncate text-xs text-ink-500">{timingText(rule, triggers)}</span>
+                  </span>
+                ),
+              },
+              {
+                key: 'channel',
+                header: 'Channel',
+                priority: 2,
+                render: (rule) => (
+                  <Badge tone={rule.channel === 'email' ? 'info' : 'warn'} size="sm">
+                    {CHANNEL_NAMES[rule.channel] ?? rule.channel}
+                  </Badge>
+                ),
+              },
+              {
+                key: 'isActive',
+                header: 'Sending',
+                priority: 1,
+                render: (rule) => (
+                  <Badge tone={rule.isActive ? 'ok' : 'neutral'} size="sm">
+                    {rule.isActive ? 'on' : 'off'}
+                  </Badge>
+                ),
+              },
+            ]}
+            rows={rules}
+            rowKey={(rule) => rule.id}
+            onRowClick={setEditing}
+            rowMenu={[
+              { key: 'edit', label: 'Edit message', icon: Pencil, onSelect: setEditing },
+              {
+                key: 'toggle',
+                label: (rule) => (rule.isActive ? 'Switch off' : 'Switch on'),
+                icon: Power,
+                confirm: (rule) => ({
+                  title: rule.isActive ? `Switch off ${rule.label}?` : `Switch on ${rule.label}?`,
+                  body: rule.isActive
+                    ? 'It stops going out. Invoices that already received it keep that record.'
+                    : 'It goes to every invoice that is due one, the next time the messages are run.',
+                  confirmLabel: rule.isActive ? 'Switch off' : 'Switch on',
+                }),
+                onSelect: (rule) =>
+                  saveInvoiceRule.mutateAsync({ ...rule, id: rule.id, isActive: !rule.isActive }),
+              },
+              {
+                key: 'delete',
+                label: 'Delete message',
+                icon: Trash2,
+                tone: 'danger',
+                // Built-in messages can be switched off, never removed.
+                hidden: (rule) => rule.isBuiltIn,
+                onSelect: setDeleting,
+              },
+            ]}
+            empty={
+              <PanelEmpty
+                icon={Mail}
+                title="No timed messages yet"
+                body="A message goes out once per invoice, a set number of days after it is issued or falls overdue."
+              />
+            }
           />
-        )}
+        </Panel>
 
         <Panel
           title="Run now"
@@ -464,8 +512,30 @@ export function InvoiceMessagesBody({ adding = false, onAddingChange }) {
             triggers={triggers}
             tokens={data?.tokens}
             channels={data?.channels}
-            bare
             onDone={() => onAddingChange?.(false)}
+          />
+        )}
+      </Modal>
+
+      <Modal
+        open={Boolean(editing)}
+        onClose={() => setEditing(null)}
+        title="Edit message"
+        size="lg"
+        align="top"
+      >
+        {editing && (
+          <RuleCard
+            key={editing.id}
+            rule={editing}
+            triggers={triggers}
+            tokens={data?.tokens}
+            channels={data?.channels}
+            onDone={() => setEditing(null)}
+            onDelete={(rule) => {
+              setEditing(null);
+              setDeleting(rule);
+            }}
           />
         )}
       </Modal>

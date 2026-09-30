@@ -72,5 +72,15 @@ const importServices = asyncHandler(async (req, res) => {
   res.json(result);
 });
 
-export { listServices, getService, createService, updateService, deleteService, importServices };
-export default { listServices, getService, createService, updateService, deleteService, importServices };
+/** The website's services page. Open to guests; the price is gated in the service. */
+const publicList = asyncHandler(async (req, res) => {
+  res.json(
+    await serviceCatalogService.publicList(req.user, {
+      category: req.query.category,
+      business: req.businessScope,
+    }),
+  );
+});
+
+export { publicList, listServices, getService, createService, updateService, deleteService, importServices };
+export default { publicList, listServices, getService, createService, updateService, deleteService, importServices };

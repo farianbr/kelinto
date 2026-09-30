@@ -74,6 +74,11 @@ const STEPS = [
     why: 'Flags clearance products and upserts the exclusive deal.',
   },
   {
+    script: 'website-sections.js',
+    label: 'website page sections',
+    why: 'An article on each page, Google reviews and the rating. Never overwrites.',
+  },
+  {
     script: 'agreements.js',
     label: 'supplier agreements',
     why: 'The master agreement template and one demo signature.',

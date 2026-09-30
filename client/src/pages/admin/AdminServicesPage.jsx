@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import useAdminForm from '@/hooks/useAdminForm';
@@ -7,6 +7,7 @@ import {
   AlertCircle,
   Clock,
   FileSpreadsheet,
+  PackageOpen,
   Pencil,
   Plus,
   Power,
@@ -34,6 +35,10 @@ import useTablePage from '@/hooks/useTablePage';
 import { ADMIN_ROUTES } from '@/lib/adminRoutes';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { useAdminServices, useAdminMutations } from '@/hooks/useAdmin';
+import { useAuth } from '@/hooks/useAuth';
+import TabRow from '@/components/ui/TabRow';
+import { featureEnabled } from '@shared/schemas/features';
+import { AdminSupplierServicesPage } from '@/pages/admin/AdminSupplierServicesPage';
 import {
   SERVICE_CATEGORIES,
   SERVICE_CATEGORY_LABELS,
@@ -231,7 +236,7 @@ function ServiceForm({ service, onSubmit, onCancel, isPending, error }) {
  * overrides it on the line when the job is not the standard one, so the column
  * is labelled "list price" rather than "price".
  */
-export function AdminServicesPage() {
+function PriceListTab({ tabs }) {
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -416,6 +421,8 @@ export function AdminServicesPage() {
         }
       />
 
+      {tabs}
+
       <KpiRow
         tiles={[
           {
@@ -568,6 +575,52 @@ export function AdminServicesPage() {
       />
     </>
   );
+}
+
+/**
+ * Purchase › Services: the price list and Service Products, as two tabs.
+ *
+ * One row since 2026-09-30, at the client's request. The price list charges
+ * a customer for labour; Service Products is what we pay a supplier for
+ * (outsourced repair, freight, disposal). Each tab is gated on its own
+ * feature, so a business with only one of them gets that screen and no tab
+ * row, since a row of one tab only says where you already are.
+ *
+ * `?tab=products` picks the second tab, which is also where the old
+ * `/admin/supplier-services` address lands.
+ */
+export function AdminServicesPage() {
+  const [params, setParams] = useSearchParams();
+  const { features } = useAuth();
+
+  const tabs = [
+    featureEnabled(features, 'sales.services') && {
+      key: 'services',
+      label: 'Services',
+      icon: Wrench,
+    },
+    featureEnabled(features, 'purchase.services') && {
+      key: 'products',
+      label: 'Service Products',
+      icon: PackageOpen,
+    },
+  ].filter(Boolean);
+
+  const requested = params.get('tab') === 'products' ? 'products' : 'services';
+  const tab = tabs.some((entry) => entry.key === requested) ? requested : tabs[0]?.key;
+
+  const row =
+    tabs.length > 1 ? (
+      <TabRow
+        panel
+        value={tab}
+        onChange={(next) => setParams(next === 'products' ? { tab: 'products' } : {}, { replace: true })}
+        tabs={tabs}
+      />
+    ) : null;
+
+  if (tab === 'products') return <AdminSupplierServicesPage mode="service" tabs={row} />;
+  return <PriceListTab tabs={row} />;
 }
 
 export default AdminServicesPage;

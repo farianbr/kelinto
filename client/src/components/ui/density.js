@@ -3,10 +3,14 @@ import { createContext, useContext } from 'react';
 /**
  * How tall the form controls are, for a whole subtree.
  *
- * ## Two densities, each earned
+ * ## Three densities, each earned
  *
+ * - **`touch`** - 64px controls, 18px text. The kiosk only, declared once by
+ *   `KioskPage`: a tablet on a stand, used at arm's length by somebody who may
+ *   be holding a broken phone in the other hand. 44px is the floor for a thumb
+ *   on a phone held close; a finger reaching out to a screen misses it.
  * - **`comfortable`** (the default) - 44px controls, 16px text on a phone.
- *   The storefront: checkout, sign-up, the account forms, the kiosk. A buyer
+ *   The storefront: checkout, sign-up, the account forms. A buyer
  *   is on a phone with one hand, and 44px is the accessibility-recommended
  *   minimum touch target.
  * - **`compact`** - 36px controls, 13px labels. The admin panel: a desktop
@@ -45,6 +49,7 @@ export function useDensity() {
  * straight into `cn()` beside everything else it needs.
  */
 export function fieldSize(density) {
+  if (density === 'touch') return 'h-16 text-xl';
   return density === 'compact'
     ? 'h-9 text-lg sm:text-sm'
     : 'h-11 text-lg sm:text-md';
@@ -52,11 +57,13 @@ export function fieldSize(density) {
 
 /** The label above a field. Drops a step when compact, so it cannot out-weigh the control it names. */
 export function labelSize(density) {
+  if (density === 'touch') return 'mb-2 text-lg';
   return density === 'compact' ? 'mb-1 text-xs' : 'mb-1.5 text-sm';
 }
 
 /** The hint or error under a field. */
 export function hintSize(density) {
+  if (density === 'touch') return 'mt-2 text-md';
   return density === 'compact' ? 'mt-1 text-xs' : 'mt-1.5 text-sm';
 }
 

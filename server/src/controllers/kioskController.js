@@ -1,6 +1,9 @@
 import { asyncHandler } from '../utils/ApiError.js';
 import * as kioskService from '../services/kioskService.js';
 import auditService from '../services/auditService.js';
+import { resolveFeaturesFor } from '../middleware/feature.js';
+import { readKioskSession } from '../middleware/kioskAuth.js';
+import { featureEnabled } from '../../../shared/schemas/features.js';
 import '../models/Ticket.js';
 import '../models/DeviceCatalog.js';
 
@@ -19,7 +22,31 @@ import '../models/DeviceCatalog.js';
 const getConfig = asyncHandler(async (req, res) => {
   // The business the host resolved to. It is what names the shop on screen and
   // what decides the colour the whole tablet is painted in.
-  res.json(await kioskService.getPublicConfig(req.businessScope));
+  const config = await kioskService.getPublicConfig(req.businessScope);
+  const features = req.features ?? (await resolveFeaturesFor(req));
+
+  res.json({
+    ...config,
+    /**
+     * Whether this tablet already holds a live kiosk session.
+     *
+     * The kiosk reloads itself: a customer who shopped on the website comes
+     * back to `/kiosk` as a fresh page. Without this, every "Order again?"
+     * would land on the staff PIN screen with the customer standing at it.
+     */
+    unlocked: Boolean(readKioskSession(req)),
+    /**
+     * The three doors on the welcome screen, each behind the feature that does
+     * its work, so a business without a website is never offered "Buy parts".
+     */
+    modes: {
+      repair: featureEnabled(features, 'sales.tickets'),
+      sell: featureEnabled(features, 'sales.buyback'),
+      buy:
+        featureEnabled(features, 'storefront.public') &&
+        featureEnabled(features, 'storefront.checkout'),
+    },
+  });
 });
 
 const unlock = asyncHandler(async (req, res) => {
@@ -34,6 +61,26 @@ const lock = asyncHandler(async (req, res) => {
 /** The device tree the questions walk. Behind the session, like the check-in. */
 const getDevices = asyncHandler(async (req, res) => {
   res.json(await kioskService.getDeviceOptions());
+});
+
+/** "Let's find your details". Answers masked, and never with the account. */
+const lookup = asyncHandler(async (req, res) => {
+  res.json(await kioskService.lookupCustomer(req.body, req.businessScope));
+});
+
+/**
+ * "Buy parts": the website's sign-in and sign-up, from the tablet.
+ *
+ * Behind the kiosk session like everything else here, which is what makes the
+ * approval inside them safe: only a tablet staff unlocked with the shop PIN can
+ * reach the door that approves an account on the spot.
+ */
+const shopSignIn = asyncHandler(async (req, res) => {
+  res.json(await kioskService.shopSignIn(req, res, req.body));
+});
+
+const shopSignUp = asyncHandler(async (req, res) => {
+  res.status(201).json(await kioskService.shopSignUp(req, res, req.body));
 });
 
 const checkIn = asyncHandler(async (req, res) => {
@@ -60,5 +107,5 @@ const setPin = asyncHandler(async (req, res) => {
   res.json(result);
 });
 
-export { getConfig, unlock, lock, getDevices, checkIn, setPin };
-export default { getConfig, unlock, lock, getDevices, checkIn, setPin };
+export { getConfig, unlock, lock, getDevices, lookup, shopSignIn, shopSignUp, checkIn, setPin };
+export default { getConfig, unlock, lock, getDevices, lookup, shopSignIn, shopSignUp, checkIn, setPin };

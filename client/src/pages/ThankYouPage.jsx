@@ -1,4 +1,5 @@
-import { Link, useParams } from 'react-router';
+import { useEffect } from 'react';
+import { Link, useNavigate, useParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { motion, useReducedMotion } from 'motion/react';
 import {
@@ -20,6 +21,8 @@ import { PartVisual } from '@/components/product/PartFrame';
 import BrandScene from '@/components/ui/BrandScene';
 import { ease, pressable } from '@/lib/motion';
 import cn from '@/lib/cn';
+import { useKioskShopping } from '@/lib/kioskShopping';
+import { kioskPath } from '@/hooks/useAuth';
 
 /**
  * Post-checkout confirmation (brief §9).
@@ -118,8 +121,32 @@ const NEXT_STEPS = [
   },
 ];
 
+/** How long the kiosk shopper sees this page before the tablet takes over. */
+const KIOSK_HANDBACK_MS = 5000;
+
 export function ThankYouPage() {
   const { orderNumber } = useParams();
+  const kiosk = useKioskShopping();
+  const navigate = useNavigate();
+
+  /**
+   * On the in-store kiosk, this page hands back to the tablet.
+   *
+   * A few seconds here so the order visibly went through, then `/kiosk` asks
+   * "Order again?" with the number restated for the counter. Left here, the
+   * page would sit on a signed-in account with nobody in front of it until the
+   * idle clock noticed.
+   */
+  useEffect(() => {
+    if (!kiosk) return undefined;
+    const timer = setTimeout(() => {
+      const base = kioskPath();
+      navigate(`${base}${base.includes('?') ? '&' : '?'}ordered=${encodeURIComponent(orderNumber)}`, {
+        replace: true,
+      });
+    }, KIOSK_HANDBACK_MS);
+    return () => clearTimeout(timer);
+  }, [kiosk, orderNumber, navigate]);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['orders', orderNumber],

@@ -7,12 +7,12 @@ import auditService from '../services/auditService.js';
  *
  * **Two different permissions, and that is the point.** Editing the LIST is a
  * settings write - it changes the vocabulary every invoice is described in, and
- * ticking `sendsWarrantyEmail` arms an automatic email. Setting a label ON an
+ * a status can carry a message to customers. Setting a label ON an
  * invoice is ordinary sales work somebody at the counter does all day. The
  * routes gate them separately for that reason.
  *
- * Setting a label is audited because it can send mail to a customer, and "who
- * caused this email" is the question asked after the first complaint.
+ * Setting a label is audited because it starts the clock on that status's
+ * message, and "who set this" is the question asked after the first complaint.
  */
 
 // ---- the list (Settings) ----------------------------------------------------
@@ -30,7 +30,6 @@ const create = asyncHandler(async (req, res) => {
     entity: { kind: 'invoiceLabel', id: result.label.id, label: result.label.name },
     after: {
       colorToken: result.label.colorToken,
-      sendsWarrantyEmail: result.label.sendsWarrantyEmail,
       isActive: result.label.isActive,
     },
     description: `Added the invoice status “${result.label.name}”.`,
@@ -53,14 +52,12 @@ const update = asyncHandler(async (req, res) => {
       ? {
           name: before.name,
           colorToken: before.colorToken,
-          sendsWarrantyEmail: before.sendsWarrantyEmail,
           isActive: before.isActive,
         }
       : null,
     after: {
       name: result.label.name,
       colorToken: result.label.colorToken,
-      sendsWarrantyEmail: result.label.sendsWarrantyEmail,
       isActive: result.label.isActive,
     },
     description: `Updated the invoice status “${result.label.name}”.`,
@@ -84,13 +81,7 @@ const remove = asyncHandler(async (req, res) => {
 
 // ---- setting one on an invoice (Sales) --------------------------------------
 
-/**
- * Set or clear the manual status on one invoice.
- *
- * The audit line says whether the warranty email actually went out, not whether
- * it was meant to: the service reports `emailed`, and a failed send must not be
- * recorded as a delivery.
- */
+/** Set or clear the manual status on one invoice. */
 const setOnInvoice = asyncHandler(async (req, res) => {
   const result = await invoiceLabelService.setInvoiceLabel(req.params.number, req.body);
 
@@ -98,11 +89,10 @@ const setOnInvoice = asyncHandler(async (req, res) => {
     req,
     action: 'invoice.label',
     entity: { kind: 'invoice', id: req.params.number, label: req.params.number },
-    after: { label: result.labelName ?? null, warrantyEmailed: result.emailed },
+    after: { label: result.labelName ?? null },
     description: result.cleared
       ? `Cleared the status on invoice ${req.params.number}.`
-      : `Set invoice ${req.params.number} to “${result.labelName}”` +
-        (result.emailed ? ' and sent the warranty email.' : '.'),
+      : `Set invoice ${req.params.number} to “${result.labelName}”.`,
   });
 
   res.json(result);

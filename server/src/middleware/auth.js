@@ -261,8 +261,13 @@ function requireStaff(req, _res, next) {
  * `admin` bypasses the role system entirely. Everyone else must hold `level`
  * or better on `area`, where `view` is genuinely read-only - it must not reach
  * a mutating route, including an export that writes an audit row.
+ *
+ * `area` may be a list, meaning ANY of them clears it. The service price list
+ * is edited from Purchase but read by the Sales ticket and quote pickers, so
+ * its reads take either area and its writes only one.
  */
 function requirePermission(area, level = 'view') {
+  const areas = Array.isArray(area) ? area : [area];
   return async function permissionGuard(req, _res, next) {
     // A support session holds every area. It has no `Role` to consult and
     // inventing one would be a second permission system to keep in step; the
@@ -280,10 +285,10 @@ function requirePermission(area, level = 'view') {
       // one tab has to bite on the next request in another, and a cached map is
       // how somebody keeps access they were just denied.
       const role = await db().Role.findById(req.user.staffRole);
-      if (!role?.allows(area, level)) {
+      if (!areas.some((entry) => role?.allows(entry, level))) {
         return next(
           ApiError.forbidden(
-            `Your role does not have ${level} access to ${area}.`,
+            `Your role does not have ${level} access to ${areas.join(' or ')}.`,
             'PERMISSION_DENIED',
           ),
         );

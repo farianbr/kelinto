@@ -3,6 +3,8 @@ import * as blogService from '../services/blogService.js';
 import * as faqService from '../services/faqService.js';
 import * as offerService from '../services/offerService.js';
 import * as productArticleService from '../services/productArticleService.js';
+import * as pageContentService from '../services/pageContentService.js';
+import * as googleReviewService from '../services/googleReviewService.js';
 
 /**
  * Blog, FAQ and offers.
@@ -116,4 +118,66 @@ const adminSaveArticle = asyncHandler(async (req, res) => {
 const adminDeleteArticle = asyncHandler(async (req, res) => {
   res.json(await productArticleService.remove(req.params.productId));
 });
-export { listPosts, getPost, adminListPosts, adminGetPost, adminCreatePost, adminUpdatePost, adminDeletePost, listFaqs, adminListFaqs, adminCreateFaq, adminUpdateFaq, adminDeleteFaq, listOffers, getOffer, adminListOffers, adminCreateOffer, adminUpdateOffer, adminDeleteOffer, adminListArticles, adminGetArticle, adminSaveArticle, adminDeleteArticle };
+
+// ---- website page sections --------------------------------------------------
+//
+// The article, questions and section switches at the foot of each website page
+// (`shared/websitePages.js`), and the business's Google reviews shown there.
+// Public reads are cached a minute at the edge, like `/business-info`: they
+// change when somebody edits them, and every page of every visit asks.
+
+const getPage = asyncHandler(async (req, res) => {
+  res.set('Cache-Control', 'public, max-age=60');
+  res.json(await pageContentService.getPublic(req.params.page));
+});
+
+const listGoogleReviews = asyncHandler(async (req, res) => {
+  res.set('Cache-Control', 'public, max-age=60');
+  res.json(await googleReviewService.listPublic());
+});
+
+const adminListPages = asyncHandler(async (req, res) => {
+  res.json(await pageContentService.listForAdmin());
+});
+
+const adminGetPage = asyncHandler(async (req, res) => {
+  res.json(await pageContentService.getForAdmin(req.params.page));
+});
+
+const adminSavePage = asyncHandler(async (req, res) => {
+  res.json(await pageContentService.upsert(req.params.page, req.body));
+});
+
+const adminCreatePageFaq = asyncHandler(async (req, res) => {
+  res.status(201).json({ faq: await pageContentService.createFaq(req.params.page, req.body) });
+});
+
+const adminUpdatePageFaq = asyncHandler(async (req, res) => {
+  res.json({ faq: await pageContentService.updateFaq(req.params.page, req.params.id, req.body) });
+});
+
+const adminDeletePageFaq = asyncHandler(async (req, res) => {
+  res.json({ faq: await pageContentService.deleteFaq(req.params.page, req.params.id) });
+});
+
+const adminListGoogleReviews = asyncHandler(async (req, res) => {
+  res.json(await googleReviewService.listForAdmin());
+});
+
+const adminCreateGoogleReview = asyncHandler(async (req, res) => {
+  res.status(201).json({ review: await googleReviewService.create(req.body) });
+});
+
+const adminUpdateGoogleReview = asyncHandler(async (req, res) => {
+  res.json({ review: await googleReviewService.update(req.params.id, req.body) });
+});
+
+const adminDeleteGoogleReview = asyncHandler(async (req, res) => {
+  res.json({ review: await googleReviewService.remove(req.params.id) });
+});
+
+const adminSaveGoogleSummary = asyncHandler(async (req, res) => {
+  res.json({ summary: await googleReviewService.updateSummary(req.body) });
+});
+
+export { listPosts, getPost, adminListPosts, adminGetPost, adminCreatePost, adminUpdatePost, adminDeletePost, listFaqs, adminListFaqs, adminCreateFaq, adminUpdateFaq, adminDeleteFaq, listOffers, getOffer, adminListOffers, adminCreateOffer, adminUpdateOffer, adminDeleteOffer, adminListArticles, adminGetArticle, adminSaveArticle, adminDeleteArticle, getPage, listGoogleReviews, adminListPages, adminGetPage, adminSavePage, adminCreatePageFaq, adminUpdatePageFaq, adminDeletePageFaq, adminListGoogleReviews, adminCreateGoogleReview, adminUpdateGoogleReview, adminDeleteGoogleReview, adminSaveGoogleSummary };

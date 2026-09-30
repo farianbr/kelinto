@@ -21,6 +21,7 @@ import * as serviceCatalogController from '../controllers/serviceCatalogControll
 import * as serviceQuoteController from '../controllers/serviceQuoteController.js';
 import * as deviceCatalogController from '../controllers/deviceCatalogController.js';
 import * as kioskController from '../controllers/kioskController.js';
+import * as buybackController from '../controllers/buybackController.js';
 import { requireKiosk } from '../middleware/kioskAuth.js';
 import * as contactController from '../controllers/contactController.js';
 import * as contentController from '../controllers/contentController.js';
@@ -180,6 +181,11 @@ import {
   deviceCatalogSchema,
   deviceCatalogUpdateSchema,
   kioskCheckInSchema,
+  kioskLookupSchema,
+  kioskSellSchema,
+  buybackAcceptSchema,
+  buybackDeclineSchema,
+  preownedUpdateSchema,
   kioskUnlockSchema,
   kioskPinSchema,
   kioskSettingsSchema,
@@ -213,7 +219,7 @@ import {
   communicationsSettingsSchema,
 } from '../../../shared/schemas/admin.js';
 import { contactSchema } from '../../../shared/schemas/contact.js';
-import { blogPostSchema, faqSchema, offerSchema, productArticleSchema, reviewSchema, reviewModerationSchema } from '../../../shared/schemas/content.js';
+import { blogPostSchema, faqSchema, offerSchema, productArticleSchema, reviewSchema, reviewModerationSchema, pageContentSchema, pageFaqSchema, googleReviewSchema, googleSummarySchema } from '../../../shared/schemas/content.js';
 
 const router = Router();
 
@@ -226,6 +232,16 @@ const authLimiter = rateLimit({
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { error: { code: 'RATE_LIMITED', message: 'Too many attempts. Try again shortly.' } },
+});
+
+// A busy counter looks up a few customers an hour; sixty in ten minutes is a
+// tablet somebody is using to test which numbers belong to customers.
+const kioskLookupLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: env.isProd ? 60 : 500,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: { code: 'RATE_LIMITED', message: 'Please ask a member of staff to help you check in.' } },
 });
 
 /**
@@ -331,6 +347,11 @@ router.get('/portal/:business/:token', authLimiter, customerPortalController.pro
  * answer is already scoped to whichever business the host resolved to.
  */
 router.get('/business-info', settingsController.publicProfile);
+// The website's Membership page: tiers and their warranty, from Sale Settings.
+router.get('/membership', settingsController.publicMembership);
+// The website's Services page. Open to guests; the price is gated server-side
+// exactly like a part's, and the whole route is off with the price list.
+router.get('/services', requireFeature('sales.services'), serviceCatalogController.publicList);
 
 // --- catalogue -------------------------------------------------------------
 router.get('/taxonomy', taxonomyController.tree);
@@ -349,7 +370,14 @@ router.get('/products/:slug', productController.detail);
 router.get('/blog', contentController.listPosts);
 router.get('/blog/:slug', contentController.getPost);
 router.get('/faq', contentController.listFaqs);
+// The sections at the foot of every website page: that page's article and
+// questions, and the business's Google reviews. Open to guests, like the rest.
+router.get('/pages/:page', contentController.getPage);
+router.get('/google-reviews', contentController.listGoogleReviews);
 router.get('/offers', contentController.listOffers);
+// The website's pre-owned phones. Public, like the catalogue, and gated the same
+// way: a guest or a pending account is told what is for sale, never what it costs.
+router.get('/preowned', requireFeature('sales.buyback'), buybackController.publicList);
 router.get('/offers/:slug', contentController.getOffer);
 
 // --- cart ------------------------------------------------------------------
@@ -367,6 +395,9 @@ router.delete('/cart', requireAuth, denyAdmin, cartController.clear);
 router.post('/cart/bundles', requireAuth, denyAdmin, requireApproved, validate(addBundleSchema), cartController.addBundle);
 router.patch('/cart/bundles/:offerId', requireAuth, denyAdmin, requireApproved, validate(setBundleQtySchema), cartController.setBundleQty);
 router.delete('/cart/bundles/:offerId', requireAuth, denyAdmin, requireApproved, cartController.removeBundle);
+// A pre-owned phone is a priced thing, so holding one needs approval like a bundle.
+router.post('/cart/preowned', requireAuth, denyAdmin, requireApproved, requireFeature('sales.buyback'), cartController.addPreowned);
+router.delete('/cart/preowned/:deviceId', requireAuth, denyAdmin, cartController.removePreowned);
 router.post('/cart/promo', requireAuth, denyAdmin, requireApproved, validate(promoCodeSchema), cartController.applyPromo);
 router.delete('/cart/promo', requireAuth, denyAdmin, requireApproved, cartController.clearPromo);
 
@@ -396,6 +427,8 @@ router.get('/orders/:orderNumber', requireAuth, denyAdmin, requireApproved, orde
 const account = [requireAuth, denyAdmin, requireApproved];
 
 router.get('/account/summary', ...account, accountController.summary);
+// "Phones you sold us". What they sold and what they were paid, never our margin.
+router.get('/account/buybacks', ...account, requireFeature('sales.buyback'), buybackController.mine);
 router.patch('/account/profile', ...account, validate(profileSchema), accountController.updateProfile);
 
 router.post('/account/addresses', ...account, validate(savedAddressSchema), accountController.addAddress);
@@ -862,17 +895,18 @@ router.delete('/admin/tickets/:id/deposits/:depositId', ...admin, requireFeature
 router.post('/admin/tickets/:id/convert', ...admin, requireFeature('sales.tickets'), requirePermission('sales', 'full'), validate(ticketConvertSchema), ticketController.convertToInvoice);
 
 // The repair service catalogue - the price list a quote or a ticket picks its
-// labour from. Read is 'view' because the pickers on those two forms need it;
-// editing the price list is 'full'.
-router.get('/admin/services', ...admin, requireFeature('sales.services'), requirePermission('sales', 'view'), serviceCatalogController.listServices);
-router.post('/admin/services', ...admin, requireFeature('sales.services'), requirePermission('sales', 'full'), validate(serviceCatalogSchema), serviceCatalogController.createService);
+// labour from. Its screen moved to Purchase on 2026-09-30, so editing it takes
+// Purchase 'full'. Reading takes Sales OR Purchase 'view', because the Sales
+// ticket and quote pickers still read the list.
+router.get('/admin/services', ...admin, requireFeature('sales.services'), requirePermission(['sales', 'purchase'], 'view'), serviceCatalogController.listServices);
+router.post('/admin/services', ...admin, requireFeature('sales.services'), requirePermission('purchase', 'full'), validate(serviceCatalogSchema), serviceCatalogController.createService);
 // Before `/:id`, or "import" is matched as a service id and the request 404s.
-router.post('/admin/services/import', ...admin, requireFeature('sales.services'), requirePermission('sales', 'full'), validate(serviceImportSchema), serviceCatalogController.importServices);
-router.get('/admin/services/:id', ...admin, requireFeature('sales.services'), requirePermission('sales', 'view'), serviceCatalogController.getService);
-router.patch('/admin/services/:id', ...admin, requireFeature('sales.services'), requirePermission('sales', 'full'), validate(serviceCatalogUpdateSchema), serviceCatalogController.updateService);
+router.post('/admin/services/import', ...admin, requireFeature('sales.services'), requirePermission('purchase', 'full'), validate(serviceImportSchema), serviceCatalogController.importServices);
+router.get('/admin/services/:id', ...admin, requireFeature('sales.services'), requirePermission(['sales', 'purchase'], 'view'), serviceCatalogController.getService);
+router.patch('/admin/services/:id', ...admin, requireFeature('sales.services'), requirePermission('purchase', 'full'), validate(serviceCatalogUpdateSchema), serviceCatalogController.updateService);
 // Refused for a service any quote or ticket points at - the service says so and
 // offers deactivation instead.
-router.delete('/admin/services/:id', ...admin, requireFeature('sales.services'), requirePermission('sales', 'full'), serviceCatalogController.deleteService);
+router.delete('/admin/services/:id', ...admin, requireFeature('sales.services'), requirePermission('purchase', 'full'), serviceCatalogController.deleteService);
 
 // The devices a service business takes in. A separate tree from the catalogue
 // taxonomy: that one prunes every branch with no products under it, which would
@@ -896,6 +930,17 @@ router.post('/kiosk/lock', kioskController.lock);
 // Behind the session. The device tree is the shop's own list, and a check-in
 // writes a partial ticket flagged for staff review.
 router.get('/kiosk/devices', requireKiosk, kioskController.getDevices);
+// Looking a customer up by phone or email. Rate-limited on top of the session:
+// the answer is masked, but a tablet that answered a thousand numbers a minute
+// would still say which of them are customers.
+router.post('/kiosk/lookup', requireKiosk, kioskLookupLimiter, validate(kioskLookupSchema), kioskController.lookup);
+// "Buy parts": the website's own sign-in and sign-up, reached from the tablet.
+// Rate-limited like every credential endpoint; behind the kiosk session because
+// both approve a pending account on the spot (the customer is in the shop).
+router.post('/kiosk/shop/sign-in', requireKiosk, authLimiter, validate(loginSchema), kioskController.shopSignIn);
+router.post('/kiosk/shop/sign-up', requireKiosk, authLimiter, validate(registerSchema), kioskController.shopSignUp);
+// "Sell your phone": a phone handed over with a fresh photo of the seller.
+router.post('/kiosk/sell', requireKiosk, requireFeature('sales.buyback'), validate(kioskSellSchema), buybackController.sell);
 router.post('/kiosk/check-in', requireKiosk, validate(kioskCheckInSchema), kioskController.checkIn);
 // Setting the PIN is an admin action and never reachable from the tablet.
 // PATCH, not PUT. It was the only PUT in the whole API - written before any
@@ -907,6 +952,17 @@ router.patch('/admin/kiosk/pin', ...admin, requireFeature('sales.kiosk'), requir
 // aloud and what the customer agrees to. Behind the feature flag as well as
 // the permission - a business with no kiosk should not be shown the screen at
 // all (404, never 403).
+// --- pre-owned phones (Inventory › Pre-owned) -----------------------------------
+// Requests are what the kiosk bought; stock is what they became. Reading the
+// full purchasing permission: most staff never need either.
+router.get('/admin/buybacks', ...admin, requireFeature('sales.buyback'), requirePermission('purchase', 'view'), buybackController.list);
+router.get('/admin/buybacks/:id', ...admin, requireFeature('sales.buyback'), requirePermission('purchase', 'view'), buybackController.detail);
+router.post('/admin/buybacks/:id/reveal-id', ...admin, requireFeature('sales.buyback'), requirePermission('purchase', 'full'), buybackController.revealId);
+router.get('/admin/buybacks/:id/photo', ...admin, requireFeature('sales.buyback'), requirePermission('purchase', 'full'), buybackController.photo);
+router.post('/admin/buybacks/:id/accept', ...admin, requireFeature('sales.buyback'), requirePermission('purchase', 'full'), validate(buybackAcceptSchema), buybackController.accept);
+router.post('/admin/buybacks/:id/decline', ...admin, requireFeature('sales.buyback'), requirePermission('purchase', 'full'), validate(buybackDeclineSchema), buybackController.decline);
+router.get('/admin/preowned', ...admin, requireFeature('sales.buyback'), requirePermission('purchase', 'view'), buybackController.listStock);
+router.patch('/admin/preowned/:id', ...admin, requireFeature('sales.buyback'), requirePermission('purchase', 'full'), validate(preownedUpdateSchema), buybackController.updateStock);
 router.patch('/admin/settings/kiosk', ...admin, requireFeature('sales.kiosk'), requirePermission('settings.financial', 'full'), validate(kioskSettingsSchema), settingsController.updateKiosk);
 // Repair estimates - the service side of Sales § Quote. Gated on the SAME
 // 'sales.quotes' flag as the wholesale quote list: they are one section in the
@@ -977,11 +1033,30 @@ router.get('/admin/product-articles/:productId', ...admin, requireFeature('marke
 router.patch('/admin/product-articles/:productId', ...admin, requireFeature('marketing.articles'), requirePermission('marketing', 'full'), validate(productArticleSchema), contentController.adminSaveArticle);
 router.delete('/admin/product-articles/:productId', ...admin, requireFeature('marketing.articles'), requirePermission('marketing', 'full'), contentController.adminDeleteArticle);
 
+// Website page sections, edited on the same Articles screen as the parts (a
+// Pages tab). Same feature and permission as a product article: it is the same
+// kind of copy on the same site. Keyed by the page's registry key
+// (`shared/websitePages.js`); saving upserts.
+router.get('/admin/pages', ...admin, requireFeature('marketing.articles'), requirePermission('marketing', 'view'), contentController.adminListPages);
+router.get('/admin/pages/:page', ...admin, requireFeature('marketing.articles'), requirePermission('marketing', 'view'), contentController.adminGetPage);
+router.patch('/admin/pages/:page', ...admin, requireFeature('marketing.articles'), requirePermission('marketing', 'full'), validate(pageContentSchema), contentController.adminSavePage);
+router.post('/admin/pages/:page/faqs', ...admin, requireFeature('marketing.articles'), requirePermission('marketing', 'full'), validate(pageFaqSchema), contentController.adminCreatePageFaq);
+router.patch('/admin/pages/:page/faqs/:id', ...admin, requireFeature('marketing.articles'), requirePermission('marketing', 'full'), validate(pageFaqSchema), contentController.adminUpdatePageFaq);
+router.delete('/admin/pages/:page/faqs/:id', ...admin, requireFeature('marketing.articles'), requirePermission('marketing', 'full'), contentController.adminDeletePageFaq);
+
 // Review moderation. Reviews publish immediately, so this is the lever for the
 // case that goes wrong rather than a queue standing between a buyer and the
 // site. Same marketing permission area as the rest of the published content.
 router.get('/admin/reviews', ...admin, requirePermission('marketing', 'view'), reviewController.adminList);
 router.patch('/admin/reviews/:id/hidden', ...admin, requirePermission('marketing', 'full'), validate(reviewModerationSchema), reviewController.adminSetHidden);
+
+// The business's Google reviews, typed in by hand, and the rating summary above
+// them. Same permission area as the product reviews on the same screen.
+router.get('/admin/google-reviews', ...admin, requirePermission('marketing', 'view'), contentController.adminListGoogleReviews);
+router.patch('/admin/google-reviews/summary', ...admin, requirePermission('marketing', 'full'), validate(googleSummarySchema), contentController.adminSaveGoogleSummary);
+router.post('/admin/google-reviews', ...admin, requirePermission('marketing', 'full'), validate(googleReviewSchema), contentController.adminCreateGoogleReview);
+router.patch('/admin/google-reviews/:id', ...admin, requirePermission('marketing', 'full'), validate(googleReviewSchema), contentController.adminUpdateGoogleReview);
+router.delete('/admin/google-reviews/:id', ...admin, requirePermission('marketing', 'full'), contentController.adminDeleteGoogleReview);
 
 router.get('/admin/faqs', ...admin, requireFeature('marketing.faq'), requirePermission('marketing', 'view'), contentController.adminListFaqs);
 router.post('/admin/faqs', ...admin, requireFeature('marketing.faq'), requirePermission('marketing', 'full'), validate(faqSchema), contentController.adminCreateFaq);
@@ -1075,6 +1150,7 @@ router.patch('/admin/settings/business', ...admin, requirePermission('settings.b
 // puts it on the record.
 router.post('/admin/assets/identity', ...admin, requirePermission('settings.business', 'full'), assetController.acceptFile, assetController.uploadForBusiness('identity'));
 router.post('/admin/assets/catalogue', ...admin, requirePermission('purchase', 'full'), assetController.acceptFile, assetController.uploadForBusiness('catalogue'));
+router.post('/admin/assets/marketing', ...admin, requirePermission('marketing', 'full'), assetController.acceptFile, assetController.uploadForBusiness('marketing'));
 // Delete uploads a form discarded without saving. Only still-pending files.
 router.post('/admin/assets/discard', ...admin, assetController.discardForBusiness);
 router.patch('/admin/settings/sale', ...admin, requirePermission('settings.financial', 'full'), validate(saleSettingsSchema), settingsController.updateSale);
@@ -1150,24 +1226,28 @@ router.get('/admin/taxonomy/:id', ...admin, requireFeature('storefront.public'),
 router.patch('/admin/taxonomy/:id', ...admin, requireFeature('storefront.public'), requirePermission('settings.financial', 'full'), validate(taxonomyNodeSchema), taxonomyAdminController.update);
 router.delete('/admin/taxonomy/:id', ...admin, requireFeature('storefront.public'), requirePermission('settings.financial', 'full'), taxonomyAdminController.remove);
 
-router.get('/admin/invoice-rules', ...admin, requirePermission('settings.financial', 'view'), invoiceStatusController.list);
-router.post('/admin/invoice-rules', ...admin, requirePermission('settings.financial', 'full'), validate(invoiceStatusRuleSchema), invoiceStatusController.create);
-router.patch('/admin/invoice-rules/:id', ...admin, requirePermission('settings.financial', 'full'), validate(invoiceStatusRuleSchema), invoiceStatusController.update);
-router.delete('/admin/invoice-rules/:id', ...admin, requirePermission('settings.financial', 'full'), invoiceStatusController.remove);
+router.get('/admin/invoice-rules', ...admin, requirePermission('settings.communications', 'view'), invoiceStatusController.list);
+router.post('/admin/invoice-rules', ...admin, requirePermission('settings.communications', 'full'), validate(invoiceStatusRuleSchema), invoiceStatusController.create);
+router.patch('/admin/invoice-rules/:id', ...admin, requirePermission('settings.communications', 'full'), validate(invoiceStatusRuleSchema), invoiceStatusController.update);
+router.delete('/admin/invoice-rules/:id', ...admin, requirePermission('settings.communications', 'full'), invoiceStatusController.remove);
 // Running sends real email, so it needs `full` even in dry-run form - the dry
 // run reveals which accounts would be contacted, which is not a `view` fact.
-router.post('/admin/invoice-rules/run', ...admin, requirePermission('settings.financial', 'full'), invoiceStatusController.run);
+router.post('/admin/invoice-rules/run', ...admin, requirePermission('settings.communications', 'full'), invoiceStatusController.run);
 
+// The invoice rules above and the list below are gated on Communications since
+// 2026-09-30, when their screen (now "After Sales Statuses") moved there from
+// Financial: a role's settings sub-area has to match where the screen sits.
+//
 // The manual invoice status list. A settings write, not a sales one: it changes
 // the vocabulary every invoice is described in, and one of its fields arms an
 // automatic email to customers. Reading it is `view` because every picker needs
 // it.
 router.get('/admin/invoice-labels', ...admin, requirePermission('sales', 'view'), invoiceLabelController.list);
-router.post('/admin/invoice-labels', ...admin, requirePermission('settings.financial', 'full'), validate(invoiceLabelSchema), invoiceLabelController.create);
-router.patch('/admin/invoice-labels/:id', ...admin, requirePermission('settings.financial', 'full'), validate(invoiceLabelSchema), invoiceLabelController.update);
+router.post('/admin/invoice-labels', ...admin, requirePermission('settings.communications', 'full'), validate(invoiceLabelSchema), invoiceLabelController.create);
+router.patch('/admin/invoice-labels/:id', ...admin, requirePermission('settings.communications', 'full'), validate(invoiceLabelSchema), invoiceLabelController.update);
 // Refused while any invoice carries it - retiring is the answer, and it keeps
 // the history readable. See invoiceLabelService.deleteLabel.
-router.delete('/admin/invoice-labels/:id', ...admin, requirePermission('settings.financial', 'full'), invoiceLabelController.remove);
+router.delete('/admin/invoice-labels/:id', ...admin, requirePermission('settings.communications', 'full'), invoiceLabelController.remove);
 
 // ---- phase 11e: email settings & the scheduling board -----------------------
 /**
