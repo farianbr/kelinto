@@ -364,7 +364,7 @@ const TICKET_COLUMNS = [
   },
   {
     key: 'estimateCents',
-    header: 'Estimate',
+    header: 'Quoted',
     priority: 2,
     width: '16%',
     align: 'right',

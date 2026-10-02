@@ -1,6 +1,6 @@
 import { useEffect, useId } from 'react';
 import { X } from 'lucide-react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion } from '@/lib/motionReact';
 import { CartPanelBody, CartPanelFooter, CartPanelTitle } from './CartPanelContent';
 import { useCart } from '@/hooks/useCart';
 import { useAuth } from '@/hooks/useAuth';
@@ -22,7 +22,7 @@ export function CartDropdown() {
   const open = useUiStore((s) => s.cartFlyoutOpen);
   const close = useUiStore((s) => s.closeCart);
 
-  const { items, bundles, preowned, count, subtotal, payable, discount, promo, setQty, removeItem, removeBundle, removePreowned, saveForLater, isSaving } =
+  const { items, bundles, preowned, services, membership, removeMembership, count, subtotal, payable, discount, promo, setQty, removeItem, removeBundle, removePreowned, setServiceQty, removeService, saveForLater, isSaving } =
     useCart();
   const { isApproved } = useAuth();
 
@@ -89,6 +89,11 @@ export function CartDropdown() {
                     bundles={bundles}
                     preowned={preowned}
                     onRemovePreowned={removePreowned}
+                    services={services}
+                    membership={membership}
+                    onRemoveMembership={removeMembership}
+                    onServiceQty={setServiceQty}
+                    onRemoveService={removeService}
                     onQtyChange={setQty}
                     onRemove={removeItem}
                     onRemoveBundle={removeBundle}
@@ -97,7 +102,7 @@ export function CartDropdown() {
                   />
                 </div>
 
-                {(items.length > 0 || bundles.length > 0 || preowned.length > 0) && (
+                {(items.length > 0 || bundles.length > 0 || preowned.length > 0 || services.length > 0 || membership.length > 0) && (
                   <footer className="shrink-0 border-t border-line">
                     <CartPanelFooter
                       subtotal={subtotal}

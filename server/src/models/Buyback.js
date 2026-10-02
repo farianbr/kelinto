@@ -101,6 +101,8 @@ const buybackSchema = new mongoose.Schema(
 
     /** The stock unit this became, once accepted. */
     preowned: { type: mongoose.Schema.Types.ObjectId, ref: 'PreownedDevice', default: null },
+    /** The Phones product it was added to as stock (2026-10-02; `preowned` before). */
+    product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', default: null },
 
     timeline: [
       {

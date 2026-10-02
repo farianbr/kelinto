@@ -6,7 +6,7 @@ import cn from '@/lib/cn';
 import { pressable } from '@/lib/motion';
 import { KIOSK_CLOCKS } from '@shared/kiosk';
 import { kioskPath, useAuth, useSignOut } from '@/hooks/useAuth';
-import { useKioskConfig } from '@/hooks/useKiosk';
+import { useKioskConfig, useSpeech } from '@/hooks/useKiosk';
 import useIdleTimer from '@/hooks/useIdleTimer';
 import { endKioskShopping, useKioskShopping } from '@/lib/kioskShopping';
 import { getBusiness, setBusiness } from '@/store/businessStore';
@@ -40,6 +40,9 @@ export function KioskShoppingBar() {
   const askSignOut = useSignOut();
   const { signOut } = useAuth();
   const navigate = useNavigate();
+  // The warning is read aloud on the website too, under the tablet's own
+  // read-aloud setting: the customer is still standing at the kiosk.
+  const { speak } = useSpeech(active && config?.readAloud !== false);
 
   const leave = useCallback(async () => {
     const business = getBusiness();
@@ -103,6 +106,7 @@ export function KioskShoppingBar() {
         onStay={idle.stillHere}
         onLeave={leave}
         leaveLabel="Sign me out"
+        speak={speak}
       />
     </>
   );

@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion } from '@/lib/motionReact';
 import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react';
 import cn from '@/lib/cn';
 import useToastStore from '@/store/toastStore';

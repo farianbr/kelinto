@@ -42,6 +42,12 @@ const orderItemSchema = new mongoose.Schema(
     // Set on a pre-owned phone's line instead of `product`: one handset, sold
     // once, with its stock number as the SKU.
     preowned: { type: mongoose.Schema.Types.ObjectId, ref: 'PreownedDevice' },
+    // Set on a repair service's line instead of `product` (2026-10-01): labour
+    // bought on the website, carried out at the counter. No stock moves.
+    service: { type: mongoose.Schema.Types.ObjectId, ref: 'Service' },
+    // Set on a membership plan's line (2026-10-02): the tier bought. Placing
+    // the order moves the account onto it (`orderService.activateMembership`).
+    membership: { type: String, enum: ['silver', 'gold', 'platinum'] },
   },
   { _id: false },
 );

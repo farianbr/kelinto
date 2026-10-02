@@ -11,13 +11,15 @@
  * client resolves the same map to draw the image. One copy, so the two can
  * never disagree about which products are visible.
  *
- * The files live in client/public, so they are served from our own origin and
- * there is no CDN in the path. Their names carry the mapping - "iPhone
- * Screen.png" is the screen photo for every iPhone - so adding a photo is
- * dropping a file in that folder and adding one line to PHOTOS below.
+ * The files live in client/public/product-photos/parts (moved from
+ * stock-photos on 2026-10-02, beside the phones' photos), so they are served
+ * from our own origin and there is no CDN in the path. Their names carry the
+ * mapping - "iPhone Screen.webp" is the screen photo for every iPhone - so
+ * adding a photo is dropping a file in that folder and adding one line to
+ * PHOTOS below.
  */
 
-const DIR = '/stock-photos';
+const DIR = '/product-photos/parts';
 
 /**
  * `${brand key} ${part key}` -> filename.

@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { CONDITION_PART_KEYS, CONDITION_VALUES } from '../../../shared/deviceCondition.js';
 
 /**
  * A repair ticket - a device brought in, diagnosed, worked on, collected.
@@ -44,23 +45,18 @@ const TICKET_SOURCES = ['counter', 'kiosk', 'web', 'phone'];
  *
  * Recorded **before** work starts, because it is the shop's protection: a
  * customer who says the camera worked when they handed it over is answered by
- * the row they signed, not by memory. `untested` is a real answer and is
- * distinct from `not_present` - one is a thing nobody checked, the other is a
- * thing that was already missing.
+ * the row they signed, not by memory.
+ *
+ * Each part has its own answers (`shared/deviceCondition.js`, client ruling
+ * 2026-10-02): a screen is "Broken Touch Working", a charging port "Dirty".
+ * The enum is every value any part takes plus the four legacy grades, so a
+ * ticket written before the change still saves; the shared schema checks that
+ * an answer belongs to its part.
  */
-const CONDITION_GRADES = ['working', 'faulty', 'not_present', 'untested'];
+const CONDITION_GRADES = CONDITION_VALUES;
 
 /** The components a counter checks. One row each on the intake form. */
-const CONDITION_PARTS = [
-  'screen',
-  'battery',
-  'chargingPort',
-  'backGlass',
-  'frontCamera',
-  'backCamera',
-  'loudSpeaker',
-  'earSpeaker',
-];
+const CONDITION_PARTS = CONDITION_PART_KEYS;
 
 /**
  * One line of work or one part fitted, priced.

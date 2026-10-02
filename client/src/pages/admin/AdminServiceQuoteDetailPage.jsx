@@ -493,9 +493,9 @@ export function AdminServiceQuoteDetailPage() {
         open={deleting}
         onClose={() => setDeleting(false)}
         title={`Delete ${quote.quoteNumber}?`}
-        body={`The estimate for ${quote.customerName} is destroyed, along with its devices, lines and timeline.${
+        body={`The quote for ${quote.customerName} is destroyed, along with its devices, lines and timeline.${
           converted
-            ? ' The repair ticket it became is kept - it simply stops naming an estimate.'
+            ? ' The repair ticket it became is kept - it simply stops naming a quote.'
             : ''
         } This cannot be undone.`}
         tone="critical"

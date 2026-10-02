@@ -49,7 +49,7 @@ const deleteQuote = asyncHandler(async (req, res) => {
     req,
     action: 'serviceQuote.delete',
     entity: { kind: 'serviceQuote', id: req.params.id, label: result.quoteNumber ?? '' },
-    description: `Deleted estimate ${result.quoteNumber ?? req.params.id}.`,
+    description: `Deleted quote ${result.quoteNumber ?? req.params.id}.`,
   });
 
   res.json(result);
@@ -76,7 +76,7 @@ const convertToTicket = asyncHandler(async (req, res) => {
       id: req.params.id,
       label: result.quote?.quoteNumber ?? '',
     },
-    description: `Estimate ${result.quote?.quoteNumber} became ticket ${result.ticket?.ticketNumber}.`,
+    description: `Quote ${result.quote?.quoteNumber} became ticket ${result.ticket?.ticketNumber}.`,
   });
 
   res.status(201).json(result);

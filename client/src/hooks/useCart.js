@@ -216,6 +216,36 @@ export function useCart() {
     onSuccess: (payload) => queryClient.setQueryData(CART_KEY, payload),
   });
 
+  // ---- repair services (2026-10-01) ------------------------------------------
+  // Server-only for the same reason: a priced thing for an approved account.
+  const addServiceMutation = useMutation({
+    mutationFn: ({ serviceId, qty = 1 }) => api.post('/cart/services', { service: serviceId, qty }),
+    onSuccess: (payload) => queryClient.setQueryData(CART_KEY, payload),
+  });
+
+  const serviceQtyMutation = useMutation({
+    mutationFn: ({ serviceId, qty }) => api.patch(`/cart/services/${serviceId}`, { qty }),
+    onSuccess: (payload) => queryClient.setQueryData(CART_KEY, payload),
+  });
+
+  const removeServiceMutation = useMutation({
+    mutationFn: (serviceId) => api.delete(`/cart/services/${serviceId}`),
+    onSuccess: (payload) => queryClient.setQueryData(CART_KEY, payload),
+  });
+
+  // ---- a membership plan (2026-10-02) ---------------------------------------
+  // "Subscribe" puts the plan in the cart and checkout sells it like anything
+  // else. One at most; the server replaces whatever was there.
+  const setMembershipMutation = useMutation({
+    mutationFn: (tier) => api.post('/cart/membership', { tier }),
+    onSuccess: (payload) => queryClient.setQueryData(CART_KEY, payload),
+  });
+
+  const removeMembershipMutation = useMutation({
+    mutationFn: () => api.delete('/cart/membership'),
+    onSuccess: (payload) => queryClient.setQueryData(CART_KEY, payload),
+  });
+
   const setBundleQty = useCallback(
     (offerId, qty) => bundleQtyMutation.mutate({ offerId, qty }),
     [bundleQtyMutation],
@@ -271,6 +301,8 @@ export function useCart() {
     const priceVisible = isAuthenticated ? Boolean(data?.priceVisible) : false;
     const bundles = isAuthenticated ? (data?.bundles ?? []) : [];
     const preowned = isAuthenticated ? (data?.preowned ?? []) : [];
+    const services = isAuthenticated ? (data?.services ?? []) : [];
+    const membership = isAuthenticated ? (data?.membership ?? []) : [];
 
     // Signed in, every figure is the server's: it is the only side that knows
     // about bundle pricing and which offer applied, and a second implementation
@@ -286,6 +318,8 @@ export function useCart() {
       items,
       bundles,
       preowned,
+      services,
+      membership,
       count,
       subtotal,
       // What the cart actually costs after bundle pricing and the one offer.
@@ -314,7 +348,9 @@ export function useCart() {
       hasStockIssue:
         items.some((item) => item.exceedsStock) ||
         bundles.some((bundle) => !bundle.available) ||
-        preowned.some((line) => !line.available),
+        preowned.some((line) => !line.available) ||
+        services.some((line) => !line.available) ||
+        membership.some((line) => !line.available),
       addItem,
       // Per-consumer: every product card mounts its own useCart, so this is that
       // card's add in flight, not any add anywhere.
@@ -329,6 +365,13 @@ export function useCart() {
       addPreowned: addPreownedMutation.mutateAsync,
       isAddingPreowned: addPreownedMutation.isPending,
       removePreowned: (deviceId) => removePreownedMutation.mutate(deviceId),
+      addService: (serviceId, qty = 1) => addServiceMutation.mutateAsync({ serviceId, qty }),
+      isAddingService: addServiceMutation.isPending,
+      setServiceQty: (serviceId, qty) => serviceQtyMutation.mutate({ serviceId, qty }),
+      removeService: (serviceId) => removeServiceMutation.mutate(serviceId),
+      setMembership: (tier) => setMembershipMutation.mutateAsync(tier),
+      isSettingMembership: setMembershipMutation.isPending,
+      removeMembership: () => removeMembershipMutation.mutate(),
       applyPromo: promoMutation.mutateAsync,
       clearPromo: () => clearPromoMutation.mutate(),
       isApplyingPromo: promoMutation.isPending,
@@ -348,6 +391,11 @@ export function useCart() {
     removeBundle,
     addPreownedMutation,
     removePreownedMutation,
+    addServiceMutation,
+    serviceQtyMutation,
+    removeServiceMutation,
+    setMembershipMutation,
+    removeMembershipMutation,
     promoMutation,
     clearPromoMutation,
   ]);

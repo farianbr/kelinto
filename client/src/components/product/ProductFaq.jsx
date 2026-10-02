@@ -15,10 +15,8 @@ import { pressable } from '@/lib/motion';
  * placeholders are already filled with this product's names.
  *
  * The rows are the shared `Accordion` - the same numbered pills the help centre
- * uses, so a buyer who has read one page knows how the other behaves. The first
- * entry opens on mount: on a product page the question at the top is the one
- * almost everyone is here for, and an all-closed stack makes them click to find
- * that out.
+ * uses, so a buyer who has read one page knows how the other behaves. Every
+ * entry starts closed (client ruling, 2026-10-01), as on every other FAQ.
  *
  * The last column is the escape hatch: nothing here answers it, so ask a person,
  * with the SKU already attached to the message.
@@ -73,7 +71,7 @@ export function ProductFaq({
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px] lg:gap-6">
-        <Accordion className="min-w-0" items={faqs} defaultOpenId={faqs[0]?.id ?? null} />
+        <Accordion className="min-w-0" items={faqs} />
 
         {/* ---- ask a person ------------------------------------------------ */}
         <aside className="lg:sticky lg:top-[calc(var(--chrome-h,158px)+16px)] lg:self-start">

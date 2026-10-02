@@ -7,6 +7,8 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import CartLine from './CartLine';
 import CartBundleLine from './CartBundleLine';
 import CartPreownedLine from './CartPreownedLine';
+import CartServiceLine from './CartServiceLine';
+import CartMembershipLine from './CartMembershipLine';
 import useUiStore from '@/store/uiStore';
 import { useSavedCarts, useAccountMutations } from '@/hooks/useAccount';
 import { pressable } from '@/lib/motion';
@@ -108,8 +110,8 @@ function SavedCartsPicker({ onClose }) {
   );
 }
 
-export function CartPanelBody({ items, bundles = [], preowned = [], onQtyChange, onRemove, onRemoveBundle, onRemovePreowned, onClose, isApproved }) {
-  if (items.length === 0 && bundles.length === 0 && preowned.length === 0) {
+export function CartPanelBody({ items, bundles = [], preowned = [], services = [], membership = [], onRemoveMembership, onQtyChange, onRemove, onRemoveBundle, onRemovePreowned, onServiceQty, onRemoveService, onClose, isApproved }) {
+  if (items.length === 0 && bundles.length === 0 && preowned.length === 0 && services.length === 0 && membership.length === 0) {
     return (
       <>
         <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
@@ -146,11 +148,23 @@ export function CartPanelBody({ items, bundles = [], preowned = [], onQtyChange,
 
   return (
     <ul className="divide-y divide-line">
+      {membership.map((line) => (
+        <CartMembershipLine key={line.tier} line={line} onRemove={onRemoveMembership} compact />
+      ))}
       {bundles.map((bundle) => (
         <CartBundleLine key={bundle.offerId} bundle={bundle} onRemove={onRemoveBundle} compact />
       ))}
       {preowned.map((line) => (
         <CartPreownedLine key={line.deviceId} line={line} onRemove={onRemovePreowned} compact />
+      ))}
+      {services.map((line) => (
+        <CartServiceLine
+          key={line.serviceId}
+          line={line}
+          onQtyChange={onServiceQty}
+          onRemove={onRemoveService}
+          compact
+        />
       ))}
       {items.map((item) => (
         <CartLine

@@ -318,6 +318,14 @@ const userSchema = new mongoose.Schema(
       default: 'standard',
       index: true,
     },
+    /**
+     * When a membership bought on the website runs out, and the order that
+     * bought it (2026-10-02). Set by checkout; empty for a tier staff set by
+     * hand, which has no term. Nothing downgrades an account on this date yet:
+     * it is shown to the customer and to staff, who renew or move them.
+     */
+    membershipRenewsAt: { type: Date, default: null },
+    membershipOrder: { type: mongoose.Schema.Types.ObjectId, ref: 'Order', default: null },
 
     /**
      * Staff-only notes about an account.
@@ -437,6 +445,7 @@ userSchema.methods.toPublic = function toPublic() {
     fieldMemory: Object.fromEntries(this.fieldMemory ?? []),
     accountRep: this.accountRep,
     tier: this.tier ?? 'standard',
+    membershipRenewsAt: this.membershipRenewsAt ?? null,
     approvedAt: this.approvedAt,
     createdAt: this.createdAt,
     // `internalNotes` is deliberately absent: this shape is what the account

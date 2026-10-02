@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion } from '@/lib/motionReact';
 import { Pencil } from 'lucide-react';
 import cn from '@/lib/cn';
 import { StepIndicator } from '@/components/ui/StepIndicator';

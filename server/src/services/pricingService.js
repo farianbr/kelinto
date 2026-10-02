@@ -4,10 +4,13 @@ import '../models/Offer.js';
 import '../models/Order.js';
 import '../models/Product.js';
 import '../models/PreownedDevice.js';
+import '../models/Service.js';
+import { servicePhotoFor } from '../../../shared/catalog.js';
 import ApiError from '../utils/ApiError.js';
 import { DEFAULT_SHIPPING_METHODS } from '../models/Settings.js';
 import { offerStatus } from './offerService.js';
 import { effectivePrice } from './productService.js';
+import { membershipPlan } from './settingsService.js';
 import { TAX_RATE } from '../../../shared/schemas/checkout.js';
 
 /**
@@ -283,11 +286,27 @@ async function priceCart(cart, user, { deliveryCode = 'ground' } = {}) {
     .filter((line) => line.available)
     .reduce((sum, line) => sum + line.lineTotal, 0);
 
+  // ---- repair services (2026-10-01) ---------------------------------------
+  const services = await expandServices(cart);
+  const servicesTotal = services
+    .filter((line) => line.available)
+    .reduce((sum, line) => sum + line.lineTotal, 0);
+  // Tax-exempt services leave the tax base; everything else in the cart pays.
+  const untaxedServices = services
+    .filter((line) => line.available && !line.taxable)
+    .reduce((sum, line) => sum + line.lineTotal, 0);
+
+  // ---- a membership plan (2026-10-02) ------------------------------------
+  const membership = await expandMembership(cart);
+  const membershipTotal = membership
+    .filter((line) => line.available)
+    .reduce((sum, line) => sum + line.lineTotal, 0);
+
   const itemsSubtotal = items.reduce((sum, line) => sum + line.lineTotal, 0);
   const bundlesListTotal = bundles.reduce((sum, bundle) => sum + bundle.listTotal, 0);
   const bundlesCharged = bundles.reduce((sum, bundle) => sum + bundle.lineTotal, 0);
 
-  const subtotal = itemsSubtotal + bundlesListTotal + preownedTotal;
+  const subtotal = itemsSubtotal + bundlesListTotal + preownedTotal + servicesTotal + membershipTotal;
   const bundleDiscount = bundlesListTotal - bundlesCharged;
 
   // ---- shipping, before any offer touches it ------------------------------
@@ -302,7 +321,14 @@ async function priceCart(cart, user, { deliveryCode = 'ground' } = {}) {
     : DEFAULT_SHIPPING_METHODS;
   const method = db().Settings.shippingFor(settings, deliveryCode);
   const afterBundles = subtotal - bundleDiscount;
-  const baseShipping = method.freeOver && afterBundles >= method.freeOver ? 0 : method.cost;
+  // Labour does not travel. A cart holding only services has no parcel, so it
+  // pays no shipping; with parts in it, the parcel is priced as before.
+  const shipsSomething = items.length > 0 || bundles.length > 0 || preowned.some((line) => line.available);
+  const baseShipping = !shipsSomething
+    ? 0
+    : method.freeOver && afterBundles >= method.freeOver
+      ? 0
+      : method.cost;
 
   // ---- the one offer ------------------------------------------------------
   // Rule 3: only loose lines can carry a code. Bundle members are sealed, and
@@ -312,7 +338,9 @@ async function priceCart(cart, user, { deliveryCode = 'ground' } = {}) {
   const evaluationInput = {
     lines: items.map((line) => ({ ...line, product: line.product_ })),
     itemsSubtotal,
-    orderSubtotal: afterBundles - preownedTotal,
+    // Services are sealed like a phone: a parts promotion was not written for
+    // labour. A membership is sealed too: it is a price list of its own.
+    orderSubtotal: afterBundles - preownedTotal - servicesTotal - membershipTotal,
     shippingCost: baseShipping,
   };
 
@@ -361,7 +389,7 @@ async function priceCart(cart, user, { deliveryCode = 'ground' } = {}) {
   const discount = bundleDiscount + promoDiscount;
 
   // Tax follows the money actually changing hands.
-  const taxable = subtotal - discount + shipping;
+  const taxable = subtotal - discount + shipping - untaxedServices;
   const tax = Math.round(taxable * TAX_RATE);
   const total = taxable + tax;
 
@@ -370,6 +398,8 @@ async function priceCart(cart, user, { deliveryCode = 'ground' } = {}) {
     items: items.map(({ product_, ...line }) => line),
     bundles,
     preowned,
+    services,
+    membership,
     subtotal,
     bundleDiscount,
     promoDiscount,
@@ -458,6 +488,49 @@ async function expandPreowned(cart) {
         available: device.status === 'listed',
         priceAtAdd: ref.priceAtAdd,
         priceChanged: ref.priceAtAdd !== device.priceCents,
+      };
+    })
+    .filter(Boolean);
+}
+
+/**
+ * A cart's repair services, priced from the business's live service list.
+ *
+ * A service switched off, or priced at nothing ("quoted on inspection"), is
+ * returned with `available: false` rather than dropped, for the same reason a
+ * sold phone is: the buyer put it there and should see why it cannot be bought.
+ */
+async function expandServices(cart) {
+  const refs = cart.services ?? [];
+  if (refs.length === 0) return [];
+
+  const rows = await db()
+    .Service.find({ _id: { $in: refs.map((ref) => ref.service) } })
+    .lean();
+  const byId = new Map(rows.map((row) => [String(row._id), row]));
+
+  return refs
+    .map((ref) => {
+      const service = byId.get(String(ref.service));
+      if (!service) return null;
+      const unitPrice = service.priceCents ?? 0;
+      return {
+        service: service._id,
+        // A labour line's SKU: stable, short, and never mistaken for a part's.
+        sku: `SVC-${String(service._id).slice(-6).toUpperCase()}`,
+        name: service.name,
+        scopeLabel: service.scopeLabel ?? '',
+        photo: servicePhotoFor(service.name),
+        durationMinutes: service.durationMinutes ?? 0,
+        warrantyDays: service.warrantyDays ?? 0,
+        qty: ref.qty,
+        unitPrice,
+        lineTotal: unitPrice * ref.qty,
+        unitCost: service.costCents > 0 ? service.costCents : undefined,
+        taxable: service.taxable !== false,
+        available: service.isActive !== false && unitPrice > 0,
+        priceAtAdd: ref.priceAtAdd,
+        priceChanged: ref.priceAtAdd !== unitPrice,
       };
     })
     .filter(Boolean);
@@ -556,4 +629,36 @@ function assertBundlesOrderable(bundles) {
   }
 }
 
-export { OfferRejection, resolveCode, priceCart, expandBundles, expandPreowned, assertBundlesOrderable };
+/**
+ * A cart's membership plan, priced from Settings (2026-10-02).
+ *
+ * A list of none or one, so every reader treats it like the other line kinds.
+ * A plan taken off sale since it went in the cart stays visible with
+ * `available: false` and checkout refuses it by name, like a sold phone.
+ * Taxable: a membership is a supply of services. It ships nothing, so a cart
+ * holding only a plan pays no shipping.
+ */
+async function expandMembership(cart) {
+  const tier = cart.membership?.tier;
+  if (!tier) return [];
+  const plan = await membershipPlan(tier);
+  const unitPrice = plan?.priceCents ?? 0;
+  const name = plan?.name ?? tier.charAt(0).toUpperCase() + tier.slice(1);
+  return [
+    {
+      tier,
+      sku: `MBR-${tier.toUpperCase()}`,
+      name: `${name} membership`,
+      interval: plan?.interval ?? 'year',
+      warrantyDays: plan?.warrantyDays ?? null,
+      qty: 1,
+      unitPrice,
+      lineTotal: unitPrice,
+      available: Boolean(plan) && unitPrice > 0,
+      priceAtAdd: cart.membership.priceAtAdd,
+      priceChanged: cart.membership.priceAtAdd !== unitPrice,
+    },
+  ];
+}
+
+export { OfferRejection, resolveCode, priceCart, expandBundles, expandPreowned, expandServices, expandMembership, assertBundlesOrderable };

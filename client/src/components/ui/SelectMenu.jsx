@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Plus } from 'lucide-react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion } from '@/lib/motionReact';
 import cn from '@/lib/cn';
 import useOnClickOutside from '@/hooks/useOnClickOutside';
 import { useDensity, labelSize, hintSize } from './density';
@@ -585,7 +585,6 @@ export function SelectMenu({
           // button announces "Province, Ontario", which is both halves.
           aria-labelledby={label ? `${id}-label ${id}` : undefined}
           aria-label={label ? undefined : srLabel}
-          aria-invalid={error ? true : undefined}
           aria-describedby={describedBy}
           className={cn(
             'flex w-full min-w-0 cursor-pointer items-center gap-1.5 border bg-surface text-ink-900',

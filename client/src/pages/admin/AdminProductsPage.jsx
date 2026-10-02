@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { useForm } from 'react-hook-form';
 import {
   AlertCircle,
   Boxes,
+  Inbox,
   Eye,
   EyeOff,
   Pencil,
@@ -25,7 +26,11 @@ import Badge from '@/components/ui/Badge';
 import { PartVisual } from '@/components/product/PartFrame';
 import PageHeader from '@/components/admin/PageHeader';
 import BadgeExplainer from '@/components/admin/BadgeExplainer';
-import { OpsForm, AdjustForm, ProductForm } from '@/components/admin/StockForms';
+import { OpsForm, AdjustForm } from '@/components/admin/StockForms';
+import { featureEnabled } from '@shared/schemas/features';
+import { useAuth } from '@/hooks/useAuth';
+import TabRow from '@/components/ui/TabRow';
+import BuybackRequests from '@/components/admin/BuybackRequests';
 import KpiRow from '@/components/admin/KpiRow';
 import FilterStrip from '@/components/admin/FilterStrip';
 import DataTable, { CountLine } from '@/components/admin/DataTable';
@@ -36,7 +41,10 @@ import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { useTaxonomy } from '@/hooks/useCatalog';
 import downloadExport from '@/lib/exportDownload';
 import { pressable } from '@/lib/motion';
+import { formatAttribute } from '@shared/catalog';
+import SelectMenu from '@/components/ui/SelectMenu';
 import {
+  useAdminCatalogCategories,
   useAdminInventory,
   useAdminSettings,
   useAdminSuppliers,
@@ -87,11 +95,30 @@ export function AdminProductsPage() {
   const [query, setQuery] = useState(() => searchParamsInit.get('q') ?? '');
   // `+ Create > Product` arrives with `?new=1`; the sentinel is the same one
   // the edit modal already reads.
-  const [editing, setEditing] = useCreateParam('new', null); // product, or 'new'
+  /**
+   * A product is added and edited on its own page since 2026-10-02 (it was a
+   * modal over this list). `+ Create › Product` and old `?new=1` links land
+   * there; a new product starts as the type the list is showing.
+   */
+  const newProduct = () => navigate(`/admin/inventory/new${type === 'all' ? '' : `?type=${type}`}`);
+  const editProduct = (product) => navigate(`/admin/inventory/${product.id}/edit`);
+  const [legacyNew] = useCreateParam('new', null);
+  /**
+   * Phones bought at the kiosk wait here too (2026-10-02: the Pre-owned page
+   * folded into Inventory, because a phone is a product with stock like any
+   * other). The Kiosk buybacks tab is there only where the business buys
+   * phones at all; the server gates its routes on the same flag.
+   */
+  const { features } = useAuth();
+  const buysPhones = featureEnabled(features, 'sales.buyback');
   const [editingOps, setEditingOps] = useState(null);
   const [adjusting, setAdjusting] = useState(null);
   const [selected, setSelected] = useState([]);
   const [searchParams, setSearchParams] = useSearchParams();
+  const tab = buysPhones && searchParams.get('tab') === 'buybacks' ? 'buybacks' : 'stock';
+  function setTab(next) {
+    setSearchParams(next === 'buybacks' ? { tab: 'buybacks' } : {}, { replace: true });
+  }
 
   /**
    * The fallback reorder point this business actually uses.
@@ -105,14 +132,49 @@ export function AdminProductsPage() {
   const { data: settings } = useAdminSettings();
   const lowStockFallback = settings?.operations?.lowStockThreshold ?? LOW_STOCK_THRESHOLD;
   const navigate = useNavigate();
+  // An old `?new=1` link opens the new product page.
+  useEffect(() => {
+    if (legacyNew) navigate('/admin/inventory/new', { replace: true });
+  }, [legacyNew, navigate]);
 
   // The dashboard links to `?stock=low`, so the filter lives in the URL.
   const stock = searchParams.get('stock') ?? 'all';
+
+  /**
+   * One product type at a time, from the URL like the stock pills (taxonomy
+   * phase 1, 2026-10-02). Picking a type turns its features marked "Inventory
+   * column" into columns; across every type there are no shared features to
+   * show, so the columns appear only once a type is chosen.
+   */
+  const { data: allCategories = [] } = useAdminCatalogCategories();
+  const productTypes = allCategories.filter((entry) => entry.kind === 'part');
+  // With one product type there is nothing to pick, so its columns just show.
+  const type = searchParams.get('type') ?? (productTypes.length === 1 ? productTypes[0].slug : 'all');
+  const typeDef = productTypes.find((entry) => entry.slug === type);
+  const featureColumns = (typeDef?.attributes ?? [])
+    .filter((feature) => feature.inventory)
+    .map((feature) => ({
+      key: `feature-${feature.key}`,
+      header: feature.label,
+      priority: 3,
+      sortValue: (product) => product.attributes?.[feature.key] ?? '',
+      render: (product) => (
+        <span className="text-sm text-ink-600">{formatAttribute(feature, product.attributes?.[feature.key]) || '–'}</span>
+      ),
+    }));
+
+  function setType(next) {
+    const params = new URLSearchParams(searchParams);
+    if (next === 'all') params.delete('type');
+    else params.set('type', next);
+    setSearchParams(params, { replace: true });
+  }
 
   const { data: tree } = useTaxonomy();
   const { data, isLoading } = useAdminInventory({
     q: query || undefined,
     stock: stock === 'all' ? undefined : stock,
+    category: type === 'all' ? undefined : type,
   });
   const { data: supplierData } = useAdminSuppliers({ status: 'active' });
   // The same queue the notification bell counts, so the bar and the badge can
@@ -281,6 +343,8 @@ export function AdminProductsPage() {
       ),
     },
   ];
+  // The chosen type's features sit after Product and Model.
+  columns.splice(2, 0, ...featureColumns);
 
   const rowMenu = [
     {
@@ -289,7 +353,7 @@ export function AdminProductsPage() {
       icon: Boxes,
       onSelect: (product) => navigate(`/admin/inventory/${product.id}`),
     },
-    { key: 'edit', label: 'Edit product', icon: Pencil, onSelect: setEditing },
+    { key: 'edit', label: 'Edit product', icon: Pencil, onSelect: editProduct },
     {
       key: 'ops',
       label: 'Reorder point & cost',
@@ -312,6 +376,28 @@ export function AdminProductsPage() {
     },
   ];
 
+  const tabRow = buysPhones ? (
+    <TabRow
+      panel
+      value={tab}
+      onChange={setTab}
+      tabs={[
+        { key: 'stock', label: 'Stock', icon: Boxes },
+        { key: 'buybacks', label: 'Kiosk buybacks', icon: Inbox },
+      ]}
+    />
+  ) : null;
+
+  if (tab === 'buybacks') {
+    return (
+      <>
+        <PageHeader icon={ADMIN_PAGE.icon} title={ADMIN_PAGE.title} description={ADMIN_PAGE.description} />
+        {tabRow}
+        <BuybackRequests />
+      </>
+    );
+  }
+
   return (
     <>
       <PageHeader
@@ -327,12 +413,14 @@ export function AdminProductsPage() {
               <Truck className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
               Purchase orders
             </Link>
-            <Button icon={Plus} onClick={() => setEditing('new')}>
+            <Button icon={Plus} onClick={newProduct}>
               New product
             </Button>
           </>
         }
       />
+
+      {tabRow}
 
       {/* Every tile describes the whole catalogue, not the filtered set - a
           figure that moved with the pills would contradict the pills. */}
@@ -394,6 +482,22 @@ export function AdminProductsPage() {
           pills={STOCK_FILTERS.map((pill) => ({ ...pill, count: counts[pill.value] }))}
           activePill={stock}
           onPillChange={setStock}
+          actions={
+            productTypes.length > 1 ? (
+              <SelectMenu
+                size="sm"
+                srLabel="Product type"
+                align="right"
+                className="w-44"
+                options={[
+                  { value: 'all', label: 'Every product type' },
+                  ...productTypes.map((entry) => ({ value: entry.slug, label: entry.name })),
+                ]}
+                value={type}
+                onChange={setType}
+              />
+            ) : null
+          }
           onExport={(format) => downloadExport('inventory', format, { q: query || undefined, stock: stock === 'all' ? undefined : stock })}
         />
 
@@ -441,42 +545,6 @@ export function AdminProductsPage() {
 
       </Panel>
 
-      <Modal
-        open={Boolean(editing)}
-        onClose={() => setEditing(null)}
-        title={editing === 'new' ? 'New product' : 'Edit product'}
-        size="lg"
-        align="top"
-      >
-        {editing && (
-          <ProductForm
-            product={editing === 'new' ? null : editing}
-            tree={tree}
-            isPending={isPending}
-            error={error}
-            onCancel={() => setEditing(null)}
-            onSubmit={(values) => {
-              if (editing === 'new') {
-                createProduct.mutate(values, {
-                  onSuccess: (payload) => {
-                    setEditing(null);
-                    // A new product needs a reorder point and a cost before it
-                    // is much use, and both live on its detail page - so that is
-                    // where creating one lands. An edit stays put: the staff member
-                    // was already looking at the list they wanted.
-                    if (payload?.product?.id) navigate(`/admin/inventory/${payload.product.id}`);
-                  },
-                });
-              } else {
-                updateProduct.mutate(
-                  { id: editing.id, ...values },
-                  { onSuccess: () => setEditing(null) },
-                );
-              }
-            }}
-          />
-        )}
-      </Modal>
 
       <Modal
         open={Boolean(editingOps)}

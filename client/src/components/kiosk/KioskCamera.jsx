@@ -26,13 +26,20 @@ function toDataUrl(source, width, height, mirror = false) {
 /**
  * The seller's photo, taken on the tablet's front camera.
  *
- * ## Live preview first, file picker as the fallback
+ * ## The live camera, and nothing else (client ruling, 2026-10-01)
  *
  * `getUserMedia` gives a live mirror and one tap to take the picture, which is
- * what a person standing at a tablet expects. It needs HTTPS and permission,
- * and some tablets refuse it; then a plain file input with `capture="user"`
- * opens the device's own camera instead. Either way the result is the same
- * JPEG data URL, sent with the sale and stored privately by the server.
+ * what a person standing at a tablet expects. There used to be a fallback, a
+ * file input with `capture="user"`, and on several tablets and every desktop
+ * browser that opens the photo gallery rather than the camera: a seller could
+ * hand in somebody else's picture, which defeats the point of taking one. So
+ * the only way in is the live camera. When it will not open, the screen says
+ * so and offers to try again. The usual causes are a page not served over
+ * HTTPS (the camera API does not exist there) and camera permission refused
+ * for the site, both of which staff fix once in the tablet's browser.
+ *
+ * The result is a JPEG data URL, sent with the sale and stored privately by
+ * the server.
  *
  * The stream is stopped the moment it is not needed, so the camera light on
  * the tablet is never on for the next customer.
@@ -90,18 +97,6 @@ export function KioskCamera({ value, onChange }) {
     start();
   }
 
-  function fromFile(event) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const url = URL.createObjectURL(file);
-    const image = new Image();
-    image.onload = () => {
-      onChange(toDataUrl(image, image.naturalWidth, image.naturalHeight));
-      URL.revokeObjectURL(url);
-    };
-    image.src = url;
-  }
-
   if (value) {
     return (
       <div className="text-center">
@@ -124,13 +119,13 @@ export function KioskCamera({ value, onChange }) {
     return (
       <div className="text-center">
         <p className="mb-4 text-lg text-ink-500">
-          This tablet did not open its camera here. Use the button to open it instead.
+          The camera did not open. Try again, or ask a member of staff to allow the camera on
+          this tablet.
         </p>
-        <label className="inline-flex min-h-16 cursor-pointer items-center gap-3 rounded-xl bg-brand-gradient px-8 font-display text-xl font-bold text-white">
+        <KioskButton onClick={start} className="mx-auto">
           <Camera className="size-6" strokeWidth={2} aria-hidden="true" />
-          Open the camera
-          <input type="file" accept="image/*" capture="user" className="sr-only" onChange={fromFile} />
-        </label>
+          Try the camera again
+        </KioskButton>
       </div>
     );
   }

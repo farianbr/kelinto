@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
-import { useSearchParams } from 'react-router';
+import { useLocation, useSearchParams } from 'react-router';
 import { useFilterStore, toSearchParams } from '@/store/filterStore';
 
 /**
@@ -26,10 +26,37 @@ import { useFilterStore, toSearchParams } from '@/store/filterStore';
  * visit survived a navigation that never mentioned it, so `/shop` could show a
  * narrowed catalogue with nothing on screen explaining why. A URL is the whole
  * filter state, not a patch over it.
+ *
+ * ## One owner at a time (2026-10-02)
+ *
+ * Parts, Phones and Services are all `CatalogPage`, so moving between two of
+ * them unmounts one copy of this hook and mounts another against the same
+ * store. React runs the arriving page's layout effects (its hydration) BEFORE
+ * the leaving page's passive cleanup, so for one commit both were live:
+ *
+ * - the leaving page's subscription saw the arriving page's hydration and
+ *   called its own `setSearchParams`, which resolves `?…` against the page it
+ *   was rendered on. That navigated BACK to the page being left; its hydration
+ *   then did the same to the other one, and the website bounced between
+ *   /services and /pre-owned until something broke the tie.
+ * - the leaving page's cleanup then called `resetAll()`, wiping the filter the
+ *   arriving page had just read from its URL.
+ *
+ * So the page that hydrated last owns the store (`owner`), and only the owner
+ * writes the URL or resets on the way out. The URL write also checks that the
+ * browser is still on this page's pathname, which covers a page that never
+ * claims the store (the homepage clearing it on arrival).
  */
+let owner = null;
+
 export function useFilterUrlSync() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const { pathname } = useLocation();
   const hydrated = useRef(false);
+  const token = useRef(null);
+  if (token.current === null) token.current = Symbol('filter-url-sync');
+  const ownPath = useRef(pathname);
+  ownPath.current = pathname;
 
   // The query string this hook last wrote out. Used to tell OUR OWN url
   // updates apart from a real navigation - without it, re-hydrating on every
@@ -43,6 +70,10 @@ export function useFilterUrlSync() {
     // A change this hook caused itself. The store already holds it.
     if (hydrated.current && current === lastWritten.current) return;
 
+    // Claimed before the store is touched, so a leaving page's subscription
+    // sees it has lost the store as soon as the first write below lands.
+    owner = token.current;
+
     const store = useFilterStore.getState();
     const get = (key) => searchParams.get(key) || null;
 
@@ -51,6 +82,8 @@ export function useFilterUrlSync() {
       brand: get('brand'),
       series: get('series'),
       model: get('model'),
+      level5: get('level5'),
+      level6: get('level6'),
     };
     // Always, not only when something is present: an absent level has to be
     // cleared, or it survives from the last visit.
@@ -66,6 +99,12 @@ export function useFilterUrlSync() {
     store.setFacet('inStockOnly', Boolean(get('inStockOnly')));
     store.setFacet('priceMin', get('priceMin') ? Number(get('priceMin')) : null);
     store.setFacet('priceMax', get('priceMax') ? Number(get('priceMax')) : null);
+    // Feature filters, `a.<key>=v1,v2` (2026-10-02).
+    const attrs = {};
+    for (const [name, value] of searchParams.entries()) {
+      if (name.startsWith('a.') && value) attrs[name.slice(2)] = value.split(',').filter(Boolean);
+    }
+    store.setFacet('attrs', attrs);
     store.setQuery(get('q') ?? '');
     store.setSort(get('sort') ?? 'relevance');
     store.setPage(get('page') ? Number(get('page')) : 1);
@@ -94,7 +133,9 @@ export function useFilterUrlSync() {
     let live = true;
 
     const unsubscribe = useFilterStore.subscribe((state) => {
-      if (!live || !hydrated.current) return;
+      if (!live || !hydrated.current || owner !== token.current) return;
+      // Navigated away, and the cleanup has not run yet.
+      if (window.location.pathname !== ownPath.current) return;
 
       // Shared with the homepage, which builds its `/shop` link the same way.
       const next = toSearchParams(state);
@@ -110,6 +151,15 @@ export function useFilterUrlSync() {
     return () => {
       live = false;
       unsubscribe();
+
+      // Another shop page has already hydrated the store from its own URL;
+      // resetting now would throw that filter away.
+      if (owner !== token.current) {
+        hydrated.current = false;
+        lastWritten.current = null;
+        return;
+      }
+      owner = null;
 
       /**
        * The filter dies with the page that owned it.

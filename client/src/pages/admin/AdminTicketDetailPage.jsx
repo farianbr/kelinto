@@ -24,12 +24,8 @@ import {
 import cn from '@/lib/cn';
 import { apiUrl } from '@/lib/api';
 import { money, date, dateTime, count as formatCount } from '@/lib/format';
-import {
-  CONDITION_GRADES,
-  CONDITION_PARTS,
-  TICKET_STATUSES,
-  TICKET_STATUS_LABELS,
-} from '@shared/schemas/admin';
+import { TICKET_STATUSES, TICKET_STATUS_LABELS } from '@shared/schemas/admin';
+import { conditionAnswered, conditionProblems } from '@shared/deviceCondition';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
 import Modal from '@/components/ui/Modal';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
@@ -1032,20 +1028,13 @@ function WorkCard({ ticket, balance }) {
  * "works" are listed, because those are the ones worth checking first.
  */
 function CustomerCondition({ condition }) {
-  const answered = CONDITION_PARTS.filter((part) => condition?.[part.key]);
-  if (answered.length === 0) return null;
-
-  const labelOf = Object.fromEntries(CONDITION_GRADES.map((grade) => [grade.value, grade.label]));
-  const flagged = answered.filter((part) => condition[part.key] !== 'working');
+  if (!conditionAnswered(condition)) return null;
+  const problems = conditionProblems(condition);
 
   return (
     <p className="mb-2 border-l-2 border-line-strong pl-2.5 text-sm text-ink-600">
       <span className="font-medium text-ink-900">Customer says: </span>
-      {flagged.length === 0
-        ? 'everything works'
-        : flagged
-            .map((part) => `${part.label} ${labelOf[condition[part.key]].toLowerCase()}`)
-            .join(' · ')}
+      {problems || 'everything is good'}
     </p>
   );
 }

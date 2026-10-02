@@ -39,6 +39,18 @@ const preownedDeviceSchema = new mongoose.Schema(
     brand: { type: String, trim: true, maxlength: 60 },
     series: { type: String, trim: true, maxlength: 120 },
     model: { type: String, trim: true, maxlength: 120, required: true },
+    /**
+     * Where the phone sits in the Phones taxonomy (2026-10-01), so the Phones
+     * page filters it the way the Parts page filters a part. Resolved from the
+     * four names above by `catalogTaxonomyService.resolvePhone` whenever the
+     * phone is listed or edited, creating any level the tree is missing: the
+     * names are what staff and the kiosk actually write, and a listed phone the
+     * finder cannot reach is a phone nobody buys.
+     */
+    deviceTypeSlug: { type: String, index: true },
+    brandSlug: { type: String, index: true },
+    seriesSlug: { type: String, index: true },
+    modelSlug: { type: String, index: true },
     storage: { type: String, trim: true, maxlength: 20 },
     colour: { type: String, trim: true, maxlength: 40 },
     /** Staff only. Never in a website payload. */

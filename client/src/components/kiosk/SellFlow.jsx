@@ -7,9 +7,9 @@ import { useKioskMutations } from '@/hooks/useKiosk';
 import KioskStepper from './KioskStepper';
 import KioskOption from './KioskOption';
 import KioskCamera from './KioskCamera';
-import KioskConditionPicker, { conditionSummary } from './KioskConditionPicker';
+import { conditionSteps, conditionSummary, FIRST_CONDITION_STEP } from './KioskConditionPicker';
 import { deviceSteps } from './deviceSteps';
-import { FIND_BLANK, SummaryRow, findSteps, hasNumber, isKnown, isNew, looksLikeEmail } from './customerSteps';
+import { FIND_BLANK, SummaryRow, findSteps, hasNumber, isKnown, isNew, looksLikeEmail, nameStep } from './customerSteps';
 
 /**
  * "Sell your phone" (Sales § Sell your phone): a customer offers us a phone.
@@ -99,33 +99,7 @@ export function SellFlow({ tree, speak, chrome, onDone }) {
       ...findSteps(lookup),
 
       // ---- a new seller -----------------------------------------------------
-      {
-        key: 'name',
-        when: isNew,
-        prompt: "What's your name?",
-        hint: 'As it appears on your photo ID.',
-        valid: (a) => a.firstName.trim().length > 0 && a.lastName.trim().length > 0,
-        confirm: (a) => `Nice to meet you, ${a.firstName.trim()}.`,
-        render: ({ answers: a, set }) => (
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Input
-              label="First name"
-              required
-              autoComplete="given-name"
-              value={a.firstName}
-              onChange={(event) => set('firstName', event.target.value)}
-              autoFocus
-            />
-            <Input
-              label="Last name"
-              required
-              autoComplete="family-name"
-              value={a.lastName}
-              onChange={(event) => set('lastName', event.target.value)}
-            />
-          </div>
-        ),
-      },
+      nameStep({ hint: 'As it appears on your photo ID.' }),
       {
         key: 'phone',
         when: isNew,
@@ -277,14 +251,7 @@ export function SellFlow({ tree, speak, chrome, onDone }) {
           />
         ),
       },
-      {
-        key: 'condition',
-        prompt: 'What state is it in?',
-        hint: 'Be honest: our team checks it before making you an offer.',
-        render: ({ answers: a, set }) => (
-          <KioskConditionPicker value={a.condition} onChange={(value) => set('condition', value)} />
-        ),
-      },
+      ...conditionSteps({ hint: 'Be honest: our team checks it before making you an offer.' }),
       {
         key: 'confirm',
         prompt: 'Is everything right?',
@@ -338,7 +305,7 @@ export function SellFlow({ tree, speak, chrome, onDone }) {
                 <SummaryRow
                   label="Condition"
                   value={conditionSummary(a.condition)}
-                  onEdit={edit('condition')}
+                  onEdit={edit(FIRST_CONDITION_STEP)}
                 />
               </dl>
 

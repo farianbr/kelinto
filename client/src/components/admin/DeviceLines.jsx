@@ -7,10 +7,13 @@ import Textarea from '@/components/ui/Textarea';
 import Button from '@/components/ui/Button';
 import SelectField from '@/components/ui/SelectField';
 import { pressable } from '@/lib/motion';
-import { CONDITION_GRADES, CONDITION_PARTS } from '@shared/schemas/admin';
+import { CONDITION_PARTS } from '@shared/deviceCondition';
 
-/** The intake grid's options, with an explicit "not yet answered" first. */
-const CONDITION_OPTIONS = [{ value: '', label: ' - select - ' }, ...CONDITION_GRADES];
+/**
+ * The intake grid's options for one part, with an explicit "not yet answered"
+ * first. Each part has its own answers (`shared/deviceCondition.js`).
+ */
+const conditionOptions = (part) => [{ value: '', label: ' - select - ' }, ...part.options];
 
 /**
  * The device / services / parts editor, shared by the repair ticket and the
@@ -224,7 +227,8 @@ function DeviceBlock({ control, register, setValue, index, canRemove, onRemove, 
               control={control}
               name={`devices.${index}.condition.${part.key}`}
               label={part.label}
-              options={CONDITION_OPTIONS}
+              required
+              options={conditionOptions(part)}
             />
           ))}
         </div>

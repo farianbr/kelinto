@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { Check, Lock, PackageX, ShoppingCart } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion } from '@/lib/motionReact';
 import cn from '@/lib/cn';
 import { ease, pressable } from '@/lib/motion';
 import { money, productTitle } from '@/lib/format';
@@ -12,6 +12,7 @@ import MarketCompare from './MarketCompare';
 import { useCart } from '@/hooks/useCart';
 import useUiStore from '@/store/uiStore';
 import { useAuth } from '@/hooks/useAuth';
+import { useCatalogConfig } from '@/lib/catalogs';
 import Spinner from '@/components/ui/Spinner';
 
 /**
@@ -30,6 +31,8 @@ export function ProductCard({ product }) {
   const openCartAfterAdd = useUiStore((s) => s.openCartAfterAdd);
   const openAccount = useUiStore((s) => s.openAccount);
   const { isAuthenticated } = useAuth();
+  // The type's own grade names for the badge (grades per type).
+  const catalog = useCatalogConfig();
 
   const outOfStock = !product.inStock;
   const gated = !product.priceVisible;
@@ -124,7 +127,7 @@ export function ProductCard({ product }) {
           </Link>
         </PartFrame>
 
-        <GradeBadge grade={product.grade} className="absolute left-2 top-2 @min-[200px]:left-3 @min-[200px]:top-3" />
+        <GradeBadge grade={product.grade} grades={catalog.grades} className="absolute left-2 top-2 @min-[200px]:left-3 @min-[200px]:top-3" />
 
         {/* A bare number in a coloured circle here read as a second grade stamp
             same shape, same corner of the same image. This is a labelled pill on

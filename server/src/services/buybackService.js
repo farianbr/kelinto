@@ -1,20 +1,22 @@
 import { db } from '../db/models.js';
 import { currentContext } from '../db/context.js';
 import '../models/Buyback.js';
-import '../models/PreownedDevice.js';
+import '../models/Product.js';
 import { CONDITION_PARTS } from '../models/Ticket.js';
 import '../models/User.js';
 import '../models/Settings.js';
 import { DEFAULT_PAYMENT_METHODS } from '../models/Settings.js';
 import ApiError from '../utils/ApiError.js';
 import secrets from '../utils/secrets.js';
-import { canSeePricing } from '../middleware/auth.js';
 import privateStorage from './privateStorageService.js';
-import storage from './storageService.js';
 import storeCreditService from './storeCreditService.js';
 import notificationService from './notificationService.js';
 import auditService from './auditService.js';
 import { resolveCustomer, readCustomerToken } from './kioskService.js';
+import { nameCase } from '../../../shared/kiosk.js';
+import { categoryGrades } from './catalogService.js';
+import { phoneProductFor } from './phoneStockService.js';
+import { applyStockMovement } from './purchaseService.js';
 
 /**
  * Buying phones from customers, and selling them on (Sales § Sell your phone).
@@ -24,14 +26,15 @@ import { resolveCustomer, readCustomerToken } from './kioskService.js';
  * 1. **The kiosk** (`sell`): a customer offers a phone. The sale is recorded
  *    as a `Buyback` with a fresh photo of the seller and, the first time, their
  *    photo ID, and the phone is handed to staff.
- * 2. **Inventory › Pre-owned › Requests** (`accept` / `decline`): a staff member
+ * 2. **Inventory › Kiosk buybacks** (`accept` / `decline`): a staff member
  *    agrees a price with the customer at the counter, records what was paid and
- *    how, and the phone becomes a `PreownedDevice` in stock. Paid in store
- *    credit, the amount goes onto the customer's account through
- *    `storeCreditService`, the only place a balance moves.
- * 3. **The website** (`publicList`, and the cart's pre-owned line): listed
- *    phones are sold like anything else, prices shown only to approved
- *    accounts (client ruling, 2026-09-29).
+ *    how, and the phone is added to stock: one more on its product in the
+ *    Phones type (`phoneStockService`, since 2026-10-02; a `PreownedDevice`
+ *    per handset before). Paid in store credit, the amount goes onto the
+ *    customer's account through `storeCreditService`, the only place a
+ *    balance moves.
+ * 3. **The website**: that product is sold like any other, through the same
+ *    grid, card, page and cart, prices shown only to approved accounts.
  * 4. **The customer's account** (`accountList`): "Phones you sold us".
  */
 
@@ -132,66 +135,13 @@ function shapeBuyback(doc, methods = []) {
         : null,
     },
     preownedId: doc.preowned ? String(doc.preowned._id ?? doc.preowned) : null,
+    // The product it was added to (2026-10-02), for the link to Inventory.
+    productId: doc.product ? String(doc.product._id ?? doc.product) : null,
     timeline: (doc.timeline ?? []).map((entry) => ({
       status: entry.status,
       at: entry.at,
       note: entry.note ?? null,
     })),
-  };
-}
-
-/** The staff shape of a unit in stock. Carries cost and IMEI; never sent to a customer. */
-function shapePreownedAdmin(doc) {
-  return {
-    id: String(doc._id),
-    stockNumber: doc.stockNumber,
-    title: deviceTitle(doc),
-    category: doc.category ?? null,
-    brand: doc.brand ?? null,
-    series: doc.series ?? null,
-    model: doc.model,
-    storage: doc.storage ?? null,
-    colour: doc.colour ?? null,
-    imei: doc.imei ?? null,
-    grade: doc.grade,
-    gradeLabel: GRADE_LABELS[doc.grade] ?? doc.grade,
-    condition: mapOf(doc.condition),
-    description: doc.description ?? '',
-    photos: (doc.photos ?? []).map((key) => storage.urlOf(key)),
-    costCents: doc.costCents ?? 0,
-    priceCents: doc.priceCents,
-    status: doc.status,
-    listedAt: doc.listedAt ?? null,
-    soldAt: doc.soldAt ?? null,
-    buybackId: doc.buyback ? String(doc.buyback._id ?? doc.buyback) : null,
-    buybackNumber: doc.buyback?.number ?? null,
-    orderId: doc.order ? String(doc.order._id ?? doc.order) : null,
-    orderNumber: doc.order?.orderNumber ?? null,
-    createdAt: doc.createdAt,
-  };
-}
-
-/**
- * The website's shape. No IMEI, no cost, no condition grid, and **no price for
- * anybody who is not an approved account**: the same server-side gate as the
- * catalogue (Instructions §5.3), not a blur.
- */
-function shapePreownedPublic(doc, user) {
-  const priced = canSeePricing(user);
-  return {
-    id: String(doc._id),
-    stockNumber: doc.stockNumber,
-    title: deviceTitle(doc),
-    brand: doc.brand ?? null,
-    model: doc.model,
-    storage: doc.storage ?? null,
-    colour: doc.colour ?? null,
-    grade: doc.grade,
-    gradeLabel: GRADE_LABELS[doc.grade] ?? doc.grade,
-    description: doc.description ?? '',
-    photos: (doc.photos ?? []).map((key) => storage.urlOf(key)),
-    priceVisible: priced,
-    ...(priced ? { priceCents: doc.priceCents } : {}),
   };
 }
 
@@ -289,12 +239,12 @@ async function sell(intake, req) {
     title: `${buyback.number}: ${deviceTitle(buyback.device)} to price`,
     detail: `${user.contactName} · sold at the kiosk`,
     entity: { kind: 'buyback', id: buyback.number, label: buyback.number },
-    href: `/admin/preowned/requests/${buyback._id}`,
+    href: `/admin/inventory/buybacks/${buyback._id}`,
   });
 
   return {
     number: buyback.number,
-    firstName: intake.customerToken ? '' : String(intake.firstName ?? '').trim(),
+    firstName: intake.customerToken ? '' : nameCase(intake.firstName ?? ''),
   };
 }
 
@@ -427,30 +377,41 @@ async function acceptBuyback(id, body, req) {
   body = { ...body, condition: graded };
   const adminId = req.user?._id ?? null;
 
-  const existing = doc.preowned ? await db().PreownedDevice.findById(doc.preowned) : null;
-  const unit =
-    existing ??
-    (await db().PreownedDevice.create({
-      stockNumber: await nextNumber('PreownedDevice', 'stockNumber', 'PO-'),
-      buyback: doc._id,
-      business: doc.business ?? null,
-      category: doc.device?.category,
-      brand: doc.device?.brand,
-      series: doc.device?.series,
-      model: doc.device?.model,
-      storage: doc.device?.storage,
-      colour: doc.device?.colour,
-      imei: doc.device?.imei,
-      grade: body.grade,
-      condition: body.condition && Object.keys(body.condition).length ? body.condition : undefined,
-      description: body.description || undefined,
-      costCents: purchasePriceCents,
-      priceCents: sellingPriceCents,
-      status: body.list ? 'listed' : 'in_stock',
-      listedAt: body.list ? now : null,
-    }));
+  /**
+   * One more in stock on the phone's product in Inventory (2026-10-02, phones
+   * are products with stock): the product for this model, storage, colour and
+   * grade, made the first time that variant arrives at the selling price set
+   * here. The IMEI goes on the stock movement, so the handset can still be
+   * traced to the customer who sold it. A second press finds the product it
+   * already added to and adds nothing more.
+   */
+  const grades = await categoryGrades('phones');
+  const grade = grades.find((entry) => entry.value === body.grade || entry.value === String(body.grade).toUpperCase())?.value;
+  if (!grade) throw ApiError.badRequest('Pick one of the Phones grades.', 'GRADE_UNKNOWN');
 
-  doc.preowned = unit._id;
+  let product = doc.product ? await db().Product.findById(doc.product) : null;
+  if (!product) {
+    ({ product } = await phoneProductFor({
+      ...(doc.device?.toObject?.() ?? doc.device ?? {}),
+      grade,
+      priceCents: sellingPriceCents,
+      costCents: purchasePriceCents,
+      description: body.description || undefined,
+      isActive: Boolean(body.list),
+    }));
+    await applyStockMovement({
+      product: product._id,
+      type: 'purchase',
+      qtyChange: 1,
+      unitCost: purchasePriceCents,
+      reference: { kind: 'buyback', id: doc._id, label: doc.number },
+      note: doc.device?.imei ? `Bought at the kiosk · IMEI ${doc.device.imei}` : 'Bought at the kiosk',
+      createdBy: adminId,
+      business: doc.business ?? undefined,
+    });
+    doc.product = product._id;
+  }
+  const unit = { stockNumber: product.sku };
 
   if (body.payoutMethod === 'store-credit' && purchasePriceCents > 0) {
     await storeCreditService.allocate(
@@ -517,109 +478,6 @@ async function declineBuyback(id, { reason }, req) {
   return getBuyback(doc._id);
 }
 
-// ---- the ERP: stock -----------------------------------------------------------
-
-async function listPreowned({ status = 'available', q = '' } = {}) {
-  const query = {};
-  if (status === 'available') query.status = { $in: ['in_stock', 'listed'] };
-  else if (status && status !== 'all') query.status = status;
-  const text = String(q ?? '').trim();
-  if (text) {
-    const rx = new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-    query.$or = [{ stockNumber: rx }, { model: rx }, { brand: rx }, { imei: rx }];
-  }
-
-  const [rows, counts] = await Promise.all([
-    db()
-      .PreownedDevice.find(query)
-      .sort({ createdAt: -1 })
-      .limit(300)
-      .populate('buyback', 'number')
-      .populate('order', 'orderNumber')
-      .lean(),
-    db().PreownedDevice.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
-  ]);
-
-  return {
-    devices: rows.map(shapePreownedAdmin),
-    counts: Object.fromEntries(counts.map((row) => [row._id, row.count])),
-  };
-}
-
-/**
- * Edit a unit in stock: its price, grade, words and photos, and whether it is
- * on the website.
- *
- * A `sold` unit is closed: its price is what somebody paid, and relisting it
- * would offer a phone that is no longer here. Photos follow the upload
- * lifecycle every other record uses (`claim`, `releaseReplaced`), so a photo
- * removed from a listing is deleted from the bucket rather than orphaned.
- */
-async function updatePreowned(id, body, req) {
-  const unit = await db().PreownedDevice.findById(id);
-  if (!unit) throw ApiError.notFound('That phone is not in stock.', 'PREOWNED_NOT_FOUND');
-  if (unit.status === 'sold') {
-    throw ApiError.conflict(`${unit.stockNumber} has been sold and cannot be changed.`, 'PREOWNED_SOLD');
-  }
-
-  const owner = currentContext()?.code;
-  const before = { ...unit.toObject() };
-
-  if (body.sellingPriceDollars != null) unit.priceCents = cents(body.sellingPriceDollars);
-  if (body.grade) unit.grade = body.grade;
-  if (body.description != null) unit.description = body.description || undefined;
-
-  if (body.photos) {
-    for (const url of body.photos) {
-      if (!storage.isAllowedUrl(url, owner)) {
-        throw ApiError.badRequest('A photo must be uploaded here, not linked.', 'PHOTO_NOT_OURS');
-      }
-    }
-    const keys = body.photos.map((url) => storage.toKey(url)).filter(Boolean);
-    await storage.claim(body.photos, owner);
-    await storage.releaseReplaced(
-      (unit.photos ?? []).map((key) => storage.urlOf(key)),
-      body.photos,
-      owner,
-    );
-    unit.photos = keys;
-  }
-
-  if (body.status && body.status !== unit.status) {
-    unit.status = body.status;
-    if (body.status === 'listed') unit.listedAt = new Date();
-  }
-
-  await unit.save();
-
-  await auditService.recordChange({
-    req,
-    action: 'preowned.update',
-    entity: { kind: 'preowned', id: String(unit._id), label: unit.stockNumber },
-    before,
-    after: unit.toObject(),
-    fields: ['priceCents', 'grade', 'description', 'status', 'photos'],
-  });
-
-  const fresh = await db()
-    .PreownedDevice.findById(unit._id)
-    .populate('buyback', 'number')
-    .populate('order', 'orderNumber')
-    .lean();
-  return { device: shapePreownedAdmin(fresh) };
-}
-
-// ---- the website and the account -----------------------------------------------
-
-async function publicList(user) {
-  const rows = await db()
-    .PreownedDevice.find({ status: 'listed' })
-    .sort({ listedAt: -1, createdAt: -1 })
-    .limit(200)
-    .lean();
-  return { devices: rows.map((row) => shapePreownedPublic(row, user)) };
-}
-
 /**
  * "Phones you sold us", on the customer's own account.
  *
@@ -659,9 +517,6 @@ export {
   photo,
   acceptBuyback,
   declineBuyback,
-  listPreowned,
-  updatePreowned,
-  publicList,
   accountList,
 };
 export default {
@@ -672,8 +527,5 @@ export default {
   photo,
   acceptBuyback,
   declineBuyback,
-  listPreowned,
-  updatePreowned,
-  publicList,
   accountList,
 };

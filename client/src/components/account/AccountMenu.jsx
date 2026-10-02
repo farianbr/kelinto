@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useState } from 'react';
 import { NavLink } from 'react-router';
 import { ArrowUpRight, LogOut, ShieldCheck } from 'lucide-react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion } from '@/lib/motionReact';
 import cn from '@/lib/cn';
 import { ACCOUNT_NAV_ITEMS } from '@shared/schemas/account';
 import { accountIcon } from './accountIcons';

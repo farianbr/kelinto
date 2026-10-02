@@ -6,7 +6,7 @@ import PhoneField from '@/components/ui/PhoneField';
 import { useKioskMutations } from '@/hooks/useKiosk';
 import KioskStepper from './KioskStepper';
 import KioskOption from './KioskOption';
-import KioskConditionPicker, { conditionSummary } from './KioskConditionPicker';
+import { conditionSteps, conditionSummary, FIRST_CONDITION_STEP } from './KioskConditionPicker';
 import { deviceSteps } from './deviceSteps';
 import {
   FIND_BLANK,
@@ -16,6 +16,7 @@ import {
   isKnown,
   isNew,
   looksLikeEmail,
+  nameStep,
 } from './customerSteps';
 
 /**
@@ -27,9 +28,13 @@ import {
  * email, sees a masked "Is this you?", and goes straight to their device. A new
  * customer (or one who said "Not me") gives a name, a phone, whether they have
  * that phone with them, an email and how they want to hear about the repair.
- * Then everybody: the device, what is wrong, notes, the passcode, the
- * condition, and a confirmation screen where any answer can be edited before
- * the ticket is written.
+ * Then everybody: the device, the passcode, the condition part by part,
+ * "Anything else we should know?", and a confirmation screen where any answer
+ * can be edited before the ticket is written.
+ *
+ * There is no "What's wrong with it?" screen (removed 2026-10-02, client
+ * ruling): the eight condition screens ask it part by part, and the notes
+ * screen after them catches whatever they did not.
  *
  * ## What it is allowed to collect
  *
@@ -38,19 +43,6 @@ import {
  * account of it, beside the grid the counter fills in. The counter finishes
  * the ticket under `intake.awaitingReview`.
  */
-
-/** The quick-pick faults. More than one can be true of a dropped phone. */
-const PROBLEMS = [
-  'Cracked screen',
-  'Battery drains fast',
-  "Won't turn on",
-  "Won't charge",
-  'Water damage',
-  'Camera problem',
-  'Speaker or microphone',
-  'Slow or freezing',
-  'Something else',
-];
 
 /** How updates can reach them, in the order a repair customer usually reads them. */
 const CHANNELS = [
@@ -73,7 +65,6 @@ const BLANK = {
   brand: '',
   series: '',
   model: '',
-  problems: [],
   notes: '',
   passcode: '',
   condition: {},
@@ -102,7 +93,6 @@ export function RepairFlow({ config, tree, speak, chrome, onDone }) {
         brand: a.brand,
         series: a.series,
         model: a.model,
-        problems: a.problems,
         notes: a.notes,
         passcode: a.passcode,
         condition: a.condition,
@@ -115,33 +105,7 @@ export function RepairFlow({ config, tree, speak, chrome, onDone }) {
   const steps = useMemo(
     () => [
       ...findSteps(lookup),
-      {
-        key: 'name',
-        when: isNew,
-        prompt: "What's your name?",
-        hint: 'So we know whose device this is.',
-        valid: (a) => a.firstName.trim().length > 0 && a.lastName.trim().length > 0,
-        confirm: (a) => `Nice to meet you, ${a.firstName.trim()}.`,
-        render: ({ answers: a, set }) => (
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Input
-              label="First name"
-              required
-              autoComplete="given-name"
-              value={a.firstName}
-              onChange={(event) => set('firstName', event.target.value)}
-              autoFocus
-            />
-            <Input
-              label="Last name"
-              required
-              autoComplete="family-name"
-              value={a.lastName}
-              onChange={(event) => set('lastName', event.target.value)}
-            />
-          </div>
-        ),
-      },
+      nameStep({ hint: 'So we know whose device this is.' }),
       {
         key: 'phone',
         when: isNew,
@@ -158,16 +122,22 @@ export function RepairFlow({ config, tree, speak, chrome, onDone }) {
       {
         key: 'hasPhone',
         when: isNew,
-        prompt: 'Do you have this phone with you?',
+        prompt: 'Do you have this phone number with you?',
         hint: "We'll use it to contact you after the repair.",
         footer: 'none',
         valid: (a) => Boolean(a.hasPhone),
+        // Both answers carry a line, at the same length, so neither card is
+        // taller than the other and neither reads as the expected answer.
         render: ({ next }) => (
           <div className="grid gap-3 sm:grid-cols-2">
-            <KioskOption label="Yes" onClick={() => next({ hasPhone: 'yes', alternatePhone: '' })} />
+            <KioskOption
+              label="Yes"
+              detail="Contact me on this number"
+              onClick={() => next({ hasPhone: 'yes', alternatePhone: '' })}
+            />
             <KioskOption
               label="No"
-              detail="It's the one being repaired, or it's not with me"
+              detail="I'll give you another one"
               onClick={() => next({ hasPhone: 'no' })}
             />
           </div>
@@ -247,49 +217,6 @@ export function RepairFlow({ config, tree, speak, chrome, onDone }) {
       })),
 
       {
-        key: 'problem',
-        prompt: "What's wrong with it?",
-        hint: 'Pick everything that applies.',
-        valid: (a) => a.problems.length > 0,
-        render: ({ answers: a, set }) => (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {PROBLEMS.map((problem) => {
-              const on = a.problems.includes(problem);
-              return (
-                <KioskOption
-                  key={problem}
-                  label={problem}
-                  selected={on}
-                  onClick={() =>
-                    set(
-                      'problems',
-                      on ? a.problems.filter((item) => item !== problem) : [...a.problems, problem],
-                    )
-                  }
-                />
-              );
-            })}
-          </div>
-        ),
-      },
-      {
-        key: 'notes',
-        prompt: 'Anything else we should know?',
-        hint: "When it started, what you've tried, anything that helps.",
-        valid: (a) => a.notes.trim().length > 0,
-        skip: { label: 'Nothing to add', patch: { notes: '' } },
-        render: ({ answers: a, set }) => (
-          <Textarea
-            aria-label="Notes"
-            rows={4}
-            maxLength={500}
-            placeholder="It fell in the sink yesterday and the screen went dark."
-            value={a.notes}
-            onChange={(event) => set('notes', event.target.value)}
-          />
-        ),
-      },
-      {
         key: 'passcode',
         prompt: "What's the passcode?",
         hint: 'So our technician can test it. Only the repair team sees it.',
@@ -309,12 +236,22 @@ export function RepairFlow({ config, tree, speak, chrome, onDone }) {
           />
         ),
       },
+      ...conditionSteps({ hint: 'Your best guess is fine. Our team checks it too.' }),
       {
-        key: 'condition',
-        prompt: 'What state is it in?',
-        hint: 'Your best guess is fine. Our team checks it too.',
+        key: 'notes',
+        prompt: 'Anything else we should know?',
+        hint: "When it started, what you've tried, anything that helps.",
+        valid: (a) => a.notes.trim().length > 0,
+        skip: { label: 'Nothing to add', patch: { notes: '' } },
         render: ({ answers: a, set }) => (
-          <KioskConditionPicker value={a.condition} onChange={(value) => set('condition', value)} />
+          <Textarea
+            aria-label="Notes"
+            rows={4}
+            maxLength={500}
+            placeholder="It fell in the sink yesterday and the screen went dark."
+            value={a.notes}
+            onChange={(event) => set('notes', event.target.value)}
+          />
         ),
       },
       {
@@ -368,8 +305,6 @@ export function RepairFlow({ config, tree, speak, chrome, onDone }) {
                   </>
                 )}
                 <SummaryRow label="Device" value={device} onEdit={edit('category')} />
-                <SummaryRow label="Problem" value={a.problems.join(' · ')} onEdit={edit('problem')} />
-                <SummaryRow label="Notes" value={a.notes || 'None'} onEdit={edit('notes')} />
                 <SummaryRow
                   label="Passcode"
                   value={a.passcode ? '•'.repeat(Math.min(8, a.passcode.length)) : 'None'}
@@ -378,8 +313,9 @@ export function RepairFlow({ config, tree, speak, chrome, onDone }) {
                 <SummaryRow
                   label="Condition"
                   value={conditionSummary(a.condition)}
-                  onEdit={edit('condition')}
+                  onEdit={edit(FIRST_CONDITION_STEP)}
                 />
+                <SummaryRow label="Notes" value={a.notes || 'None'} onEdit={edit('notes')} />
               </dl>
 
               {requireTerms && (

@@ -1,4 +1,5 @@
 import { Pencil } from 'lucide-react';
+import { nameCase } from '@shared/kiosk';
 
 import cn from '@/lib/cn';
 import { pressable } from '@/lib/motion';
@@ -10,8 +11,9 @@ import KioskButton from './KioskButton';
  * "Let's find your details", shared by the repair and the sell doors.
  *
  * One implementation, because both doors ask the same question in the same
- * words and must answer it the same way: a masked "Is this you?" (the tablet is
- * in a public room), "Not me" carrying the refused account so a new customer
+ * words and must answer it the same way: "Is this you?" with the full name and
+ * the year they became a customer, never the number or email (client ruling,
+ * 2026-10-02), "Not me" carrying the refused account so a new customer
  * is never filed under it, and what was typed carried into the new-customer
  * questions it already answers.
  *
@@ -109,10 +111,13 @@ export function findSteps(lookup) {
       render: ({ answers: a, next }) => (
         <div>
           <div className="rounded-xl border border-line bg-surface px-6 py-7 text-center">
-            <p className="font-display text-d-sm font-bold tracking-wide text-ink-900">{a.match?.name}</p>
-            <p className="mt-2 text-lg text-ink-500">
-              {[a.match?.phone && `Phone ${a.match.phone}`, a.match?.email].filter(Boolean).join(' · ')}
-            </p>
+            <p className="font-display text-d-sm font-bold text-ink-900">{a.match?.name}</p>
+            {a.match?.since && (
+              <p className="mt-2 text-lg text-ink-500">
+                Customer since{' '}
+                {new Date(a.match.since).toLocaleDateString('en-CA', { month: 'long', year: 'numeric' })}
+              </p>
+            )}
           </div>
           <div className="mt-6 grid gap-3 sm:grid-cols-2">
             <KioskButton onClick={() => next({ mode: 'returning' })}>Yes, that&apos;s me</KioskButton>
@@ -134,6 +139,51 @@ export function findSteps(lookup) {
       ),
     },
   ];
+}
+
+/**
+ * "What's your name?", for a new customer on any door.
+ *
+ * One step, because the three doors asked it three times in the same words.
+ * Both halves are recased to `John Doe` (`nameCase`) when the box is left and
+ * again when the step is answered, so the confirmation, the summary and the
+ * account all carry the name as it is written on an ID. Recasing on every
+ * keystroke would fight somebody typing with caps lock on.
+ */
+export function nameStep({ hint, confirm = true, when = isNew } = {}) {
+  return {
+    key: 'name',
+    when,
+    prompt: "What's your name?",
+    hint,
+    valid: (a) => a.firstName.trim().length > 0 && a.lastName.trim().length > 0,
+    confirm: confirm ? (a) => `Nice to meet you, ${a.firstName}.` : undefined,
+    onNext: ({ answers: a, next }) =>
+      next({ firstName: nameCase(a.firstName), lastName: nameCase(a.lastName) }),
+    render: ({ answers: a, set }) => (
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Input
+          label="First name"
+          required
+          autoComplete="given-name"
+          autoCapitalize="words"
+          value={a.firstName}
+          onChange={(event) => set('firstName', event.target.value)}
+          onBlur={() => set('firstName', nameCase(a.firstName))}
+          autoFocus
+        />
+        <Input
+          label="Last name"
+          required
+          autoComplete="family-name"
+          autoCapitalize="words"
+          value={a.lastName}
+          onChange={(event) => set('lastName', event.target.value)}
+          onBlur={() => set('lastName', nameCase(a.lastName))}
+        />
+      </div>
+    ),
+  };
 }
 
 /** One answer on a confirmation screen, with its way back. */

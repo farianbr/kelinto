@@ -59,7 +59,10 @@ import {
 
 const MODE = {
   subscription: {
-    route: '/admin/supplier-subscriptions',
+    // A tab on Purchase › Services since 2026-10-02: its old row is Membership
+    // Plans now. Takes that screen's title, keeps its own description.
+    route: '/admin/services',
+    description: 'Recurring supplier costs, what they renew and what they add up to.',
     icon: 'CalendarClock',
     noun: 'plan',
     plural: 'plans',

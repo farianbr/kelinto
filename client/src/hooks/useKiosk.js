@@ -75,9 +75,17 @@ export function useKioskMutations() {
  * ## Why `SpeechSynthesis` and not a provider
  *
  * It is free, offline, and needs no credential on a tablet that may be running
- * on shop wifi. The voice is the device's own, which is the trade: it sounds
- * less natural than a paid service, and it costs nothing per check-in and
- * cannot fail because an API key expired.
+ * on shop wifi. The voice is the device's own, which is the tradeoff: it can
+ * sound less natural than a paid service, and it costs nothing per check-in
+ * and cannot fail because an API key expired.
+ *
+ * ## Which of the device's voices (`pickVoice`)
+ *
+ * The browser's default is often its oldest, most robotic voice, while the
+ * same tablet usually carries far better ones: the "Natural" neural voices in
+ * Edge, Google's voices in Chrome and on Android, the Enhanced and Premium
+ * voices on an iPad. So the voice is chosen, not defaulted: English in the
+ * tablet's own region first, then ranked by how natural each family sounds.
  *
  * ## Why every call is defensive
  *
@@ -87,12 +95,77 @@ export function useKioskMutations() {
  * the question is on screen either way - so every failure here is swallowed and
  * the flow carries on.
  */
+/**
+ * Ranked by how natural a family of voices sounds, best first. Matched against
+ * the voice's name, case-insensitively. Each list is what a real tablet ships:
+ * Edge's neural voices are named "... Online (Natural)", iPadOS marks its
+ * downloaded voices "(Enhanced)" or "(Premium)", Chrome's are "Google ...".
+ */
+const VOICE_RANK = [
+  /natural/i,
+  /premium/i,
+  /enhanced/i,
+  /neural/i,
+  /^google/i,
+  /\b(ava|samantha|allison|susan|zoe|evan|nathan|serena|karen|moira)\b/i,
+  /\b(aria|jenny|guy|clara|liam)\b/i,
+];
+
+/** A voice never to pick when anything else exists: the novelty and robotic ones. */
+const VOICE_AVOID = /\b(albert|bad news|bahh|bells|boing|bubbles|cellos|good news|jester|organ|superstar|trinoids|whisper|wobble|zarvox|fred|junior|ralph|kathy|espeak)\b/i;
+
+export function pickVoice(voices = [], locale = 'en-CA') {
+  const english = voices.filter((voice) => /^en[-_]/i.test(voice.lang) && !VOICE_AVOID.test(voice.name));
+  if (english.length === 0) return null;
+
+  const region = locale.split(/[-_]/)[1]?.toUpperCase();
+  const score = (voice) => {
+    const rank = VOICE_RANK.findIndex((pattern) => pattern.test(voice.name));
+    const quality = rank === -1 ? VOICE_RANK.length : rank;
+    const voiceRegion = voice.lang.split(/[-_]/)[1]?.toUpperCase();
+    // Canadian and US English read the same to a customer here; anything
+    // else is a step down but better than a robotic local voice.
+    const near = voiceRegion === region ? 0 : ['CA', 'US'].includes(voiceRegion) ? 1 : 2;
+    // A network voice is better sounding but can stall on shop wifi, so a
+    // local voice of the same quality wins the tie.
+    return quality * 10 + near * 2 + (voice.localService ? 0 : 1);
+  };
+
+  return [...english].sort((a, b) => score(a) - score(b))[0];
+}
+
 export function useSpeech(enabled) {
   const [supported, setSupported] = useState(false);
   const lastSpoken = useRef(null);
+  const voiceRef = useRef(null);
 
   useEffect(() => {
-    setSupported(typeof window !== 'undefined' && 'speechSynthesis' in window);
+    const available = typeof window !== 'undefined' && 'speechSynthesis' in window;
+    setSupported(available);
+    if (!available) return undefined;
+
+    // Chrome fills the list asynchronously and announces it with
+    // `voiceschanged`; Safari has it at once. Both paths land here.
+    const choose = () => {
+      try {
+        voiceRef.current = pickVoice(window.speechSynthesis.getVoices(), navigator.language || 'en-CA');
+      } catch {
+        voiceRef.current = null;
+      }
+    };
+    choose();
+    try {
+      window.speechSynthesis.addEventListener('voiceschanged', choose);
+    } catch {
+      // An old engine without events keeps whatever the first read found.
+    }
+    return () => {
+      try {
+        window.speechSynthesis.removeEventListener('voiceschanged', choose);
+      } catch {
+        // Unmounting.
+      }
+    };
   }, []);
 
   // Never leave a voice talking to an empty room.
@@ -166,6 +239,10 @@ export function useSpeech(enabled) {
         try {
           window.speechSynthesis.cancel();
           const utterance = new SpeechSynthesisUtterance(text);
+          if (voiceRef.current) {
+            utterance.voice = voiceRef.current;
+            utterance.lang = voiceRef.current.lang;
+          }
           // Slightly under default: a customer hearing a question for the first
           // time is not skimming it.
           utterance.rate = 0.95;

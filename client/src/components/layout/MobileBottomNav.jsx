@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion } from '@/lib/motionReact';
 import { Home, Menu, Search, ShoppingCart, User } from 'lucide-react';
 import cn from '@/lib/cn';
 import { BOTTOM_NAV_REVEAL_AT } from '@/lib/constants';
@@ -9,6 +9,7 @@ import { useCart } from '@/hooks/useCart';
 import { useAuth } from '@/hooks/useAuth';
 import { useAccountMenuTrigger } from '@/components/account/AccountMenu';
 import { ease } from '@/lib/motion';
+import { useCatalogueLink } from '@/hooks/useCatalog';
 
 /**
  * Phone/tablet bottom bar (brief §4.2).
@@ -20,6 +21,7 @@ import { ease } from '@/lib/motion';
  * z-30 keeps it under every overlay (z-50), so a drawer's scrim covers it.
  */
 export function MobileBottomNav() {
+  const link = useCatalogueLink();
   const { pathname } = useLocation();
   const { y } = useScrollProgress();
 
@@ -52,10 +54,10 @@ export function MobileBottomNav() {
           <ul className="mx-auto flex max-w-[560px] items-stretch">
             <BarItem
               as={Link}
-              to="/shop"
+              to={link('/shop')}
               icon={Home}
               label="Shop"
-              active={pathname === '/shop'}
+              active={pathname === link('/shop')}
             />
 
             {/* Was Categories. The drill-down moved under Menu › Shop › Parts

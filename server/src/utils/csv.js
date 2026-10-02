@@ -100,8 +100,13 @@ export function parseCsv(text) {
 export function rowsWithoutHeader(rows, firstColumnName) {
   if (!rows.length) return rows;
 
+  // One name or several: a product type's first column is its own first
+  // level's label, and the legacy "Category" header still reads as a header.
+  const names = (Array.isArray(firstColumnName) ? firstColumnName : [firstColumnName]).map((name) =>
+    String(name).trim().toLowerCase(),
+  );
   const first = String(rows[0][0] ?? '').trim().toLowerCase();
-  if (first === String(firstColumnName).trim().toLowerCase()) return rows.slice(1);
+  if (names.includes(first)) return rows.slice(1);
 
   return rows;
 }

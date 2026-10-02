@@ -11,7 +11,8 @@ import Badge from '@/components/ui/Badge';
 import PageHeader from '@/components/admin/PageHeader';
 import { ADMIN_ROUTES } from '@/lib/adminRoutes';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
-import { useAdminMutations } from '@/hooks/useAdmin';
+import { useAdminCatalogCategories, useAdminMutations } from '@/hooks/useAdmin';
+import { categoryLevels } from '@shared/catalog';
 
 /**
  * Bulk-add device models from CSV.
@@ -46,7 +47,16 @@ export function AdminTaxonomyImportPage() {
   const [error, setError] = useState(null);
   const [report, setReport] = useState(null);
 
-  const back = () => navigate('/admin/settings/taxonomy');
+  // The category tab this was opened from (2026-10-01): rows land in its tree.
+  const category = new URLSearchParams(window.location.search).get('category') || 'parts';
+  // The columns are the type's own category levels, its first included, then aliases.
+  const { data: categories = [] } = useAdminCatalogCategories();
+  const current = categories.find((entry) => entry.slug === category);
+  const levels = current ? categoryLevels(current) : [];
+  const columns = [...levels.map((level) => level.label), 'Aliases'];
+  const optional = levels.filter((level) => level.required === false).map((level) => level.label);
+  const back = () =>
+    navigate(category === 'parts' ? '/admin/settings/taxonomy/tree' : `/admin/settings/taxonomy/tree?category=${category}`);
 
   async function pickFile(event) {
     const file = event.target.files?.[0];
@@ -70,7 +80,7 @@ export function AdminTaxonomyImportPage() {
     setReport(null);
 
     try {
-      setReport(await importTaxonomyCsv.mutateAsync({ text }));
+      setReport(await importTaxonomyCsv.mutateAsync({ text, category }));
     } catch (err) {
       setError(err.message);
     }
@@ -90,32 +100,31 @@ export function AdminTaxonomyImportPage() {
         className={cn(pressable, 'mb-4 inline-flex items-center gap-1.5 text-sm font-semibold text-ink-500 hover:text-ink-900')}
       >
         <ArrowLeft className="size-3.5" strokeWidth={2.25} aria-hidden="true" />
-        Back to Device &amp; Models
+        Back to the category tree
       </button>
 
       <PageHeader
         icon={ADMIN_PAGE.icon}
-        title="Import device models"
-        description="Bulk-add or update the device master list."
+        title={current ? `Import into ${current.name}` : 'Import device models'}
+        description={`Bulk-add rows to the ${current?.name ?? 'Parts'} category tree.`}
       />
 
       <form onSubmit={submit} className="space-y-4">
         <Panel title="CSV format" icon={FileSpreadsheet}>
           <div className="space-y-2.5 text-sm leading-relaxed text-ink-600">
             <p>
-              One row per model, in this order. The header row is optional.
+              One row per row of the tree, in this order. The header row is optional.
             </p>
             <code className="block rounded-md bg-surface-2 px-3 py-2 font-mono text-xs text-ink-700">
-              Category, Brand, Device, Model, Aliases
+              {columns.join(', ')}
             </code>
             <p>
-              Follows the tree <em>Category › Brand › Device › Model</em> - e.g.{' '}
-              <code className="font-mono text-xs">Phone › Samsung › S-Series › Galaxy S24 Ultra</code>.
+              Follows the tree <em>{levels.map((level) => level.label).join(' › ')}</em>.
             </p>
             <ul className="ml-4 list-disc space-y-1">
               <li>
-                <strong className="font-semibold text-ink-900">Category, Brand and Model</strong> are
-                required; Device and Aliases are not.
+                Every level is required{optional.length ? `, except ${optional.join(', ')}` : ''}; Aliases are
+                optional.
               </li>
               <li>
                 Separate multiple aliases with a vertical bar:{' '}
@@ -158,7 +167,9 @@ export function AdminTaxonomyImportPage() {
               setReport(null);
             }}
             placeholder={
-              'Category,Brand,Device,Model,Aliases\nPhone,Apple,iPhone 15,iPhone 15 Pro Max,15 PM|15 Pro Max\nPhone,Samsung,S-Series,Galaxy S24 Ultra,S24U|S24 Ultra'
+              levels.length === 4
+                ? 'Category,Brand,Device,Model,Aliases\nPhone,Apple,iPhone 15,iPhone 15 Pro Max,15 PM|15 Pro Max\nPhone,Samsung,S-Series,Galaxy S24 Ultra,S24U|S24 Ultra'
+                : columns.join(',')
             }
             hint={fileName ? `Loaded from ${fileName}. Edit here before importing if you need to.` : undefined}
           />
@@ -198,7 +209,7 @@ export function AdminTaxonomyImportPage() {
 
             <div className="mt-4 border-t border-line pt-4">
               <Button type="button" variant="outline" onClick={back}>
-                Back to Device &amp; Models
+                Back to the category tree
               </Button>
             </div>
           </Panel>

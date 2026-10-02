@@ -5,6 +5,7 @@ import { passwordSchema } from './auth.js';
 import { MESSAGE_BODY_MAX } from '../messageHtml.js';
 import { DEFAULT_COUNTRY } from '../countries.js';
 import { KIOSK_CLOCKS } from '../kiosk.js';
+import { CONDITION_PARTS, CONDITION_PART_KEYS, CONDITION_VALUES, isConditionValue } from '../deviceCondition.js';
 import { isMapEmbedUrl, mapEmbedSrc } from '../mapEmbed.js';
 import { PROVINCES } from './checkout.js';
 import { isValidPostal, postalExampleFor } from '../regions.js';
@@ -430,16 +431,32 @@ const productSchema = z.object({
   sku: z.string().trim().min(3, 'Enter a SKU.').max(40),
   name: z.string().trim().min(3, 'Enter a product name.').max(160),
   description: z.string().trim().max(2000).optional(),
-  partType: z.string().trim().min(2, 'Enter a part type slug.'),
-  partTypeLabel: z.string().trim().min(2, 'Enter a part type label.'),
-  grade: z.enum(['NEW', 'OEM', 'PULL-A', 'PULL-B', 'AFTERMARKET']),
+  // The first finder step's entry (Component Type on Parts), picked from the
+  // type's own list; the server checks it and writes the label (2026-10-02).
+  // Blank on a type with no first step.
+  partType: z.string().trim().max(40).optional().or(z.literal('')),
+  partTypeLabel: z.string().trim().max(60).optional().or(z.literal('')),
+  // One of the product type's own grades; the server checks it (grades per type, 2026-10-02).
+  grade: z.string().trim().max(24).optional().or(z.literal('')),
   price: cents,
   compareAtPrice: cents.optional(),
   stock: z.coerce.number().int().min(0).max(1_000_000),
-  deviceTypeSlug: z.string().trim().min(1, 'Select a device type.'),
-  brandSlug: z.string().trim().min(1, 'Select a brand.'),
-  seriesSlug: z.string().trim().min(1, 'Select a series.'),
-  modelSlug: z.string().trim().min(1, 'Select a model.'),
+  // Which levels are required is the product type's to say, so the server
+  // checks them (2026-10-02); a level can also be set to "Any" (2026-10-03).
+  deviceTypeSlug: z.string().trim().max(120).optional().or(z.literal('')),
+  // The level a product is set to "Any" from: it fits every entry there and below.
+  anyFrom: z.string().trim().max(20).optional().or(z.literal('')),
+  brandSlug: z.string().trim().max(120).optional().or(z.literal('')),
+  seriesSlug: z.string().trim().max(120).optional().or(z.literal('')),
+  modelSlug: z.string().trim().max(120).optional().or(z.literal('')),
+  level5Slug: z.string().trim().max(120).optional().or(z.literal('')),
+  level6Slug: z.string().trim().max(120).optional().or(z.literal('')),
+  // The catalogue category (`shared/catalog.js`); the taxonomy above is that
+  // category's tree. Parts when absent.
+  category: z.string().trim().max(60).optional(),
+  // Its answers to the category's features, by feature key (2026-10-02). The
+  // server checks them against the category's definitions.
+  attributes: z.record(z.string().trim().max(40), z.string().trim().max(120)).optional(),
   isActive: z.boolean().default(true),
   // Uploaded files' addresses (`POST /admin/assets/catalogue`), or empty.
   image: z.string().trim().url().max(1000).optional().or(z.literal('')),
@@ -646,10 +663,13 @@ const ADMIN_NAV = [
         hidden: true,
       },
       {
-        key: 'supplier-subscriptions',
-        label: 'Subscription Plans',
-        to: '/admin/supplier-subscriptions',
-        icon: 'CalendarClock',
+        // The customer membership plans sold on the website (client ruling,
+        // 2026-10-02). This row was "Subscription Plans", recurring supplier
+        // costs, which is now the third tab on Services below.
+        key: 'membership-plans',
+        label: 'Membership Plans',
+        to: '/admin/membership-plans',
+        icon: 'Crown',
       },
       {
         // One row, two tabs (2026-09-30): the labour price list a quote and a
@@ -676,17 +696,6 @@ const ADMIN_NAV = [
           'products out of stock or running low',
         ],
         badgeFilter: 'stock=attention',
-      },
-      {
-        // Phones bought from customers at the kiosk: the requests waiting to
-        // be priced, and the stock they became. One screen, two tabs.
-        key: 'preowned',
-        label: 'Pre-owned',
-        to: '/admin/preowned',
-        icon: 'Smartphone',
-        badge: 'pendingBuybacks',
-        badgeLabel: 'waiting to be priced',
-        badgePhrase: ['phone waiting to be priced', 'phones waiting to be priced'],
       },
     ],
   },
@@ -867,6 +876,13 @@ const ADMIN_LEGACY_REDIRECTS = {
   '/admin/settings/invoice-status': '/admin/settings/invoice-labels',
   // Service Products became a tab on Purchase › Services on 2026-09-30.
   '/admin/supplier-services': '/admin/services?tab=products',
+  // Membership plans moved to Purchase, and supplier subscriptions became a
+  // tab on Purchase › Services, on 2026-10-02.
+  '/admin/settings/membership': '/admin/membership-plans',
+  '/admin/supplier-subscriptions': '/admin/services?tab=subscriptions',
+  // Three Financial tabs became Settings › Taxonomy on 2026-10-02.
+  '/admin/settings/categories': '/admin/settings/taxonomy',
+  '/admin/settings/devices': '/admin/settings/taxonomy?tab=services',
 };
 
 /**
@@ -2029,25 +2045,31 @@ const ticketLineSchema = z.object({
  * same grid the server will accept - a form offering a ninth component the
  * schema rejects is a form that fails on submit.
  */
-const CONDITION_GRADES = [
-  { value: 'working', label: 'Working' },
-  { value: 'faulty', label: 'Faulty' },
-  { value: 'not_present', label: 'Not present' },
-  { value: 'untested', label: 'Untested' },
-];
+// The parts and each part's own answers live in `shared/deviceCondition.js`
+// (per-part vocabulary, client ruling 2026-10-02). A legacy grade still
+// validates, so a ticket written before the change can be saved again.
+const conditionGradeSchema = z.enum(CONDITION_VALUES);
 
-const CONDITION_PARTS = [
-  { key: 'screen', label: 'Screen' },
-  { key: 'battery', label: 'Battery' },
-  { key: 'chargingPort', label: 'Charging Port' },
-  { key: 'backGlass', label: 'Back Glass' },
-  { key: 'frontCamera', label: 'Front Camera' },
-  { key: 'backCamera', label: 'Back Camera' },
-  { key: 'loudSpeaker', label: 'Loud Speaker' },
-  { key: 'earSpeaker', label: 'Ear Speaker' },
-];
-
-const conditionGradeSchema = z.enum(CONDITION_GRADES.map((grade) => grade.value));
+/**
+ * All eight parts answered (client ruling, 2026-10-02): the counter's intake
+ * grid and the kiosk's eight screens both have to record every part before
+ * the record is written. Each missing part is reported on its own field, so
+ * the form lands on the select that is empty.
+ */
+const requiredConditionSchema = z.object(
+  Object.fromEntries(
+    CONDITION_PARTS.map((part) => {
+      const missing = `Record the ${part.label.toLowerCase()} condition.`;
+      return [
+        part.key,
+        z
+          .string({ required_error: missing, invalid_type_error: missing })
+          .min(1, missing)
+          .refine((value) => isConditionValue(part.key, value), 'Pick one of the listed answers.'),
+      ];
+    }),
+  ),
+);
 
 /**
  * One device on the intake form.
@@ -2068,7 +2090,8 @@ const ticketDeviceSchema = z.object({
   solution: z.string().trim().max(500).or(z.literal('')).optional(),
   notes: z.string().trim().max(500).or(z.literal('')).optional(),
 
-  condition: z.record(z.string(), conditionGradeSchema).optional(),
+  // Required since 2026-10-02: every part, before a ticket is saved.
+  condition: requiredConditionSchema,
 
   services: z.array(ticketLineSchema).max(40).default([]),
   parts: z.array(ticketLineSchema).max(40).default([]),
@@ -2916,13 +2939,38 @@ const providerCredentialSchema = z.record(
  * corners.
  */
 const taxonomyCreateSchema = z.object({
-  deviceType: z.string().trim().min(1, 'Pick a category.').max(80),
-  brand: z.string().trim().min(1, 'Name the brand.').max(80),
+  // One name per level of the type, its first level (`partType`) included
+  // (2026-10-02). Which are required is the type's own say, checked on the
+  // server against its levels.
+  partType: z.string().trim().max(80).optional().or(z.literal('')),
+  deviceType: z.string().trim().max(80).optional().or(z.literal('')),
+  brand: z.string().trim().max(80).optional().or(z.literal('')),
   series: z.string().trim().max(80).optional().or(z.literal('')),
-  name: z.string().trim().min(1, 'Name the model.').max(120),
+  model: z.string().trim().max(120).optional().or(z.literal('')),
+  level5: z.string().trim().max(120).optional().or(z.literal('')),
+  level6: z.string().trim().max(120).optional().or(z.literal('')),
+  // The deepest level, as older callers sent it.
+  name: z.string().trim().max(120).optional().or(z.literal('')),
   aliases: z
     .union([z.array(z.string().trim().max(60)), z.string().trim().max(600)])
     .optional(),
+  // Which catalogue category's tree (`shared/catalog.js`); Parts when absent.
+  category: z.string().trim().max(60).optional(),
+});
+
+/** Editing one row of a category tree as a whole (`taxonomyAdminService.updateRow`). */
+const taxonomyRowSchema = z.object({
+  category: z.string().trim().max(60).optional(),
+  row: z.string().trim().min(1).max(120),
+  // A name per level, as the add form sends them; a changed one renames that entry.
+  names: z.record(z.string().trim().max(20), z.string().trim().max(120)).default({}),
+  aliases: z.union([z.array(z.string().trim().max(60)), z.string().trim().max(600)]).optional(),
+  isActive: z.boolean().optional(),
+});
+
+const taxonomyRowRemoveSchema = z.object({
+  category: z.string().trim().max(60).optional(),
+  row: z.string().trim().min(1).max(120),
 });
 
 /** A pasted or uploaded CSV of device models. See `taxonomyAdminService.importCsv`. */
@@ -2931,6 +2979,7 @@ const taxonomyImportSchema = z.object({
     .string()
     .min(1, 'Paste some rows, or choose a file.')
     .max(900_000, 'That file is too large. Import it in smaller batches.'),
+  category: z.string().trim().max(60).optional(),
 });
 
 const taxonomyNodeSchema = z.object({
@@ -3266,7 +3315,14 @@ const SERVICE_CATEGORY_LABELS = {
 const serviceCatalogSchema = z.object({
   name: z.string().trim().min(2, 'Give the service a name.').max(160),
   description: z.string().trim().max(500).or(z.literal('')).optional(),
-  category: z.enum(SERVICE_CATEGORIES).default('other'),
+  // One of the Services type's repair types (Settings › Taxonomy), checked on
+  // the server against that list (2026-10-02; a fixed enum before).
+  category: z.string().trim().max(40).default('other'),
+
+  // The website's detail page (2026-10-02): its picture (an uploaded file's
+  // URL, stored as a key) and the long copy under it.
+  image: z.string().trim().max(1000).or(z.literal('')).optional(),
+  details: z.string().trim().max(6000, 'Keep the details to 6,000 characters.').or(z.literal('')).optional(),
 
   price: z.coerce.number().min(0).max(1_000_000).default(0),
   cost: z.coerce.number().min(0).max(1_000_000).optional(),
@@ -3276,6 +3332,10 @@ const serviceCatalogSchema = z.object({
 
   // Free-form on purpose: which devices a shop takes in is the shop's business.
   deviceTypes: z.array(z.string().trim().max(40)).max(20).optional(),
+
+  // The Services taxonomy node it is narrowed to (2026-10-01). Blank: every
+  // device. The server reads the node back rather than trusting slugs.
+  scopeNode: z.string().trim().max(40).or(z.literal('')).optional(),
 
   taxable: z.boolean().default(true),
   isActive: z.boolean().default(true),
@@ -3407,7 +3467,7 @@ const kioskCheckInSchema = z
      * counter's own grid, never in it: the grid is the shop's record of what it
      * tested, and a customer's "the camera works" is a claim, not a test.
      */
-    condition: z.record(z.enum(CONDITION_PARTS.map((part) => part.key)), conditionGradeSchema).default({}),
+    condition: requiredConditionSchema,
 
     /**
      * What the customer agreed to. `termsAccepted` is the shop's protection and
@@ -3482,7 +3542,7 @@ const kioskSellSchema = z
     imei: z.string().trim().regex(/^\d{15}$/, 'An IMEI is 15 digits. Dial *#06# to see it.'),
     passcode: optionalText(60),
     notes: optionalText(500),
-    condition: z.record(z.enum(CONDITION_PARTS.map((part) => part.key)), conditionGradeSchema).default({}),
+    condition: requiredConditionSchema,
 
     declaredOwner: z.literal(true, {
       errorMap: () => ({ message: 'Confirm the phone is yours to sell.' }),
@@ -3515,9 +3575,10 @@ const buybackAcceptSchema = z.object({
     .max(100_000, 'That is more than this form will take.'),
   payoutMethod: z.string().trim().min(1, 'Choose how the customer was paid.').max(40),
   payoutReference: z.string().trim().max(80).optional().or(z.literal('')),
-  grade: z.enum(['like_new', 'excellent', 'good', 'fair']),
+  // One of the Phones type's grades (Settings › Taxonomy); the server checks it.
+  grade: z.string().trim().min(1, 'Pick a grade.').max(24),
   // "Not checked" is an empty string on the form; the service drops it rather than storing a grade.
-  condition: z.record(z.string(), conditionGradeSchema.or(z.literal(''))).optional(),
+  condition: z.record(z.enum(CONDITION_PART_KEYS), conditionGradeSchema.or(z.literal(''))).optional(),
   description: z.string().trim().max(1000).optional().or(z.literal('')),
   notes: z.string().trim().max(1000).optional().or(z.literal('')),
   /** Put it on the website now, or keep it in stock until it is photographed. */
@@ -3526,15 +3587,6 @@ const buybackAcceptSchema = z.object({
 
 const buybackDeclineSchema = z.object({
   reason: z.string().trim().min(3, 'Say why, so the customer can be told.').max(500),
-});
-
-/** Editing a pre-owned unit in stock. */
-const preownedUpdateSchema = z.object({
-  sellingPriceDollars: z.coerce.number().positive('Enter a selling price.').max(100_000).optional(),
-  grade: z.enum(['like_new', 'excellent', 'good', 'fair']).optional(),
-  description: z.string().trim().max(1000).optional().or(z.literal('')),
-  photos: z.array(z.string().trim().max(600)).max(8).optional(),
-  status: z.enum(['in_stock', 'listed', 'withdrawn']).optional(),
 });
 
 /** Unlocking the tablet. Digits only; the server compares against a hash. */
@@ -3671,4 +3723,4 @@ const serviceQuoteConvertSchema = z.object({
   priority: z.enum(TICKET_PRIORITIES).default('normal'),
 });
 
-export { quoteToTicketSchema, ticketDepositSchema, ticketConvertSchema, TAX_RATES, TAX_LABELS, provinceTaxOptions, INVOICE_SERVICE_TYPES, SERVICE_INVOICE_TYPES, ORDER_OPEN_STATUSES, ORDER_UNFULFILLED_STATUSES, approveUserSchema, rejectUserSchema, creditSchema, clientSchema, clientFormSchema, clientCreateFormSchema, clientUpdateSchema, CONSENT_CHANNELS, PREFERRED_CONTACT_OPTIONS, CUSTOMER_SOURCE_OPTIONS, contactConsentSchema, MEMBERSHIP_TIERS, tierSchema, internalNoteSchema, storeCreditSchema, refundSchema, userStatusSchema, productSchema, ORDER_STATUS_FLOW, orderStatusSchema, CARRIERS, ADMIN_NAV, ADMIN_LEGACY_REDIRECTS, invoicePaymentSchema, invoiceTipSchema, invoiceVoidSchema, webQuoteStatusSchema, creditPaymentSchema, invoiceUpdateSchema, bulkOrderStatusSchema, supplierSchema, purchaseOrderSchema, purchaseOrderStatusSchema, purchaseReceiveSchema, purchasePaymentSchema, purchaseInviteSchema, purchaseSendSchema, purchaseNegotiateSchema, purchaseConfirmSchema, proformaRevisionSchema, supplierQuoteSchema, supplierDeclineSchema, supplierProformaSchema, supplierDeliverySchema, superAdminLoginSchema, superAdminForgotSchema, superAdminResetSchema, tenantSchema, tenantSlotsSchema, superAdminBusinessSchema, businessAddressSchema, addressRequestSchema, addressRejectSchema, businessAssignSchema, businessFeatureSchema, impersonationSchema, tenantOwnerSchema, supportMessageSchema, planSchema, planFeatureSchema, businessStatusSchema, supplierLoginSchema, supplierForgotSchema, supplierResetSchema, supplierPasswordSchema, expenseSchema, expenseCategorySchema, stockAdjustSchema, productOpsSchema, quoteSchema, quoteStatusSchema, quoteConvertSchema, adminOrderSchema, adminInvoiceSchema, RMA_ITEM_DISPOSITIONS, rmaSchema, TICKET_STATUSES, TICKET_PRIORITIES, TICKET_SOURCES, TICKET_STATUS_LABELS, CONDITION_GRADES, CONDITION_PARTS, ticketSchema, ticketDeviceSchema, ticketLineSchema, ticketUpdateSchema, ticketStatusSchema, rmaStatusSchema, rmaInspectSchema, rmaResolveSchema, PERMISSION_AREAS, PERMISSION_LEVELS, PERMISSION_LEVEL_LABELS, SETTINGS_SUBAREAS, SUBAREA_LEVELS, SUBAREA_LEVEL_LABELS, settingsAreaKey, BUSINESS_STATUSES, BUSINESS_COLOR_TOKENS, businessSchema, roleSchema, staffUserSchema, staffUserUpdateSchema, MESSAGE_CHANNELS, TEMPLATE_DOCUMENTS, CAMPAIGN_AUDIENCES, CAMPAIGN_AUDIENCE_LABELS, messageSchema, callLogSchema, messageTemplateSchema, campaignSchema, unsubscribeSchema, referralRateSchema, businessInfoSchema, saleSettingsSchema, shippingSettingsSchema, paymentMethodsSettingsSchema, inventorySettingsSchema, agreementTemplateSchema, agreementSignSchema, providerCredentialSchema, taxonomyNodeSchema, taxonomyCreateSchema, taxonomyImportSchema, invoiceStatusRuleSchema, LABEL_COLOR_TOKENS, LABEL_COLOR_OPTIONS, invoiceLabelSchema, invoiceLabelSetSchema, invoiceRefundSchema, invoiceRemindSchema, communicationsSettingsSchema, messageLimitSchema, SUPPLIER_RETURN_REASON_VALUES, supplierReturnSchema, supplierReturnStatusSchema, supplierCreditSchema, SUPPLIER_BILLING_CYCLES, supplierServiceSchema, supplierServiceUpdateSchema, supplierChargeSchema, SERVICE_CATEGORIES, SERVICE_CATEGORY_LABELS, serviceCatalogSchema, serviceCatalogUpdateSchema, serviceImportSchema, DEVICE_KINDS, DEVICE_KIND_LABELS, deviceCatalogSchema, deviceCatalogUpdateSchema, kioskCheckInSchema, kioskLookupSchema, ID_TYPES, kioskSellSchema, buybackAcceptSchema, buybackDeclineSchema, preownedUpdateSchema, kioskUnlockSchema, kioskPinSchema, kioskSettingsSchema, SERVICE_QUOTE_STATUSES, SERVICE_QUOTE_SOURCES, SERVICE_QUOTE_STATUS_LABELS, serviceQuoteLineSchema, serviceQuoteDeviceSchema, serviceQuoteSchema, serviceQuoteUpdateSchema, serviceQuoteStatusSchema, serviceQuoteConvertSchema };
+export { quoteToTicketSchema, ticketDepositSchema, ticketConvertSchema, TAX_RATES, TAX_LABELS, provinceTaxOptions, INVOICE_SERVICE_TYPES, SERVICE_INVOICE_TYPES, ORDER_OPEN_STATUSES, ORDER_UNFULFILLED_STATUSES, approveUserSchema, rejectUserSchema, creditSchema, clientSchema, clientFormSchema, clientCreateFormSchema, clientUpdateSchema, CONSENT_CHANNELS, PREFERRED_CONTACT_OPTIONS, CUSTOMER_SOURCE_OPTIONS, contactConsentSchema, MEMBERSHIP_TIERS, tierSchema, internalNoteSchema, storeCreditSchema, refundSchema, userStatusSchema, productSchema, ORDER_STATUS_FLOW, orderStatusSchema, CARRIERS, ADMIN_NAV, ADMIN_LEGACY_REDIRECTS, invoicePaymentSchema, invoiceTipSchema, invoiceVoidSchema, webQuoteStatusSchema, creditPaymentSchema, invoiceUpdateSchema, bulkOrderStatusSchema, supplierSchema, purchaseOrderSchema, purchaseOrderStatusSchema, purchaseReceiveSchema, purchasePaymentSchema, purchaseInviteSchema, purchaseSendSchema, purchaseNegotiateSchema, purchaseConfirmSchema, proformaRevisionSchema, supplierQuoteSchema, supplierDeclineSchema, supplierProformaSchema, supplierDeliverySchema, superAdminLoginSchema, superAdminForgotSchema, superAdminResetSchema, tenantSchema, tenantSlotsSchema, superAdminBusinessSchema, businessAddressSchema, addressRequestSchema, addressRejectSchema, businessAssignSchema, businessFeatureSchema, impersonationSchema, tenantOwnerSchema, supportMessageSchema, planSchema, planFeatureSchema, businessStatusSchema, supplierLoginSchema, supplierForgotSchema, supplierResetSchema, supplierPasswordSchema, expenseSchema, expenseCategorySchema, stockAdjustSchema, productOpsSchema, quoteSchema, quoteStatusSchema, quoteConvertSchema, adminOrderSchema, adminInvoiceSchema, RMA_ITEM_DISPOSITIONS, rmaSchema, TICKET_STATUSES, TICKET_PRIORITIES, TICKET_SOURCES, TICKET_STATUS_LABELS, CONDITION_PARTS, ticketSchema, ticketDeviceSchema, ticketLineSchema, ticketUpdateSchema, ticketStatusSchema, rmaStatusSchema, rmaInspectSchema, rmaResolveSchema, PERMISSION_AREAS, PERMISSION_LEVELS, PERMISSION_LEVEL_LABELS, SETTINGS_SUBAREAS, SUBAREA_LEVELS, SUBAREA_LEVEL_LABELS, settingsAreaKey, BUSINESS_STATUSES, BUSINESS_COLOR_TOKENS, businessSchema, roleSchema, staffUserSchema, staffUserUpdateSchema, MESSAGE_CHANNELS, TEMPLATE_DOCUMENTS, CAMPAIGN_AUDIENCES, CAMPAIGN_AUDIENCE_LABELS, messageSchema, callLogSchema, messageTemplateSchema, campaignSchema, unsubscribeSchema, referralRateSchema, businessInfoSchema, saleSettingsSchema, shippingSettingsSchema, paymentMethodsSettingsSchema, inventorySettingsSchema, agreementTemplateSchema, agreementSignSchema, providerCredentialSchema, taxonomyNodeSchema, taxonomyCreateSchema, taxonomyImportSchema, taxonomyRowSchema, taxonomyRowRemoveSchema, invoiceStatusRuleSchema, LABEL_COLOR_TOKENS, LABEL_COLOR_OPTIONS, invoiceLabelSchema, invoiceLabelSetSchema, invoiceRefundSchema, invoiceRemindSchema, communicationsSettingsSchema, messageLimitSchema, SUPPLIER_RETURN_REASON_VALUES, supplierReturnSchema, supplierReturnStatusSchema, supplierCreditSchema, SUPPLIER_BILLING_CYCLES, supplierServiceSchema, supplierServiceUpdateSchema, supplierChargeSchema, SERVICE_CATEGORIES, SERVICE_CATEGORY_LABELS, serviceCatalogSchema, serviceCatalogUpdateSchema, serviceImportSchema, DEVICE_KINDS, DEVICE_KIND_LABELS, deviceCatalogSchema, deviceCatalogUpdateSchema, kioskCheckInSchema, kioskLookupSchema, ID_TYPES, kioskSellSchema, buybackAcceptSchema, buybackDeclineSchema, kioskUnlockSchema, kioskPinSchema, kioskSettingsSchema, SERVICE_QUOTE_STATUSES, SERVICE_QUOTE_SOURCES, SERVICE_QUOTE_STATUS_LABELS, serviceQuoteLineSchema, serviceQuoteDeviceSchema, serviceQuoteSchema, serviceQuoteUpdateSchema, serviceQuoteStatusSchema, serviceQuoteConvertSchema };

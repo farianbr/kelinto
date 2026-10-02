@@ -21,6 +21,7 @@ import {
   TAX_RATES,
   provinceTaxOptions,
 } from '@shared/schemas/admin';
+import { CONDITION_PARTS } from '@shared/deviceCondition';
 
 import cn from '@/lib/cn';
 import { money, titleize } from '@/lib/format';
@@ -104,6 +105,8 @@ const TICKET_FIELD_LABELS = {
   'devices.*.parts.*.name': 'A name on every part line',
   'devices.*.services.*.priceDollars': 'Service line price',
   'devices.*.parts.*.priceDollars': 'Part line price',
+  // Every part of the drop-off condition is required (2026-10-02).
+  ...Object.fromEntries(CONDITION_PARTS.map((part) => [`devices.*.condition.${part.key}`, `${part.label} condition`])),
 };
 
 /** One blank device. Only the model is required, so the rest starts empty. */
@@ -486,7 +489,7 @@ export function TicketForm({
         </dl>
 
         <p className="mt-2 text-xs leading-relaxed text-ink-400">
-          An estimate, not an invoice. Nothing here moves a balance - billing a finished repair is
+          A quote, not an invoice. Nothing here moves a balance - billing a finished repair is
           a separate step.
         </p>
       </Section>

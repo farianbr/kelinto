@@ -3,7 +3,10 @@
  * The tree is a single nested structure: deviceType > brand > series > model.
  */
 
-const LEVELS = ['deviceType', 'brand', 'series', 'model'];
+import { TREE_LEVEL_KEYS } from '@shared/catalog';
+
+// Every finder level, the two deeper ones included (2026-10-02).
+const LEVELS = TREE_LEVEL_KEYS;
 
 /**
  * Finds the node for a given level in the current path.
@@ -80,3 +83,35 @@ export function pathNodes(tree, path) {
 }
 
 export { LEVELS };
+
+/**
+ * The entries a form offers at one level of a type's tree, given what is
+ * picked above it (2026-10-02, levels may be optional).
+ *
+ * A picked level narrows to that entry's children. A level left blank is
+ * stepped over rather than ending the walk: when Series is optional and left
+ * empty, Model offers the models hanging straight off the brand and those
+ * under each of its series. Only entries of this level's kind are returned.
+ */
+export function entriesUnder(tree, path, level, keys = LEVELS) {
+  let scope = tree ?? [];
+  for (const above of keys.slice(0, keys.indexOf(level))) {
+    if (path[above]) {
+      const node = scope.find((entry) => entry.slug === path[above]);
+      scope = node?.children ?? [];
+    } else {
+      scope = scope.flatMap((entry) => (entry.kind === above ? (entry.children ?? []) : [entry]));
+    }
+  }
+  return scope.filter((entry) => entry.kind === level);
+}
+
+/** The entry a slug names anywhere in the tree, for reading its path back. */
+export function nodeBySlug(tree, slug) {
+  for (const node of tree ?? []) {
+    if (node.slug === slug) return node;
+    const found = nodeBySlug(node.children, slug);
+    if (found) return found;
+  }
+  return null;
+}

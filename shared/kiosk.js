@@ -34,27 +34,21 @@ export function kioskClocks(kiosk = {}) {
 }
 
 /**
- * Show a looked-up customer without naming them.
+ * A typed name in the case it is written on an ID: `john doe` and `JOHN DOE`
+ * both become `John Doe` (client ruling, 2026-10-01).
  *
- * "Is this you?" has to show something, and the tablet is in a public room:
- * anybody can type a number and see who it belongs to. So the answer carries
- * enough for the owner to recognise it and nothing a stranger could use -
- * initials, and the last two digits of the number or the first letter and
- * domain of the email.
+ * Only a word typed in ONE case is recased. A word already mixed, like
+ * `McDonald` or `DeShawn`, is how its owner spells it and is left alone, since
+ * lowering everything after the first letter would misspell exactly the names
+ * somebody took care over. Hyphens and apostrophes start a new word, so
+ * `o'neil-smith` becomes `O'Neil-Smith`.
  */
-export function maskName(contactName = '') {
-  const parts = String(contactName).trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return 'A customer';
-  return parts.map((part) => `${part[0].toUpperCase()}.`).join(' ');
-}
-
-export function maskPhone(phone = '') {
-  const digits = String(phone).replace(/\D/g, '');
-  return digits.length >= 2 ? `ending ${digits.slice(-2)}` : '';
-}
-
-export function maskEmail(email = '') {
-  const [local, domain] = String(email).split('@');
-  if (!local || !domain || domain.endsWith('.invalid')) return '';
-  return `${local[0]}•••@${domain}`;
+export function nameCase(value = '') {
+  return String(value)
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/[^\s'’-]+/g, (word) => {
+      const single = word === word.toLowerCase() || word === word.toUpperCase();
+      return single ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() : word;
+    });
 }

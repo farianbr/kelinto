@@ -76,11 +76,16 @@ const importServices = asyncHandler(async (req, res) => {
 const publicList = asyncHandler(async (req, res) => {
   res.json(
     await serviceCatalogService.publicList(req.user, {
-      category: req.query.category,
+      ...req.query,
       business: req.businessScope,
     }),
   );
 });
 
-export { publicList, listServices, getService, createService, updateService, deleteService, importServices };
-export default { publicList, listServices, getService, createService, updateService, deleteService, importServices };
+/** One service's page on the website. Same gate as the list. */
+const publicGet = asyncHandler(async (req, res) => {
+  res.json(await serviceCatalogService.publicGet(req.user, req.params.slug, { business: req.businessScope }));
+});
+
+export { publicGet, publicList, listServices, getService, createService, updateService, deleteService, importServices };
+export default { publicGet, publicList, listServices, getService, createService, updateService, deleteService, importServices };

@@ -1,4 +1,5 @@
 import { urlOf } from './storageService.js';
+import { categoryFilter } from './catalogService.js';
 import mongoose from 'mongoose';
 
 import { db } from '../db/models.js';
@@ -1301,7 +1302,15 @@ function shapeInventoryRow(product, threshold) {
     slug: product.slug,
     image: urlOf(product.image) ?? null,
     grade: product.grade,
+    // `partType` and `brandSlug` are what the stock photo is looked up by
+    // (`shared/partPhotos.js`). Without them every row without its own upload
+    // drew the line illustration, which read as "inventory shows no images"
+    // while the website, which sends both, showed the photo (fixed 2026-10-02).
+    partType: product.partType ?? null,
+    brandSlug: product.brandSlug ?? null,
     partTypeLabel: product.partTypeLabel ?? product.partType,
+    category: product.category || 'parts',
+    attributes: product.attributes ?? {},
     brandName: product.brandName ?? null,
     modelName: product.modelName ?? null,
     stock: product.stock,
@@ -1323,7 +1332,7 @@ function shapeInventoryRow(product, threshold) {
   };
 }
 
-async function listInventory({ q, stock, brand, grade } = {}) {
+async function listInventory({ q, stock, brand, grade, category } = {}) {
   // Resolved once for both the rows and the pills below, so the two cannot
   // classify the same product differently.
   const threshold = await lowStockThreshold();
@@ -1331,6 +1340,8 @@ async function listInventory({ q, stock, brand, grade } = {}) {
   const query = {};
   if (brand) query.brandSlug = String(brand);
   if (grade) query.grade = String(grade);
+  // One product type at a time, so its features can be columns (2026-10-02).
+  if (typeof category === 'string' && category && category !== 'all') Object.assign(query, categoryFilter(category));
 
   if (q) {
     const rx = likeRegex(q);
@@ -1420,6 +1431,9 @@ async function getInventoryItem(id) {
       images: (product.images ?? []).map(urlOf),
       video: urlOf(product.video) ?? '',
       videoPoster: urlOf(product.videoPoster) ?? '',
+      // Its feature answers, so the edit form sends them back rather than blanks.
+      category: product.category || 'parts',
+      attributes: product.attributes ?? {},
     },
     movements: movements.map((movement) => ({
       id: movement._id.toString(),

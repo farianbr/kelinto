@@ -1,4 +1,4 @@
-import { motion, useReducedMotion } from 'motion/react';
+import { motion, useReducedMotion } from '@/lib/motionReact';
 import cn from '@/lib/cn';
 import { ease } from '@/lib/motion';
 

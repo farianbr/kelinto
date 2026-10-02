@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { useReducedMotion } from 'motion/react';
+import { useReducedMotion } from '@/lib/motionReact';
 import { ArrowUpRight, ChevronLeft, ChevronRight, PenLine } from 'lucide-react';
 import cn from '@/lib/cn';
 import { pressable } from '@/lib/motion';

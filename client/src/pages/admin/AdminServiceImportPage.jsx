@@ -10,8 +10,8 @@ import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import PageHeader from '@/components/admin/PageHeader';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
-import { SERVICE_CATEGORIES } from '@shared/schemas/admin';
-import { useAdminMutations } from '@/hooks/useAdmin';
+import { DEFAULT_REPAIR_TYPES } from '@shared/catalog';
+import { useAdminMutations, useAdminServices } from '@/hooks/useAdmin';
 
 /**
  * Bulk-add repair services from CSV.
@@ -35,6 +35,9 @@ const MAX_BYTES = 900_000;
 export function AdminServiceImportPage() {
   const navigate = useNavigate();
   const { importServices } = useAdminMutations();
+  // The repair types a row's Category may name (Settings › Taxonomy, 2026-10-02).
+  const { data: serviceList } = useAdminServices({ status: 'all', limit: 1 });
+  const repairTypes = serviceList?.repairTypes ?? DEFAULT_REPAIR_TYPES;
 
   const [text, setText] = useState('');
   const [fileName, setFileName] = useState(null);
@@ -111,9 +114,10 @@ export function AdminServiceImportPage() {
                 column. Leave any of the others blank and the stored value is kept.
               </li>
               <li>
-                Category is one of{' '}
-                <code className="font-mono text-xs">{SERVICE_CATEGORIES.join(', ')}</code>. Anything
-                else is filed under <code className="font-mono text-xs">other</code>.
+                Category is a repair type, by name or code:{' '}
+                <code className="font-mono text-xs">{repairTypes.map((option) => option.label).join(', ')}</code>.
+                Anything else is filed under Other. The list is the Services finder&apos;s first step, in
+                Settings › Taxonomy.
               </li>
               <li>
                 Price is in dollars and may carry a currency symbol:{' '}

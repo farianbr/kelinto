@@ -18,6 +18,27 @@ import { likeRegex } from '../utils/regex.js';
  * queries do not go through here and still see everything.
  */
 import { HAS_PICTURE } from '../../../shared/partPhotos.js';
+import { categoryAttributes, categoryFilter } from './catalogService.js';
+import { ATTRIBUTE_KEY_PATTERN, formatAttribute } from '../../../shared/catalog.js';
+
+/**
+ * Feature filters off the query string (2026-10-02): `a.colour=Black,Blue`.
+ * Only a key shaped like a feature key is read, and every value is a string,
+ * so nothing from the URL reaches Mongo as an operator.
+ */
+function attributeFilters(params = {}) {
+  const out = {};
+  for (const [name, value] of Object.entries(params)) {
+    if (!name.startsWith('a.')) continue;
+    const key = name.slice(2);
+    if (!ATTRIBUTE_KEY_PATTERN.test(key)) continue;
+    const values = (Array.isArray(value) ? value : String(value ?? '').split(','))
+      .map((entry) => String(entry).trim())
+      .filter(Boolean);
+    if (values.length) out[key] = values;
+  }
+  return out;
+}
 
 const PAGE_SIZE = 24;
 
@@ -80,6 +101,10 @@ function serialize(product, user) {
     seriesName: doc.seriesName,
     modelSlug: doc.modelSlug,
     modelName: doc.modelName,
+    level5Slug: doc.level5Slug ?? null,
+    level5Name: doc.level5Name ?? null,
+    level6Slug: doc.level6Slug ?? null,
+    level6Name: doc.level6Name ?? null,
     priceVisible: showPricing,
 
     // Clearance status is not pricing, so it sits above the gate: a pending
@@ -170,6 +195,8 @@ function serializeDetail(product, user) {
   const doc = product.toObject ? product.toObject() : product;
   return {
     ...serialize(product, user),
+    // Which type it is sold under, so its page starts from that catalogue.
+    category: doc.category || 'parts',
     description: doc.description,
     images: (doc.images ?? []).map(urlOf),
     video: urlOf(doc.video) || null,
@@ -179,16 +206,18 @@ function serializeDetail(product, user) {
 }
 
 /** Translates the shared filter state into a Mongo query. */
-function buildQuery({ deviceType, brand, series, model, partType, grade, inStockOnly, q }) {
+function buildQuery(params) {
+  const { deviceType, brand, series, model, partType, grade, inStockOnly, q, category } = params;
   const query = { isActive: true };
+
+  for (const [key, values] of Object.entries(attributeFilters(params))) {
+    query[`attributes.${key}`] = { $in: values };
+  }
 
   // `String()` on every equality value, belt to the `query parser` braces in
   // app.js: a filter value must never reach Mongo as an object, because an
   // object here IS a query staff member.
-  if (deviceType) query.deviceTypeSlug = String(deviceType);
-  if (brand) query.brandSlug = String(brand);
-  if (series) query.seriesSlug = String(series);
-  if (model) query.modelSlug = String(model);
+  const levelClauses = levelClause({ deviceType, brand, series, model, level5: params.level5, level6: params.level6 });
 
   const partTypes = toArray(partType);
   if (partTypes.length) query.partType = { $in: partTypes };
@@ -202,16 +231,42 @@ function buildQuery({ deviceType, brand, series, model, partType, grade, inStock
   // holds one `$or` key - the second would silently replace the first and widen
   // the search to the whole catalogue. `$and` keeps them as two independent
   // clauses that must both hold.
-  const clauses = [HAS_PICTURE];
+  // The catalogue category (2026-10-01): Parts unless the page names another,
+  // so a business's Accessories never appear on the Parts page.
+  const clauses = [HAS_PICTURE, categoryFilter(typeof category === 'string' && category ? category : 'parts')];
 
   if (q) {
     const rx = likeRegex(q);
     clauses.push({ $or: [{ name: rx }, { sku: rx }, { searchTerms: rx }, { modelName: rx }] });
   }
+  clauses.push(...levelClauses);
 
   query.$and = clauses;
 
   return query;
+}
+
+/**
+ * The category levels picked in the filters, one clause each.
+ *
+ * A product set to "Any" at a level (2026-10-03) is filed no deeper than the
+ * level above, and fits every option from there down: a battery for every
+ * Samsung shows under each Samsung series and model. So a level matches its
+ * own entry, or a product that stops before it. Levels above still have to
+ * match, which keeps that battery out from under Apple.
+ */
+const LEVEL_FILTERS = ['deviceType', 'brand', 'series', 'model', 'level5', 'level6'];
+const EMPTY = { $in: [null, ''] };
+
+function levelClause(picked) {
+  const clauses = [];
+  LEVEL_FILTERS.forEach((key, index) => {
+    if (!picked[key]) return;
+    const stopsHere = Object.fromEntries(LEVEL_FILTERS.slice(index).map((deeper) => [`${deeper}Slug`, EMPTY]));
+    // `String()`: a filter value must never reach Mongo as an object.
+    clauses.push({ $or: [{ [`${key}Slug`]: String(picked[key]) }, stopsHere] });
+  });
+  return clauses;
 }
 
 function toArray(value) {
@@ -231,6 +286,40 @@ async function buildFacets(params) {
   const withoutGrade = buildQuery({ ...params, grade: null });
   const withoutPartType = buildQuery({ ...params, partType: null });
   const full = buildQuery(params);
+
+  /**
+   * One facet per feature the category offers as a website filter, each
+   * counted without its own ticks (like grade), so ticking Black does not zero
+   * Blue. A feature with no answers on this page's products is left out.
+   */
+  const withoutAttribute = (key) => {
+    const next = { ...params };
+    delete next[`a.${key}`];
+    return buildQuery(next);
+  };
+  const filterDefs = (await categoryAttributes(typeof params.category === 'string' && params.category ? params.category : 'parts')).filter(
+    (def) => def.filter,
+  );
+  const attributeCounts = await Promise.all(
+    filterDefs.map((def) =>
+      db().Product.aggregate([
+        { $match: { ...withoutAttribute(def.key), [`attributes.${def.key}`]: { $exists: true, $ne: '' } } },
+        { $group: { _id: `$attributes.${def.key}`, count: { $sum: 1 } } },
+      ]),
+    ),
+  );
+  const attributes = filterDefs
+    .map((def, index) => {
+      const counts = new Map(attributeCounts[index].map((row) => [row._id, row.count]));
+      // A list feature keeps the order its choices were written in; the rest sort.
+      const values = def.type === 'select' ? def.options.filter((option) => counts.has(option)) : [...counts.keys()].sort();
+      return {
+        key: def.key,
+        label: def.label,
+        options: values.map((value) => ({ value, label: formatAttribute(def, value), count: counts.get(value) })),
+      };
+    })
+    .filter((facet) => facet.options.length > 0);
 
   const [grades, partTypes, availability, priceRange] = await Promise.all([
     db().Product.aggregate([
@@ -267,6 +356,7 @@ async function buildFacets(params) {
       total: availability[0]?.total ?? 0,
     },
     price: priceRange[0] ? { min: priceRange[0].min, max: priceRange[0].max } : null,
+    attributes,
   };
 }
 
@@ -315,6 +405,12 @@ async function getProductBySlug(slug, user) {
   const product = await db().Product.findOne({ slug, isActive: true }).lean();
   if (!product) return null;
 
+  // Filed at the same place, every level alike: on a type without models, or
+  // on a product set to "Any" below its brand (2026-10-03), `modelSlug` is
+  // empty, and matching on it alone pulled in every other modelless product.
+  const samePlace = Object.fromEntries(LEVEL_FILTERS.map((key) => [`${key}Slug`, product[`${key}Slug`] || null]));
+  const category = categoryFilter(product.category || 'parts');
+
   // FAQs ride along with the product rather than in a second round trip: the
   // section is on every product page, so a separate request would only ever
   // arrive late and shift the layout under the reader.
@@ -339,7 +435,8 @@ async function getProductBySlug(slug, user) {
       {
         $match: {
           _id: { $ne: product._id },
-          modelSlug: product.modelSlug,
+          ...samePlace,
+          ...category,
           partType: { $ne: product.partType },
           isActive: true,
         },
@@ -376,7 +473,8 @@ async function getProductBySlug(slug, user) {
      */
     db().Product.find({
       _id: { $ne: product._id },
-      modelSlug: product.modelSlug,
+      ...samePlace,
+      ...category,
       partType: product.partType,
       isActive: true,
     })
@@ -394,7 +492,14 @@ async function getProductBySlug(slug, user) {
   ]);
 
   return {
-    product: serializeDetail(product, user),
+    product: {
+      ...serializeDetail(product, user),
+      // Its features, as the page lists them: only those marked for the
+      // product page, in the category's order, each in words (2026-10-02).
+      features: (await categoryAttributes(product.category || 'parts'))
+        .filter((def) => def.product && product.attributes?.[def.key])
+        .map((def) => ({ key: def.key, label: def.label, value: formatAttribute(def, product.attributes[def.key]) })),
+    },
     related: related.map((item) => serialize(item, user)),
     faqs,
     // Sorted by price so the row reads as a ladder rather than in whatever
@@ -434,10 +539,13 @@ async function searchProducts(term, user, { limit = 6 } = {}) {
    *
    * Matched against the lowercased term because aliases are stored lowercase.
    */
+  // Parts nodes only: the Phones and Services trees carry the same aliases
+  // (they were copied from the device list) and no product points at them.
   const aliasMatches = await db().Taxonomy.find({
     kind: 'model',
     isActive: { $ne: false },
     aliases: q.trim().toLowerCase(),
+    ...categoryFilter('parts'),
   })
     .select('slug name path productCount')
     .limit(6)
@@ -462,7 +570,7 @@ async function searchProducts(term, user, { limit = 6 } = {}) {
   const [products, total, nameModels, partTypes] = await Promise.all([
     db().Product.find(query).sort({ stock: -1 }).limit(limit).lean(),
     db().Product.countDocuments(query),
-    db().Taxonomy.find({ kind: 'model', name: rx, isActive: { $ne: false } })
+    db().Taxonomy.find({ kind: 'model', name: rx, isActive: { $ne: false }, ...categoryFilter('parts') })
       .sort({ productCount: -1 })
       .limit(6)
       .lean(),

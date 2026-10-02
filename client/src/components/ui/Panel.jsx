@@ -1,5 +1,5 @@
 import { useId, useState } from 'react';
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion } from '@/lib/motionReact';
 import { ChevronDown } from 'lucide-react';
 import cn from '@/lib/cn';
 import { ease } from '@/lib/motion';

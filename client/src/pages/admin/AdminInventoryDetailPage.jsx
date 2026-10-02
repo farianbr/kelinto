@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router';
+import { Link, useNavigate, useParams } from 'react-router';
 import {
   AlertCircle,
   ArrowDownRight,
@@ -28,7 +28,7 @@ import { useSetRecordLabel } from '@/components/admin/shell/recordLabel';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
-import { OpsForm, AdjustForm, ProductForm } from '@/components/admin/StockForms';
+import { OpsForm, AdjustForm } from '@/components/admin/StockForms';
 import { useTaxonomy } from '@/hooks/useCatalog';
 import {
   useAdminInventoryItem,
@@ -70,11 +70,12 @@ const PO_STATUS_TONES = {
 export function AdminInventoryDetailPage() {
   const { id } = useParams();
   const { data, isLoading, error } = useAdminInventoryItem(id);
+  const navigate = useNavigate();
 
   // The same three mutations the inventory list uses. A product's own page is
   // where a staff member lands from a low-stock alert, and it was the one screen
   // that could show the problem without offering any way to fix it.
-  const { adjustStock, updateInventoryOps, toggleProduct, updateProduct } = useAdminMutations();
+  const { adjustStock, updateInventoryOps, toggleProduct } = useAdminMutations();
   // The catalogue form cascades brand → series → model, so it needs the tree.
   const { data: tree } = useTaxonomy();
   const { data: supplierData } = useAdminSuppliers({ status: 'active' });
@@ -87,7 +88,6 @@ export function AdminInventoryDetailPage() {
   // vanishing because a button was next to the one somebody meant is exactly
   // the mistake a confirm step exists to catch.
   const [confirmingVisibility, setConfirmingVisibility] = useState(false);
-  const [editing, setEditing] = useState(false);
 
   const product = data?.product;
   const movements = data?.movements ?? [];
@@ -240,7 +240,7 @@ export function AdminInventoryDetailPage() {
               size="sm"
               variant="outline"
               icon={Pencil}
-              onClick={() => setEditing(true)}
+              onClick={() => navigate(`/admin/inventory/${product.id}/edit`)}
             >
               Edit product
             </Button>
@@ -487,27 +487,6 @@ export function AdminInventoryDetailPage() {
 
       {/* The same two forms the inventory list opens, imported rather than
           re-declared - a second copy is how the two screens drift apart. */}
-      <Modal
-        open={editing}
-        onClose={() => setEditing(false)}
-        title="Edit product"
-        size="lg"
-        align="top"
-      >
-        <ProductForm
-          product={product}
-          tree={tree}
-          isPending={updateProduct.isPending}
-          error={updateProduct.error?.message}
-          onCancel={() => setEditing(false)}
-          onSubmit={(values) =>
-            updateProduct.mutate(
-              { id: product.id, ...values },
-              { onSuccess: () => setEditing(false) },
-            )
-          }
-        />
-      </Modal>
 
       <Modal
         open={adjusting}

@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertCircle, ChevronDown, Search } from 'lucide-react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion } from '@/lib/motionReact';
 import { COUNTRIES, DEFAULT_DIAL } from '@shared/countries';
 import cn from '@/lib/cn';
 import useOnClickOutside from '@/hooks/useOnClickOutside';

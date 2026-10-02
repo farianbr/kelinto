@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { ArrowRight, Search, X } from 'lucide-react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion } from '@/lib/motionReact';
 import { Link } from 'react-router';
 import cn from '@/lib/cn';
 import { money, count as formatCount } from '@/lib/format';

@@ -74,6 +74,11 @@ const STEPS = [
     why: 'Flags clearance products and upserts the exclusive deal.',
   },
   {
+    script: 'phones.js',
+    label: 'pre-owned phones',
+    why: 'One listed phone per photo in client/public/product-photos/phones. Skips photos already listed.',
+  },
+  {
     script: 'website-sections.js',
     label: 'website page sections',
     why: 'An article on each page, Google reviews and the rating. Never overwrites.',

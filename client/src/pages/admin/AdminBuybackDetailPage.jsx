@@ -4,7 +4,8 @@ import { Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Camera, Eye, IdCard, Smartphone, User, XCircle } from 'lucide-react';
 
-import { CONDITION_GRADES, CONDITION_PARTS, buybackAcceptSchema } from '@shared/schemas/admin';
+import { buybackAcceptSchema } from '@shared/schemas/admin';
+import { CONDITION_PARTS, conditionAnswered, conditionProblems } from '@shared/deviceCondition';
 import { apiUrl } from '@/lib/api';
 import { date, dateTime, money } from '@/lib/format';
 import useAdminForm from '@/hooks/useAdminForm';
@@ -19,7 +20,8 @@ import Modal from '@/components/ui/Modal';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Skeleton from '@/components/ui/Skeleton';
 import PageHeader from '@/components/admin/PageHeader';
-import { PREOWNED_GRADE_OPTIONS } from '@/components/admin/PreownedStockForm';
+import { PHONE_GRADES } from '@shared/catalog';
+import { useAdminCatalogCategories } from '@/hooks/useAdmin';
 import { useSetRecordLabel } from '@/components/admin/shell/recordLabel';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { useBuybackRequest, usePreownedMutations } from '@/hooks/usePreowned';
@@ -46,8 +48,7 @@ import { useBuybackRequest, usePreownedMutations } from '@/hooks/usePreowned';
 const PAGE_ICON = adminIcon('Smartphone');
 const TONES = { pending: 'warn', accepted: 'ok', declined: 'neutral' };
 const LABELS = { pending: 'Waiting to be priced', accepted: 'Bought', declined: 'Declined' };
-const GRADE_OPTIONS = [{ value: '', label: 'Not checked' }, ...CONDITION_GRADES];
-const gradeLabel = Object.fromEntries(CONDITION_GRADES.map((grade) => [grade.value, grade.label]));
+const gradeOptions = (part) => [{ value: '', label: 'Not checked' }, ...part.options];
 
 function Fact({ label, children }) {
   return (
@@ -60,10 +61,8 @@ function Fact({ label, children }) {
 
 function PhonePanel({ buyback }) {
   const { device, customerCondition } = buyback;
-  const flagged = CONDITION_PARTS.filter(
-    (part) => customerCondition[part.key] && customerCondition[part.key] !== 'working',
-  );
-  const answered = CONDITION_PARTS.some((part) => customerCondition[part.key]);
+  const problems = conditionProblems(customerCondition);
+  const answered = conditionAnswered(customerCondition);
 
   return (
     <Panel title="The phone" icon={Smartphone}>
@@ -83,11 +82,7 @@ function PhonePanel({ buyback }) {
         <span className="font-medium text-ink-900">Seller says: </span>
         {!answered
           ? 'nothing about its condition'
-          : flagged.length === 0
-            ? 'everything works'
-            : flagged
-                .map((part) => `${part.label} ${gradeLabel[customerCondition[part.key]].toLowerCase()}`)
-                .join(' · ')}
+          : problems || 'everything is good'}
       </p>
     </Panel>
   );
@@ -168,6 +163,13 @@ function SellerPanel({ buyback }) {
  */
 function ReviewForm({ buyback, payoutMethods }) {
   const { accept } = usePreownedMutations();
+  // The Phones type's grades (Settings › Taxonomy): the phone joins the
+  // product for its grade, so the grade is one of the type's own.
+  const { data: categories = [] } = useAdminCatalogCategories();
+  const gradeOptions = (categories.find((entry) => entry.slug === 'phones')?.grades ?? PHONE_GRADES).map((grade) => ({
+    value: grade.value,
+    label: grade.label,
+  }));
   const [pending, setPending] = useState(null);
   const [declining, setDeclining] = useState(false);
 
@@ -178,7 +180,7 @@ function ReviewForm({ buyback, payoutMethods }) {
       sellingPriceDollars: '',
       payoutMethod: '',
       payoutReference: '',
-      grade: 'good',
+      grade: 'GOOD',
       condition: Object.fromEntries(
         CONDITION_PARTS.map((part) => [part.key, buyback.customerCondition[part.key] ?? '']),
       ),
@@ -238,7 +240,7 @@ function ReviewForm({ buyback, payoutMethods }) {
           />
         </div>
 
-        <SelectField control={control} name="grade" label="Grade on the website" options={PREOWNED_GRADE_OPTIONS} />
+        <SelectField control={control} name="grade" label="Grade" options={gradeOptions} />
 
         <div>
           <p className="eyebrow mb-2 text-ink-400">Condition, as we tested it</p>
@@ -249,7 +251,7 @@ function ReviewForm({ buyback, payoutMethods }) {
                 control={control}
                 name={`condition.${part.key}`}
                 label={part.label}
-                options={GRADE_OPTIONS}
+                options={gradeOptions(part)}
               />
             ))}
           </div>
@@ -386,9 +388,9 @@ function OutcomePanel({ buyback }) {
         </Fact>
       </dl>
       {review.notes && <p className="mt-3 text-sm text-ink-600">{review.notes}</p>}
-      {buyback.preownedId && (
-        <Link to="/admin/preowned?tab=stock" className="mt-3 inline-block text-sm font-semibold text-brand hover:text-brand-700">
-          See it in stock
+      {buyback.productId && (
+        <Link to={`/admin/inventory/${buyback.productId}`} className="mt-3 inline-block text-sm font-semibold text-brand hover:text-brand-700">
+          See its product in Inventory
         </Link>
       )}
     </Panel>

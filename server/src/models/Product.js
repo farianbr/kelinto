@@ -18,13 +18,17 @@ const productSchema = new mongoose.Schema(
     videoPoster: String,
 
     partType: { type: String, required: true, index: true }, // screen | battery | charging-port | ...
+    /**
+     * The catalogue category (`shared/catalog.js`) a product is sold under,
+     * and so which taxonomy tree its path slugs belong to. Absent means Parts,
+     * which is every product written before categories existed.
+     */
+    category: { type: String, trim: true, index: true },
     partTypeLabel: String,
-    grade: {
-      type: String,
-      enum: ['NEW', 'OEM', 'PULL-A', 'PULL-B', 'AFTERMARKET'],
-      required: true,
-      index: true,
-    },
+    // One of its type's grades (`CatalogCategory.grades`), checked on save by
+    // `adminService`. A fixed enum until 2026-10-02, when grades became per type.
+    // Blank on a type with no grades: no badge (2026-10-02).
+    grade: { type: String, trim: true, maxlength: 24, default: '', index: true },
 
     // Integer cents. Never a float.
     price: { type: Number, required: true },
@@ -77,12 +81,23 @@ const productSchema = new mongoose.Schema(
     brandSlug: { type: String, index: true },
     seriesSlug: { type: String, index: true },
     modelSlug: { type: String, index: true },
+    // The two deeper finder levels a product type may add (2026-10-02).
+    level5Slug: { type: String, index: true },
+    level6Slug: { type: String, index: true },
     deviceTypeName: String,
     brandName: String,
     seriesName: String,
     modelName: String,
+    level5Name: String,
+    level6Name: String,
 
     specs: { type: Map, of: String, default: {} },
+    /**
+     * Its answers to its category's features (`CatalogCategory.attributes`),
+     * keyed by feature key, every value a string (2026-10-02). Separate from
+     * `specs`, which is free-form copy: these are defined, filterable facts.
+     */
+    attributes: { type: Map, of: String, default: undefined },
     searchTerms: [String],
     isActive: { type: Boolean, default: true, index: true },
 

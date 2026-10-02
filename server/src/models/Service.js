@@ -35,10 +35,13 @@ import mongoose from 'mongoose';
  */
 
 /**
- * What kind of work this is. Groups the picker and the revenue report.
+ * What kind of work this is (its repair type). Groups the picker, the revenue
+ * report and the website's Services finder.
  *
- * Deliberately coarse. A shop that wants finer grouping has `deviceTypes` and
- * the name itself; a long enum here would be a taxonomy nobody maintains.
+ * The list was fixed until 2026-10-02 and is now the Services type's first
+ * finder step, edited in Settings › Taxonomy and checked by
+ * `serviceCatalogService.repairTypeOf`, so the field takes any value from
+ * that list. These ten are its starting entries (`DEFAULT_REPAIR_TYPES`).
  */
 const SERVICE_CATEGORIES = [
   'screen',
@@ -63,10 +66,24 @@ const serviceSchema = new mongoose.Schema(
      */
     description: { type: String, trim: true, maxlength: 500 },
 
+    /**
+     * The website's detail page for this service (2026-10-02): a picture, the
+     * long-form copy, and the address it lives at.
+     *
+     * `image` is an R2 KEY, never a URL (`storage.urlOf` on the way out);
+     * blank falls back to the stock photo matched by name (`SERVICE_PHOTOS`).
+     * `details` is admin-authored copy, rendered through `lib/richText.jsx`.
+     * `slug` is derived from the name once and kept, so a renamed service keeps
+     * its address; one written before slugs existed gets one on first read.
+     */
+    image: { type: String, trim: true, default: '' },
+    details: { type: String, trim: true, maxlength: 6000, default: '' },
+    slug: { type: String, trim: true, index: true },
+
     /** The shop that sells it. Scoped like every other business-owned record. */
     business: { type: mongoose.Schema.Types.ObjectId, ref: 'Business', default: null, index: true },
 
-    category: { type: String, enum: SERVICE_CATEGORIES, default: 'other', index: true },
+    category: { type: String, trim: true, maxlength: 40, default: 'other', index: true },
 
     /**
      * The list price, in integer cents, like every other amount in this system.
@@ -111,6 +128,19 @@ const serviceSchema = new mongoose.Schema(
      * not this schema's.
      */
     deviceTypes: [{ type: String, trim: true, lowercase: true, maxlength: 40 }],
+
+    /**
+     * Narrows the service to one branch of the Services taxonomy (2026-10-01):
+     * "iPhone 15 screen replacement" sits on the iPhone 15 model, "Screen
+     * replacement" on nothing and so applies to every device. Slugs, plus the
+     * names for display, exactly as a product carries its place in the Parts
+     * tree. All blank is the common case, and the right one for a diagnostic.
+     */
+    deviceTypeSlug: { type: String, trim: true, default: '' },
+    brandSlug: { type: String, trim: true, default: '' },
+    seriesSlug: { type: String, trim: true, default: '' },
+    modelSlug: { type: String, trim: true, default: '' },
+    scopeLabel: { type: String, trim: true, maxlength: 160, default: '' },
 
     /** Whether tax applies. A few services are exempt; most are not. */
     taxable: { type: Boolean, default: true },

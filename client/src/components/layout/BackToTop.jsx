@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion } from '@/lib/motionReact';
 import { ArrowUp } from 'lucide-react';
 import useScrollProgress from '@/hooks/useScrollProgress';
 import { ease } from '@/lib/motion';

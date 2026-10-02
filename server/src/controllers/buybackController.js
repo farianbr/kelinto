@@ -46,23 +46,10 @@ const decline = asyncHandler(async (req, res) => {
   res.json(await buybackService.declineBuyback(req.params.id, req.body, req));
 });
 
-const listStock = asyncHandler(async (req, res) => {
-  res.json(await buybackService.listPreowned({ status: req.query.status, q: req.query.q }));
-});
-
-const updateStock = asyncHandler(async (req, res) => {
-  res.json(await buybackService.updatePreowned(req.params.id, req.body, req));
-});
-
-/** The website's pre-owned page. Public; prices only for approved accounts. */
-const publicList = asyncHandler(async (req, res) => {
-  res.json(await buybackService.publicList(req.user));
-});
-
 /** "Phones you sold us", on the customer's account. */
 const mine = asyncHandler(async (req, res) => {
   res.json(await buybackService.accountList(req.user._id));
 });
 
-export { sell, list, detail, revealId, photo, accept, decline, listStock, updateStock, publicList, mine };
-export default { sell, list, detail, revealId, photo, accept, decline, listStock, updateStock, publicList, mine };
+export { sell, list, detail, revealId, photo, accept, decline, mine };
+export default { sell, list, detail, revealId, photo, accept, decline, mine };

@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router';
-import { motion } from 'motion/react';
+import { motion } from '@/lib/motionReact';
 import {
   ArrowRight,
   BadgeCheck,

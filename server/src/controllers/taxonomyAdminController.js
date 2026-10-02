@@ -15,6 +15,26 @@ const list = asyncHandler(async (req, res) => {
   res.json(await taxonomyAdminService.list(req.query));
 });
 
+/** The category tree as a table: one column per level, one row per product line. */
+const rows = asyncHandler(async (req, res) => {
+  res.json(await taxonomyAdminService.rows(req.query));
+});
+
+/** Edit one row as a whole: its names, its aliases, on or off. */
+const updateRow = asyncHandler(async (req, res) => {
+  res.json(await taxonomyAdminService.updateRow(req.body));
+});
+
+/** Take one row out of the tree. */
+const removeRow = asyncHandler(async (req, res) => {
+  res.json(await taxonomyAdminService.removeRow(req.body));
+});
+
+/** A category's whole tree, unpruned, for the product and service pickers. */
+const fullTree = asyncHandler(async (req, res) => {
+  res.json(await taxonomyAdminService.fullTree(req.query.category));
+});
+
 const get = asyncHandler(async (req, res) => {
   res.json(await taxonomyAdminService.get(req.params.id));
 });
@@ -61,7 +81,7 @@ const create = asyncHandler(async (req, res) => {
  * that day.
  */
 const importCsv = asyncHandler(async (req, res) => {
-  const result = await taxonomyAdminService.importCsv(req.body.text);
+  const result = await taxonomyAdminService.importCsv(req.body.text, req.body.category);
 
   await auditService.recordChange({
     req,
@@ -118,4 +138,4 @@ const remove = asyncHandler(async (req, res) => {
   res.json(result);
 });
 
-export { list, get, create, importCsv, update, remove };
+export { list, rows, updateRow, removeRow, fullTree, get, create, importCsv, update, remove };

@@ -1,7 +1,7 @@
 import { Link } from 'react-router';
 import { ArrowUpRight, Check, MapPin, Stamp } from 'lucide-react';
 import cn from '@/lib/cn';
-import { GRADES } from '@/lib/constants';
+import { gradeMeta } from '@/lib/constants';
 import useBusinessInfo from '@/hooks/useBusinessInfo';
 import { pressable } from '@/lib/motion';
 
@@ -59,7 +59,7 @@ const clausesFor = (info) => [
 ];
 
 export function WhyCellvix({ product = null, className }) {
-  const grade = product ? (GRADES[product.grade] ?? null) : null;
+  const grade = product ? gradeMeta(product.grade) : null;
   const info = useBusinessInfo();
   const clauses = clausesFor(info);
 
@@ -82,8 +82,14 @@ export function WhyCellvix({ product = null, className }) {
             <div className="mb-5 flex items-start gap-3">
               {/* The grade as a stamp: the one thing a buyer checks first, and
                   the thing the four rows below are the evidence for. */}
-              <span className="flex size-14 shrink-0 rotate-[-6deg] flex-col items-center justify-center rounded-md border-2 border-brand/35 bg-surface text-brand">
-                <span className="font-display text-lg font-extrabold leading-none tracking-tight">
+              <span
+                className={cn(
+                  'flex h-14 shrink-0 rotate-[-6deg] flex-col items-center justify-center rounded-md border-2 border-brand/35 bg-surface text-brand',
+                  // A grade that is a word (a type's own) gets the width it needs.
+                  grade?.pill ? 'px-2.5' : 'w-14',
+                )}
+              >
+                <span className={cn('font-display font-extrabold leading-none tracking-tight', grade?.pill ? 'text-sm' : 'text-lg')}>
                   {(grade?.short ?? product.grade).split(' ')[0]}
                 </span>
                 {(grade?.short ?? '').split(' ')[1] && (

@@ -106,6 +106,16 @@
   --color-info: #2563eb; /* 5.2:1 */
   --color-info-50: #eff6ff;
 
+  /* Membership metals (2026-10-01, re-cut 2026-10-02). The EDGE of a featured
+     plan card and the swatch beside a plan's name in the comparison table.
+     Never text. Gold is a bright bullion rather than the old ochre, which read
+     as dull brown; Platinum is a cool pearl-violet, deeper and rarer than
+     Gold, so the top tier looks like the top tier. The card faces use the
+     plate ramps under @layer utilities. */
+  --color-tier-silver: #aab3bf;
+  --color-tier-gold: #d4a437;
+  --color-tier-platinum: #7f87ab;
+
   /* --- type ------------------------------------------------------------- */
   --font-display: 'Archivo', 'Inter', ui-sans-serif, system-ui, sans-serif;
   /* There is no --font-wordmark. The footer used to SET the word "cellvix" in
@@ -540,6 +550,22 @@
       var(--brand-grad-base, #41566e) 55%,
       var(--brand-grad-end, #5f7185) 100%
     );
+  }
+
+  /* Membership plates (2026-10-02): the face of each plan card, like the
+     face of a premium charge card. A sheen, not a flat swatch: a light band
+     two-fifths along catches the eye the way metal does. Text on a plate is
+     ink-900, and every stop clears 5:1 against it (Silver 10.8, Gold 7.4,
+     Platinum 5.4 at the darkest corner), so the plan's name is always legible,
+     which the old ink card's gold heading was not. */
+  .bg-tier-plate-silver {
+    background-image: linear-gradient(135deg, #fbfcfd 0%, #e3e7ec 38%, #f6f7f9 52%, #b9c1cc 100%);
+  }
+  .bg-tier-plate-gold {
+    background-image: linear-gradient(135deg, #fff6d6 0%, #f4cf5f 36%, #fdeaa8 54%, #c9962c 100%);
+  }
+  .bg-tier-plate-platinum {
+    background-image: linear-gradient(135deg, #f7f6ff 0%, #d3d6ea 36%, #f1f2fb 54%, #7f87ab 100%);
   }
 
   /* 2px accent rule, used at the top of the header and under active tabs. */

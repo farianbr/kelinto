@@ -54,7 +54,11 @@ async function quote(userId, deliveryCode = 'ground') {
   const cart = await db().Cart.findOne({ user: userId, savedForLater: false });
   if (
     !cart ||
-    (cart.items.length === 0 && (cart.bundles?.length ?? 0) === 0 && (cart.preowned?.length ?? 0) === 0)
+    (cart.items.length === 0 &&
+      (cart.bundles?.length ?? 0) === 0 &&
+      (cart.preowned?.length ?? 0) === 0 &&
+      (cart.services?.length ?? 0) === 0 &&
+      !cart.membership?.tier)
   ) {
     throw ApiError.badRequest('Your cart is empty.', 'CART_EMPTY');
   }
@@ -65,7 +69,9 @@ async function quote(userId, deliveryCode = 'ground') {
   if (
     priced.items.length === 0 &&
     priced.bundles.length === 0 &&
-    !priced.preowned.some((line) => line.available)
+    !priced.preowned.some((line) => line.available) &&
+    !priced.services.some((line) => line.available) &&
+    !priced.membership.some((line) => line.available)
   ) {
     throw ApiError.badRequest('Nothing in your cart is still available.', 'CART_EMPTY');
   }
@@ -86,6 +92,7 @@ async function quote(userId, deliveryCode = 'ground') {
       products: (bundle.products ?? []).map(({ unitCost, ...line }) => line),
     })),
     preowned: priced.preowned.map(({ unitCost, ...line }) => line),
+    services: priced.services.map(({ unitCost, ...line }) => line),
     storeCredit: credit,
     itemCount:
       priced.items.reduce((sum, item) => sum + item.qty, 0) +
@@ -93,8 +100,33 @@ async function quote(userId, deliveryCode = 'ground') {
         (sum, bundle) => sum + bundle.products.reduce((n, line) => n + line.qty, 0),
         0,
       ) +
-      priced.preowned.filter((line) => line.available).length,
+      priced.preowned.filter((line) => line.available).length +
+      priced.services.filter((line) => line.available).reduce((sum, line) => sum + line.qty, 0) +
+      priced.membership.filter((line) => line.available).length,
   };
+}
+
+/**
+ * Move the account onto the plan it just bought (2026-10-02).
+ *
+ * Buying the tier already held is a renewal: the new term starts where the
+ * current one ends, so paying early never loses days. Any other plan starts
+ * today; the days left on the old one are not carried over, which the
+ * Membership page says beside the button.
+ */
+async function activateMembership(user, line, order) {
+  const now = new Date();
+  const renewing =
+    user.tier === line.tier && user.membershipRenewsAt && new Date(user.membershipRenewsAt) > now;
+  const start = renewing ? new Date(user.membershipRenewsAt) : now;
+  const renewsAt = new Date(start);
+  if (line.interval === 'month') renewsAt.setMonth(renewsAt.getMonth() + 1);
+  else renewsAt.setFullYear(renewsAt.getFullYear() + 1);
+
+  await db().User.updateOne(
+    { _id: user._id },
+    { $set: { tier: line.tier, membershipRenewsAt: renewsAt, membershipOrder: order._id } },
+  );
 }
 
 /**
@@ -168,7 +200,57 @@ async function createOrder(user, input) {
     lineTotal: line.lineTotal,
     unitCost: line.unitCost,
   }));
-  const lines = [...partLines, ...preownedLines];
+  /**
+   * A service switched off or unpriced since it went in the cart is refused
+   * by name, before anything is charged, exactly like a phone sold to someone
+   * else.
+   */
+  const unbookable = priced.services.filter((line) => !line.available);
+  if (unbookable.length > 0) {
+    throw ApiError.conflict(
+      `${unbookable.map((line) => line.name).join(', ')} cannot be booked online any more. Remove it from your cart to continue.`,
+      'SERVICE_UNAVAILABLE',
+    );
+  }
+
+  // Labour lines: no stock, no grade, no picking. The counter carries them out.
+  const serviceLines = priced.services.map((line) => ({
+    service: line.service,
+    sku: line.sku,
+    name: line.scopeLabel ? `${line.name} (${line.scopeLabel})` : line.name,
+    image: line.photo ?? undefined,
+    partType: 'service',
+    partTypeLabel: 'Repair service',
+    qty: line.qty,
+    unitPrice: line.unitPrice,
+    lineTotal: line.lineTotal,
+    unitCost: line.unitCost,
+  }));
+
+  /**
+   * A membership plan (2026-10-02): one line, refused by name if the plan came
+   * off sale while it sat in the cart. The order is what moves the account onto
+   * the tier, once it is written (`activateMembership` below).
+   */
+  const lapsed = priced.membership.filter((line) => !line.available);
+  if (lapsed.length > 0) {
+    throw ApiError.conflict(
+      `${lapsed[0].name} is not on sale any more. Remove it from your cart to continue.`,
+      'PLAN_UNAVAILABLE',
+    );
+  }
+  const membershipLines = priced.membership.map((line) => ({
+    membership: line.tier,
+    sku: line.sku,
+    name: `${line.name} (${line.interval === 'month' ? '1 month' : '1 year'})`,
+    partType: 'membership',
+    partTypeLabel: 'Membership',
+    qty: 1,
+    unitPrice: line.unitPrice,
+    lineTotal: line.lineTotal,
+  }));
+
+  const lines = [...partLines, ...preownedLines, ...serviceLines, ...membershipLines];
 
   // Re-check availability at the moment of purchase, not at add-to-cart.
   const products = await db().Product.find({
@@ -425,9 +507,13 @@ async function createOrder(user, input) {
   if (input.poNumber) memory['fieldMemory.poNumber'] = input.poNumber;
   if (Object.keys(memory).length) await db().User.updateOne({ _id: user._id }, { $set: memory });
 
+  if (membershipLines.length > 0) {
+    await activateMembership(user, priced.membership[0], order);
+  }
+
   await db().Cart.updateOne(
     { user: user._id, savedForLater: false },
-    { $set: { items: [], bundles: [], preowned: [], promoCode: '' } },
+    { $set: { items: [], bundles: [], preowned: [], services: [], promoCode: '' }, $unset: { membership: 1 } },
   );
 
   // The invoice goes out by email the moment the order is placed. Deliberately

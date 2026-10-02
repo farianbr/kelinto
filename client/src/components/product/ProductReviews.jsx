@@ -42,7 +42,7 @@ function DistributionRow({ stars, count, total }) {
   );
 }
 
-export function ProductReviews({ reviews = [], average = 0, count = 0, className }) {
+export function ProductReviews({ reviews = [], average = 0, count = 0, noun = 'part', className }) {
   if (!count) return null;
 
   // How many gave each rating, for the distribution. Counted from what the
@@ -93,7 +93,7 @@ export function ProductReviews({ reviews = [], average = 0, count = 0, className
 
             <p className="mt-4 flex items-start gap-1.5 border-t border-line pt-4 text-xs leading-relaxed text-ink-400">
               <BadgeCheck className="mt-0.5 size-3.5 shrink-0 text-ok" strokeWidth={2.25} aria-hidden="true" />
-              Every review here was written by an account that bought this part and had it
+              Every review here was written by an account that bought this {noun} and had it
               delivered.
             </p>
           </div>

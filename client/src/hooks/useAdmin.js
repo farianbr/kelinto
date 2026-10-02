@@ -850,6 +850,17 @@ export function useSupplierReturn(id) {
   });
 }
 
+/** Purchase › Membership Plans: the plans, the matrix and the warranty base. */
+export function useAdminMembership() {
+  const { canUseAdmin } = useAuth();
+  return useQuery({
+    queryKey: ['admin', 'membership-plans'],
+    queryFn: () => api.get('/admin/membership-plans'),
+    enabled: canUseAdmin,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
 export function useAdminSettings() {
   const { canUseAdmin } = useAuth();
   return useQuery({
@@ -980,11 +991,54 @@ export function useDeletePreview(type, id, enabled = true) {
   });
 }
 
+/**
+ * The catalogue categories (Settings › Product categories, 2026-10-01), with
+ * how many items and taxonomy entries each holds.
+ */
+export function useAdminCatalogCategories() {
+  const { canUseAdmin } = useAuth();
+  return useQuery({
+    queryKey: ['admin', 'catalog-categories'],
+    queryFn: () => api.get('/admin/catalog-categories'),
+    enabled: canUseAdmin,
+    staleTime: 60 * 1000,
+    select: (data) => data.categories ?? [],
+  });
+}
+
+/**
+ * One category's whole tree, unpruned (2026-10-01). The pickers that file a
+ * product or a service need every branch, including the ones nothing has been
+ * filed under yet, which the website's own tree leaves out.
+ */
+export function useAdminTaxonomyTree(category = 'parts') {
+  const { canUseAdmin } = useAuth();
+  return useQuery({
+    queryKey: ['admin', 'taxonomy-tree', category],
+    queryFn: () => api.get('/admin/taxonomy/tree', category === 'parts' ? undefined : { category }),
+    enabled: canUseAdmin,
+    staleTime: 60 * 1000,
+    select: (data) => data.tree ?? [],
+  });
+}
+
 export function useAdminTaxonomy(params) {
   const { canUseAdmin } = useAuth();
   return useQuery({
     queryKey: ['admin', 'taxonomy', params],
     queryFn: () => api.get('/admin/taxonomy', params),
+    enabled: canUseAdmin,
+    staleTime: 30 * 1000,
+    placeholderData: (previous) => previous,
+  });
+}
+
+/** A type's category tree as a table: one column per level, one row per product line. */
+export function useAdminTaxonomyRows(params) {
+  const { canUseAdmin } = useAuth();
+  return useQuery({
+    queryKey: ['admin', 'taxonomy', 'rows', params],
+    queryFn: () => api.get('/admin/taxonomy/rows', params),
     enabled: canUseAdmin,
     staleTime: 30 * 1000,
     placeholderData: (previous) => previous,
@@ -1893,12 +1947,41 @@ export function useAdminMutations() {
     // Taxonomy writes invalidate the public tree as well: the sidebar, mega
     // menu and tab wizard all render from it, so an alias or a deactivation has
     // to show up on the storefront without a hard refresh.
+    // A category is a page on the website and a tree behind it, so the
+    // website's own list and every tree query go stale with it.
+    createCatalogCategory: useMutation({
+      mutationFn: (body) => api.post('/admin/catalog-categories', body),
+      onSuccess: () => {
+        invalidate();
+        queryClient.invalidateQueries({ queryKey: ['catalog-categories'] });
+        queryClient.invalidateQueries({ queryKey: ['catalog-category'] });
+      },
+    }),
+    saveCatalogCategory: useMutation({
+      // `address` moves its page; `slug` names the type and never changes (2026-10-03).
+      mutationFn: ({ slug, ...body }) => api.patch(`/admin/catalog-categories/${slug}`, body),
+      onSuccess: () => {
+        invalidate();
+        queryClient.invalidateQueries({ queryKey: ['catalog-categories'] });
+        queryClient.invalidateQueries({ queryKey: ['catalog-category'] });
+      },
+    }),
+
     importTaxonomyCsv: useMutation({
       mutationFn: (body) => api.post('/admin/taxonomy/import', body),
       onSuccess: invalidateContent('taxonomy'),
     }),
     createTaxonomyNode: useMutation({
       mutationFn: (body) => api.post('/admin/taxonomy', body),
+      onSuccess: invalidateContent('taxonomy'),
+    }),
+    // A category-tree row as a whole (2026-10-02).
+    updateTaxonomyRow: useMutation({
+      mutationFn: (body) => api.patch('/admin/taxonomy/rows', body),
+      onSuccess: invalidateContent('taxonomy'),
+    }),
+    removeTaxonomyRow: useMutation({
+      mutationFn: (body) => api.post('/admin/taxonomy/rows/remove', body),
       onSuccess: invalidateContent('taxonomy'),
     }),
     saveTaxonomyNode: useMutation({
@@ -1929,6 +2012,16 @@ export function useAdminMutations() {
     // The kiosk screen, minus its PIN. Two mutations rather than one because
     // the PIN is a credential with its own audited route, and re-sending it
     // alongside a welcome message on every save would be the wrong shape.
+    // Plans and the benefit matrix. The website page reads them, so its
+    // cached copy goes too.
+    saveMembership: useMutation({
+      mutationFn: (body) => api.patch('/admin/membership-plans', body),
+      onSuccess: () => {
+        invalidate();
+        queryClient.invalidateQueries({ queryKey: ['admin', 'membership-plans'] });
+        queryClient.invalidateQueries({ queryKey: ['membership'] });
+      },
+    }),
     saveKioskSettings: useMutation({
       mutationFn: (body) => api.patch('/admin/settings/kiosk', body),
       onSuccess: invalidate,

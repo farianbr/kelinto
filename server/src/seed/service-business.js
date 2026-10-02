@@ -10,6 +10,7 @@ import '../models/Business.js';
 import { slugFor } from '../services/deviceCatalogService.js';
 import { DEVICE_TREE, SERVICES } from './service-business.data.js';
 import { SERVICE_PARTS } from './service-parts.data.js';
+import { SERVICE_PHOTOS } from '../../../shared/catalog.js';
 
 /**
  * A repair shop's starting lists: the devices it takes in, and the labour it
@@ -129,10 +130,33 @@ async function seedServices({ quiet = false, business = null } = {}) {
     order: service.order ?? 0,
   }));
 
-  if (missing.length) await db().Service.insertMany(missing);
+  /**
+   * The repairs the client supplied a photo for (`shared/catalog.js`), 2026-10-01:
+   * "if the service is not available, create it". A photo whose title matches
+   * no service here, by any of the names it answers to, adds that service.
+   */
+  const lower = new Set([...have, ...missing.map((service) => service.name)].map((name) => name.toLowerCase()));
+  const pictured = SERVICE_PHOTOS.filter(
+    (photo) => photo.create && !photo.names.some((name) => lower.has(name)),
+  ).map((photo, index) => ({
+    name: photo.create.name,
+    business,
+    category: photo.create.category,
+    priceCents: Math.round(photo.create.price * 100),
+    costCents: photo.create.cost === undefined ? undefined : Math.round(photo.create.cost * 100),
+    durationMinutes: photo.create.durationMinutes ?? 0,
+    warrantyDays: photo.create.warrantyDays ?? 0,
+    deviceTypes: photo.create.deviceTypes ?? [],
+    taxable: true,
+    isActive: true,
+    order: 200 + index,
+  }));
 
-  log(`    services: ${missing.length} added, ${have.size} already present`);
-  return { added: missing.length, existing: have.size };
+  const added = [...missing, ...pictured];
+  if (added.length) await db().Service.insertMany(added);
+
+  log(`    services: ${added.length} added (${pictured.length} from the service photos), ${have.size} already present`);
+  return { added: added.length, existing: have.size };
 }
 
 /**

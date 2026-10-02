@@ -32,7 +32,7 @@ const publicProfile = asyncHandler(async (req, res) => {
   res.json(await settingsService.publicProfile());
 });
 
-/** The website's Membership page: the tiers and the warranty each carries. */
+/** The website's Membership page: the plans, their benefits and their warranty. */
 const publicMembership = asyncHandler(async (req, res) => {
   res.set('Cache-Control', 'public, max-age=60');
   res.json(await settingsService.publicMembership());
@@ -49,7 +49,8 @@ const publicMembership = asyncHandler(async (req, res) => {
  * `recordChange` skips the row when nothing actually moved, so opening a form
  * and pressing save does not fill the log with entries that say nothing.
  */
-function auditedWrite(section, write, describe) {
+/** `respond` shapes the answer; by default it is the whole settings document. */
+function auditedWrite(section, write, describe, respond = (after) => after) {
   return asyncHandler(async (req, res) => {
     const before = await settingsService.get();
     const after = await write(req.body);
@@ -65,7 +66,7 @@ function auditedWrite(section, write, describe) {
       description: `Updated ${describe}.`,
     });
 
-    res.json(after);
+    res.json(await respond(after));
   });
 }
 
@@ -102,6 +103,19 @@ function sectionOf(settings, section) {
       return settings.communications;
     case 'kiosk':
       return settings.kiosk;
+    case 'membership':
+      // Flattened to plan rows plus the bonus table, so the audit diff names a
+      // price that moved rather than reporting the whole matrix as changed.
+      return {
+        ...Object.fromEntries(
+          (settings.membership?.plans ?? []).map((plan) => [
+            plan.tier,
+            `${plan.name} ${plan.priceCents} / ${plan.interval}${plan.isActive === false ? ' (off)' : ''}`,
+          ]),
+        ),
+        benefits: (settings.membership?.sections ?? []).reduce((sum, section) => sum + section.rows.length, 0),
+        warrantyBonusByTier: settings.financial?.warrantyBonusByTier,
+      };
     default:
       return {};
   }
@@ -139,6 +153,23 @@ const updatePaymentMethods = auditedWrite(
  * all, and the terms text is what a customer is shown they are agreeing to.
  * Both are worth being able to say who changed, and when.
  */
+
+/**
+ * Purchase › Membership Plans (moved out of Settings on 2026-10-02). The read
+ * is its own, so Purchase access is enough to open the screen; the write is
+ * audited like every settings write and answers with the same shape.
+ */
+const adminMembership = asyncHandler(async (req, res) => {
+  res.json(await settingsService.membershipForAdmin());
+});
+
+const updateMembership = auditedWrite(
+  'membership',
+  (body) => settingsService.updateMembership(body),
+  'membership plans',
+  () => settingsService.membershipForAdmin(),
+);
+
 const updateKiosk = auditedWrite(
   'kiosk',
   (body) => settingsService.updateKiosk(body),
@@ -157,4 +188,4 @@ const updateInventory = auditedWrite(
   'inventory defaults',
 );
 
-export { get, publicProfile, publicMembership, updateBusiness, updateSale, updateShipping, updatePaymentMethods, updateCommunications, updateInventory, updateKiosk };
+export { get, publicProfile, publicMembership, adminMembership, updateMembership, updateBusiness, updateSale, updateShipping, updatePaymentMethods, updateCommunications, updateInventory, updateKiosk };

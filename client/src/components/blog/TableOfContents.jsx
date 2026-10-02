@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion } from '@/lib/motionReact';
 import { ChevronDown, List } from 'lucide-react';
 import cn from '@/lib/cn';
 import scrollToSection from '@/lib/scrollToSection';

@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion } from '@/lib/motionReact';
 import {
   ArrowUpRight,
   HelpCircle,
@@ -14,6 +14,7 @@ import cn from '@/lib/cn';
 import { socialIcon } from '@/lib/socialIcons';
 import useBusinessInfo from '@/hooks/useBusinessInfo';
 import { pressable, transition } from '@/lib/motion';
+import { useCatalogueLink } from '@/hooks/useCatalog';
 
 /**
  * Support: the channels, not the sitemap.
@@ -321,6 +322,7 @@ function SupportRow({ item }) {
  * where nothing has to compete with it.
  */
 export function Footer() {
+  const catalogueLink = useCatalogueLink();
   const info = useBusinessInfo();
   const support = supportRows(info);
 
@@ -454,7 +456,7 @@ export function Footer() {
                     {column.links.map((link) => (
                       <li key={link.label}>
                         <Link
-                          to={link.to}
+                          to={catalogueLink(link.to)}
                           className={cn(pressable, 'text-md text-ink-500 hover:text-brand')}
                         >
                           {link.label}

@@ -4,6 +4,7 @@ import ProductCard from './ProductCard';
 import Skeleton from '@/components/ui/Skeleton';
 import Button from '@/components/ui/Button';
 import useFilterStore from '@/store/filterStore';
+import { useCatalogConfig } from '@/lib/catalogs';
 
 /**
  * The grid. 2 / 3 / 4 per row (brief §6) - the only thing on the shop page that
@@ -24,13 +25,20 @@ export function ProductGrid({
   // to clear - the list is simply empty today.
   emptyTitle,
   emptyBody,
+  /**
+   * How one item is drawn. Defaults to the part card; the Phones and Services
+   * pages pass their own, and everything else about the grid (skeletons, the
+   * veil while refetching, the empty state) stays this one implementation.
+   */
+  renderItem = (product) => <ProductCard key={product.id} product={product} />,
 }) {
   const resetAll = useFilterStore((s) => s.resetAll);
+  const catalog = useCatalogConfig();
 
   if (error) {
     return (
       <div className="flex flex-col items-center gap-3 rounded-lg border border-danger/20 bg-danger-50 px-6 py-14 text-center">
-        <h3 className="text-lg">Could not load products</h3>
+        <h3 className="text-lg">Could not load {catalog.nouns}</h3>
         <p className="max-w-sm text-md text-ink-500">{error.message}</p>
       </div>
     );
@@ -66,10 +74,12 @@ export function ProductGrid({
           <PackageSearch className="size-7" strokeWidth={1.5} />
         </span>
         <div>
-          <h3 className="text-lg">{emptyTitle ?? 'No parts match those filters'}</h3>
+          <h3 className="text-lg">{emptyTitle ?? `No ${catalog.nouns} match those filters`}</h3>
           <p className="mx-auto mt-1.5 max-w-sm text-md text-ink-500">
             {emptyBody ??
-              'Try widening the model or clearing a grade. Our catalogue covers over 400 SKUs across six device categories.'}
+              (catalog.kind === 'part'
+                ? 'Try widening the model or clearing a grade.'
+                : 'Try another device or repair type, or ask us for a quote.')}
           </p>
         </div>
         {!emptyTitle && (
@@ -92,9 +102,7 @@ export function ProductGrid({
           isFetching && 'opacity-60',
         )}
       >
-        {products.map((product) => (
-          <ProductCard key={product.id} product={product} />
-        ))}
+        {products.map((product) => renderItem(product))}
       </div>
 
       {isFetching && (

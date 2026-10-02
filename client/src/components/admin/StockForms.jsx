@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, Boxes, Globe, Image as ImageIcon, Network, SlidersHorizontal, Wallet } from 'lucide-react';
+import Panel from '@/components/ui/Panel';
 import cn from '@/lib/cn';
 import { count as formatCount } from '@/lib/format';
 import Input from '@/components/ui/Input';
@@ -8,12 +9,14 @@ import SelectField from '@/components/ui/SelectField';
 import Button from '@/components/ui/Button';
 import Checkbox from '@/components/ui/Checkbox';
 import SelectMenu from '@/components/ui/SelectMenu';
-import { optionsFor } from '@/lib/taxonomy';
+import { entriesUnder, nodeBySlug } from '@/lib/taxonomy';
+import { FIRST_LEVEL_KEY, TREE_LEVEL_KEYS, categoryLevels } from '@shared/catalog';
 import { GRADE_ORDER, GRADES } from '@/lib/constants';
 import AssetUpload from '@/components/admin/AssetUpload';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import useUploadSession from '@/hooks/useUploadSession';
 import useUnsavedGuard from '@/hooks/useUnsavedGuard';
+import { useAdminCatalogCategories, useAdminTaxonomyTree } from '@/hooks/useAdmin';
 
 /** Condition grades, in the order the scale reads. Moved here with the form. */
 const GRADE_OPTIONS = GRADE_ORDER.map((grade) => ({
@@ -190,6 +193,9 @@ function AdjustForm({ product, onSubmit, onCancel, isPending, error }) {
   );
 }
 
+/** The picker value for "Any" at a category level; never a real slug. */
+const ANY = '__any__';
+
 /**
  * Product form.
  *
@@ -198,7 +204,7 @@ function AdjustForm({ product, onSubmit, onCancel, isPending, error }) {
  * That mis-filing would be invisible in this form but would break the shop's
  * filter hierarchy, which reads the same four slugs.
  */
-function ProductForm({ product, tree, onSubmit, onCancel, isPending, error }) {
+function ProductForm({ product, tree, onSubmit, onCancel, isPending, error, initialCategory = 'parts' }) {
   const { register, handleSubmit, watch, setValue, formState, control } = useForm({
     defaultValues: {
       sku: product?.sku ?? '',
@@ -206,18 +212,23 @@ function ProductForm({ product, tree, onSubmit, onCancel, isPending, error }) {
       description: product?.description ?? '',
       partType: product?.partType ?? '',
       partTypeLabel: product?.partTypeLabel ?? '',
-      grade: product?.grade ?? 'NEW',
+      grade: product?.grade ?? '',
       priceDollars: product ? (product.price / 100).toFixed(2) : '',
       stock: product?.stock ?? 0,
       deviceTypeSlug: product?.deviceTypeSlug ?? '',
       brandSlug: product?.brandSlug ?? '',
       seriesSlug: product?.seriesSlug ?? '',
       modelSlug: product?.modelSlug ?? '',
+      level5Slug: product?.level5Slug ?? '',
+      level6Slug: product?.level6Slug ?? '',
+      anyFrom: '',
+      category: product?.category ?? initialCategory,
       isActive: product?.isActive ?? true,
       image: product?.image ?? '',
       images: product?.images ?? [],
       video: product?.video ?? '',
       videoPoster: product?.videoPoster ?? '',
+      attributes: product?.attributes ?? {},
     },
   });
 
@@ -237,33 +248,93 @@ function ProductForm({ product, tree, onSubmit, onCancel, isPending, error }) {
    * them does not, and posting its empty fields back would delete every upload
    * the product has. So the media fields are sent only when they were known.
    */
-  const knowsMedia = !product || 'image' in product;
+  // `images`, not `image`: an inventory list row carries its main picture but
+  // not the gallery, and posting that row back would have emptied the gallery.
+  const knowsMedia = !product || 'images' in product;
+  // The same rule for its feature answers: sent only when the form loaded them.
+  const knowsAttributes = !product || 'attributes' in product;
 
-  const path = {
-    deviceType: watch('deviceTypeSlug'),
-    brand: watch('brandSlug'),
-    series: watch('seriesSlug'),
-    model: watch('modelSlug'),
-  };
+  /**
+   * The type the product is sold under, and with it its category levels,
+   * grades and features. Every type with stock is offered, Phones included
+   * (phones are products with stock since 2026-10-02). The tree is the whole,
+   * unpruned one, so a model with nothing filed under it yet can still take
+   * its first product.
+   */
+  const { data: allCategories = [] } = useAdminCatalogCategories();
+  const typeOptions = allCategories.filter((entry) => entry.kind === 'part' && entry.isActive);
+  const category = watch('category') || 'parts';
+  const currentCategory = allCategories.find((entry) => entry.slug === category);
+  // This type's features, asked in their order.
+  const features = currentCategory?.attributes ?? [];
+  // This type's grades (grades per type, 2026-10-02).
+  const gradeOptions = (currentCategory ? (currentCategory.grades ?? []) : GRADE_OPTIONS).map((grade) => ({
+    value: grade.value,
+    label: grade.label,
+  }));
+  const { data: fullTree } = useAdminTaxonomyTree(category);
+  const pickerTree = fullTree ?? (category === 'parts' ? tree : []);
 
-  const deviceTypes = optionsFor(tree, path, 'deviceType');
-  const brands = optionsFor(tree, path, 'brand');
-  const seriesList = optionsFor(tree, path, 'series');
-  const models = optionsFor(tree, path, 'model');
+  const path = Object.fromEntries(TREE_LEVEL_KEYS.map((key) => [key, watch(`${key}Slug`)]));
 
-  // Clear the levels below whichever one changed, so a stale model cannot
-  // survive a brand switch.
-  function pick(level, value) {
-    const order = ['deviceTypeSlug', 'brandSlug', 'seriesSlug', 'modelSlug'];
-    const index = order.indexOf(level);
-    setValue(level, value);
-    for (const below of order.slice(index + 1)) setValue(below, '');
+  /**
+   * The type's category levels, its first level (Component Type) included,
+   * every one alike: a picker per level, marked required as the type says
+   * (Settings › Taxonomy). Its entries come from the type's tree.
+   */
+  const levels = currentCategory ? categoryLevels(currentCategory) : [];
+  const treeKeys = levels.filter((level) => level.key !== FIRST_LEVEL_KEY).map((level) => level.key);
+  const firstOptions = currentCategory?.facetOptions ?? [];
+
+  /**
+   * "Any" (2026-10-03): a level the product fits every entry of. It is filed
+   * no deeper than the level above, and the website's filters show it under
+   * each option from there down. `anyFrom` names the first such level; every
+   * level below it is Any too.
+   */
+  const anyFrom = watch('anyFrom') ?? '';
+  const anyAt = treeKeys.indexOf(anyFrom);
+  const isAnyAt = (key) => anyAt >= 0 && treeKeys.indexOf(key) >= anyAt;
+
+  // An existing product filed short of a required level is one set to Any there.
+  const [anySeeded, setAnySeeded] = useState(false);
+  useEffect(() => {
+    if (!product || anySeeded || !currentCategory) return;
+    setAnySeeded(true);
+    const deepest = treeKeys.findLastIndex((key) => product[`${key}Slug`]);
+    const short = treeKeys.slice(deepest + 1).find((key) => levels.find((level) => level.key === key)?.required !== false);
+    if (short) setValue('anyFrom', short);
+  }, [product, anySeeded, currentCategory]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * Picking an entry sets the levels above it from its own path (an optional
+   * level skipped above it may still have an entry) and clears every level
+   * below it, so a stale model cannot survive a brand switch. Picking Any
+   * clears the level and everything below it.
+   */
+  function pick(key, value) {
+    const index = TREE_LEVEL_KEYS.indexOf(key);
+    if (value === ANY) {
+      for (const [at, other] of TREE_LEVEL_KEYS.entries()) if (at >= index) setValue(`${other}Slug`, '');
+      setValue('anyFrom', key, { shouldDirty: true });
+      return;
+    }
+    const node = value ? nodeBySlug(pickerTree, value) : null;
+    for (const [at, other] of TREE_LEVEL_KEYS.entries()) {
+      if (at < index && node?.path?.[other]) setValue(`${other}Slug`, node.path[other]);
+      if (at > index) setValue(`${other}Slug`, '');
+    }
+    setValue(`${key}Slug`, value, { shouldDirty: true });
+    if (isAnyAt(key)) setValue('anyFrom', '', { shouldDirty: true });
   }
 
-  const toOptions = (nodes, placeholder) => [
-    { value: '', label: placeholder },
-    ...nodes.map((node) => ({ value: node.slug, label: node.name })),
-  ];
+  const missing = levels.some((level) =>
+    level.required === false
+      ? false
+      : level.key === FIRST_LEVEL_KEY
+        ? !watch('partType')
+        : !path[level.key] && !isAnyAt(level.key),
+  );
 
   return (
     <form
@@ -275,6 +346,16 @@ function ProductForm({ product, tree, onSubmit, onCancel, isPending, error }) {
           ...values,
           price: Math.round(Number(values.priceDollars) * 100) || 0,
           stock: Number(values.stock) || 0,
+          anyFrom: values.anyFrom || undefined,
+          // Only this type's answers, blanks left out; not sent at all when the
+          // form never loaded them, so a save cannot wipe them.
+          attributes: knowsAttributes
+            ? Object.fromEntries(
+                features
+                  .map((feature) => [feature.key, String(values.attributes?.[feature.key] ?? '').trim()])
+                  .filter(([, value]) => value),
+              )
+            : undefined,
           ...(knowsMedia
             ? { images: (values.images ?? []).filter(Boolean) }
             : { image: undefined, images: undefined, video: undefined, videoPoster: undefined }),
@@ -289,6 +370,27 @@ function ProductForm({ product, tree, onSubmit, onCancel, isPending, error }) {
         </p>
       )}
 
+      <Panel icon={Boxes} title="What it is" description="Its type decides the category levels, grades and features below, so it comes first.">
+        <div className="space-y-4">
+      <SelectMenu
+        label="Product type"
+        size="md"
+        align="left"
+        hint="Which section of the website it is sold in. The category, grades and features below are that type's."
+        options={typeOptions.map((entry) => ({ value: entry.slug, label: entry.name }))}
+        value={category}
+        disabled={typeOptions.length < 2}
+        onChange={(next) => {
+          setValue('category', next);
+          // Another type is another tree, another grade list and another set of features.
+          for (const key of TREE_LEVEL_KEYS) setValue(`${key}Slug`, '');
+          setValue('anyFrom', '');
+          setValue('partType', '');
+          setValue('grade', allCategories.find((entry) => entry.slug === next)?.grades?.[0]?.value ?? '');
+          setValue('attributes', {});
+        }}
+      />
+
       <div className="grid gap-4 sm:grid-cols-2">
         <Input
           label="SKU"
@@ -298,7 +400,19 @@ function ProductForm({ product, tree, onSubmit, onCancel, isPending, error }) {
           data-autofocus
           {...register('sku', { required: 'Enter a SKU.' })}
         />
-        <SelectField control={control} name="grade" label="Grade" options={GRADE_OPTIONS} />
+        {gradeOptions.length > 0 ? (
+          <SelectField
+            control={control}
+            name="grade"
+            label="Grade"
+            hint="Also its badge on the website."
+            options={gradeOptions}
+            rules={{ required: 'Pick a grade.' }}
+            error={formState.errors.grade?.message}
+          />
+        ) : (
+          <p className="self-end pb-2 text-sm text-ink-400">{currentCategory?.name ?? 'This type'} has no grades, so no badge.</p>
+        )}
       </div>
 
       <Input
@@ -307,62 +421,114 @@ function ProductForm({ product, tree, onSubmit, onCancel, isPending, error }) {
         error={formState.errors.name?.message}
         {...register('name', { required: 'Enter a name.' })}
       />
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Input
-          label="Component type slug"
-          placeholder="screen-assembly"
-          className="font-mono"
-          {...register('partType', { required: true })}
-        />
-        <Input
-          label="Component type label"
-          placeholder="Screen Assembly"
-          {...register('partTypeLabel', { required: true })}
-        />
-      </div>
-
-      <fieldset className="rounded-md border border-line p-3.5">
-        <legend className="eyebrow px-1 text-ink-400">Fitment</legend>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <SelectMenu
-            label="Device type"
-            size="md"
-            align="left"
-            options={toOptions(deviceTypes, 'Select…')}
-            value={path.deviceType}
-            onChange={(next) => pick('deviceTypeSlug', next)}
-          />
-          <SelectMenu
-            label="Brand"
-            size="md"
-            align="left"
-            options={toOptions(brands, path.deviceType ? 'Select…' : 'Pick a device type first')}
-            value={path.brand}
-            disabled={!path.deviceType}
-            onChange={(next) => pick('brandSlug', next)}
-          />
-          <SelectMenu
-            label="Series"
-            size="md"
-            align="left"
-            options={toOptions(seriesList, path.brand ? 'Select…' : 'Pick a brand first')}
-            value={path.series}
-            disabled={!path.brand}
-            onChange={(next) => pick('seriesSlug', next)}
-          />
-          <SelectMenu
-            label="Model"
-            size="md"
-            align="left"
-            options={toOptions(models, path.series ? 'Select…' : 'Pick a series first')}
-            value={path.model}
-            disabled={!path.series}
-            onChange={(next) => pick('modelSlug', next)}
-          />
+      <Input label="Description" hint="Shown under the price on its page." {...register('description')} />
         </div>
-      </fieldset>
+      </Panel>
 
+      <Panel icon={Network} title="Category" description="Where it is filed, level by level. The website's finder and filters read these.">
+        {/* One picker per category level of the type, its first included (2026-10-02). */}
+        <div className="grid gap-3 sm:grid-cols-2">
+          {levels.map((level) => {
+            const required = level.required !== false;
+            if (level.key === FIRST_LEVEL_KEY) {
+              return (
+                <SelectField
+                  key={level.key}
+                  control={control}
+                  name="partType"
+                  label={level.label}
+                  required={required}
+                  searchable={firstOptions.length > 8}
+                  options={[
+                    { value: '', label: required ? 'Select…' : 'None' },
+                    ...firstOptions.map((option) => ({ value: option.value, label: option.label })),
+                  ]}
+                  rules={required ? { required: `Pick a ${level.label.toLowerCase()}.` } : undefined}
+                  error={formState.errors.partType?.message}
+                />
+              );
+            }
+            const entries = entriesUnder(pickerTree, path, level.key, treeKeys);
+            const isAny = isAnyAt(level.key);
+            // Below a level set to Any there is nothing left to pick.
+            const belowAny = isAny && level.key !== anyFrom;
+            return (
+              <SelectMenu
+                key={level.key}
+                label={level.label}
+                required={required}
+                size="md"
+                align="left"
+                searchable={entries.length > 8}
+                options={[
+                  { value: '', label: entries.length ? (required ? 'Select…' : 'None') : 'Pick the level above first' },
+                  { value: ANY, label: `Any ${level.label.toLowerCase()}` },
+                  ...entries.map((node) => ({ value: node.slug, label: node.name })),
+                ]}
+                value={isAny ? ANY : (path[level.key] ?? '')}
+                disabled={belowAny || (!entries.length && !isAny)}
+                hint={level.key === anyFrom ? 'Fits every entry here, so it shows under each one in the website filters.' : undefined}
+                onChange={(next) => pick(level.key, next)}
+              />
+            );
+          })}
+        </div>
+        <p className="mt-2 text-xs text-ink-400">
+          Missing an entry? Add a row to the {currentCategory?.name ?? 'type'} category tree in Settings › Taxonomy.
+        </p>
+      </Panel>
+
+      {knowsAttributes && features.length > 0 && (
+        <Panel icon={SlidersHorizontal} title="Features" description={`What sets it apart from other ${(currentCategory?.name ?? 'products').toLowerCase()}, as the type defines them.`}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {features.map((feature) => {
+              const name = `attributes.${feature.key}`;
+              const label = feature.label;
+              if (feature.type === 'select' || feature.type === 'boolean') {
+                const options =
+                  feature.type === 'boolean'
+                    ? [
+                        { value: 'yes', label: 'Yes' },
+                        { value: 'no', label: 'No' },
+                      ]
+                    : feature.options.map((option) => ({ value: option, label: option }));
+                return (
+                  <SelectField
+                    key={feature.key}
+                    control={control}
+                    name={name}
+                    label={label}
+                    required={feature.required}
+                    searchable={options.length > 8}
+                    options={[{ value: '', label: 'Not set' }, ...options]}
+                    rules={feature.required ? { required: `Enter the ${label.toLowerCase()}.` } : undefined}
+                    error={formState.errors.attributes?.[feature.key]?.message}
+                  />
+                );
+              }
+              return (
+                <Input
+                  key={feature.key}
+                  label={label}
+                  required={feature.required}
+                  inputMode={feature.type === 'number' ? 'decimal' : undefined}
+                  suffix={feature.type === 'number' ? feature.unit || undefined : undefined}
+                  error={formState.errors.attributes?.[feature.key]?.message}
+                  {...register(name, {
+                    required: feature.required ? `Enter the ${label.toLowerCase()}.` : false,
+                    validate:
+                      feature.type === 'number'
+                        ? (value) => !value || Number.isFinite(Number(value)) || `${label} must be a number.`
+                        : undefined,
+                  })}
+                />
+              );
+            })}
+          </div>
+        </Panel>
+      )}
+
+      <Panel icon={Wallet} title="Price and stock" description="What a buyer pays, and how many are on the shelf. The website only says in stock or out of stock.">
       <div className="grid gap-4 sm:grid-cols-2">
         <Input
           label="Price"
@@ -374,16 +540,14 @@ function ProductForm({ product, tree, onSubmit, onCancel, isPending, error }) {
         <Input
           label="Stock on hand"
           inputMode="numeric"
-          hint="The website only shows in stock or out of stock."
+          hint="What you have now. The website only says in stock or out of stock."
           {...register('stock')}
         />
       </div>
-
-      <Input label="Description" {...register('description')} />
+      </Panel>
 
       {knowsMedia && (
-        <fieldset className="rounded-md border border-line p-3.5">
-          <legend className="eyebrow px-1 text-ink-400">Pictures and video</legend>
+        <Panel icon={ImageIcon} title="Pictures and video" description="The main picture is on its card and page; the rest are on its page.">
           <div className="space-y-4">
             <Controller
               name="image"
@@ -452,22 +616,27 @@ function ProductForm({ product, tree, onSubmit, onCancel, isPending, error }) {
               )}
             />
           </div>
-        </fieldset>
+        </Panel>
       )}
 
-      <Checkbox label="Listed on the website" className="-ml-2" {...register('isActive')} />
+      <Panel icon={Globe} title="On the website">
+        <label className="flex items-start gap-2.5">
+          <input type="checkbox" className="mt-0.5 size-4 accent-brand" {...register('isActive')} />
+          <span className="text-sm leading-relaxed text-ink-700">
+            <span className="font-medium">Listed</span>
+            <span className="mt-0.5 block text-ink-500">Switched off, it is hidden from the website. Its stock and history stay.</span>
+          </span>
+        </label>
+      </Panel>
 
-      <div className="flex justify-end gap-2 pt-1">
-        <Button type="button" variant="ghost" onClick={cancel}>
-          Cancel
-        </Button>
-        <Button
-          type="submit"
-          loading={isPending}
-          disabled={!path.deviceType || !path.brand || !path.series || !path.model}
-        >
+      <div className="sticky bottom-0 z-10 -mx-4 flex flex-wrap items-center gap-3 border-t border-line bg-surface-2/95 px-4 py-3 backdrop-blur-[2px]">
+        <Button type="submit" loading={isPending} disabled={missing}>
           {product ? 'Save changes' : 'Create product'}
         </Button>
+        <Button type="button" variant="outline" onClick={cancel}>
+          Cancel
+        </Button>
+        {missing && <span className="text-sm text-ink-400">Fill in the required category levels to save.</span>}
       </div>
 
       {/* Names what is lost: the files, which are deleted, not just the edits. */}

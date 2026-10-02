@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { motion, useReducedMotion } from 'motion/react';
+import { motion, useReducedMotion } from '@/lib/motionReact';
 import { ArrowRight, Mail, MessageCircleQuestion, Package, Phone, Truck } from 'lucide-react';
 import cn from '@/lib/cn';
 import useBusinessInfo from '@/hooks/useBusinessInfo';

@@ -24,6 +24,25 @@ export const GRADES = {
 export const GRADE_ORDER = ['NEW', 'OEM', 'PULL-A', 'PULL-B', 'AFTERMARKET'];
 
 /**
+ * Any grade, Parts' five or a grade another type defines (grades per type,
+ * 2026-10-02: Phones' Excellent, Good, Fair). Parts keep their own tones and
+ * badge text; any other grade reads as its name, from the type's list when the
+ * caller has it, with a neutral tone, drawn as a pill rather than a stamp.
+ */
+export function gradeMeta(grade, grades = []) {
+  if (GRADES[grade]) return GRADES[grade];
+  const named = grades.find((entry) => entry.value === grade)?.label;
+  const label =
+    named ??
+    String(grade ?? '')
+      .replace(/[-_]+/g, ' ')
+      .toLowerCase()
+      .replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+  // A word, not a code: the badge draws it as a pill holding the whole name.
+  return { label, short: label.toUpperCase(), tone: 'neutral', pill: true };
+}
+
+/**
  * Scroll depth at which the phone/tablet layout hands search over.
  *
  * Above it, the mobile header carries the search bar. Below it, that row folds
@@ -82,6 +101,10 @@ export const FILTER_LEVELS = [
   { key: 'brand', label: 'Brand', short: 'Brand' },
   { key: 'series', label: 'Series', short: 'Series' },
   { key: 'model', label: 'Model', short: 'Model' },
+  // Two deeper levels a product type may add (2026-10-02); a type's own
+  // labels replace these wherever it is on screen.
+  { key: 'level5', label: 'Variant', short: 'Variant' },
+  { key: 'level6', label: 'Option', short: 'Option' },
 ];
 
 /** The levels that are real nodes in the taxonomy tree. */

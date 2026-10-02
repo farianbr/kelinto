@@ -382,14 +382,15 @@ export const ADMIN_ROUTES = {
     title: 'Supplier return',
     description: 'What is going back, where it is, and what the supplier credited.',
   },
-  '/admin/supplier-subscriptions': {
-    label: 'Subscription Plans',
+  '/admin/membership-plans': {
+    label: 'Membership Plans',
     parent: 'purchase',
-    icon: 'CalendarClock',
+    icon: 'Crown',
     section: 'purchase',
-    phase: 5,
-    title: 'Subscription plans',
-    description: 'Recurring supplier costs, what they renew and what they add up to.',
+    phase: 11,
+    built: true,
+    title: 'Membership plans',
+    description: 'The plans on the website Membership page: prices, benefits and the warranty each carries.',
   },
   '/admin/expenses': {
     label: 'Expenses',
@@ -409,20 +410,14 @@ export const ADMIN_ROUTES = {
     title: 'Inventory',
     description: 'The product catalogue, stock on hand and wholesale pricing.',
   },
-  '/admin/preowned': {
-    label: 'Pre-owned',
-    parent: 'purchase',
-    icon: 'Smartphone',
-    section: 'purchase',
-    phase: 12,
-    built: true,
-    feature: 'sales.buyback',
-    title: 'Pre-owned',
-    description: 'Phones customers sold us at the kiosk: price them, then sell them on the website.',
-  },
-  '/admin/preowned/requests/:id': {
-    label: 'Request',
-    parent: '/admin/preowned',
+  /**
+   * A phone sold to us at the kiosk (Inventory › Kiosk buybacks). Its own
+   * Pre-owned page folded into Inventory on 2026-10-02: phones are products
+   * with stock, and accepting one adds it to stock like any delivery.
+   */
+  '/admin/inventory/buybacks/:id': {
+    label: 'Buyback',
+    parent: '/admin/inventory',
     icon: 'Smartphone',
     section: 'purchase',
     phase: 12,
@@ -430,6 +425,27 @@ export const ADMIN_ROUTES = {
     feature: 'sales.buyback',
     title: 'Buyback request',
     description: 'A phone a customer sold at the kiosk, and its price.',
+  },
+  /** A product's own form: a page since 2026-10-02 (it was a modal). */
+  '/admin/inventory/new': {
+    label: 'New product',
+    parent: '/admin/inventory',
+    icon: 'Boxes',
+    section: 'purchase',
+    phase: 5,
+    built: true,
+    title: 'New product',
+    description: 'One thing on sale, of any type.',
+  },
+  '/admin/inventory/:id/edit': {
+    label: 'Edit',
+    parent: '/admin/inventory/:id',
+    icon: 'Boxes',
+    section: 'purchase',
+    phase: 5,
+    built: true,
+    title: 'Edit product',
+    description: 'Its type, category, features, price and pictures.',
   },
   '/admin/inventory/:id': {
     label: 'Product',
@@ -719,22 +735,6 @@ export const ADMIN_ROUTES = {
     description:
       'The after sales statuses an admin sets on an invoice, and the timed messages invoices send.',
   },
-  '/admin/settings/devices': {
-    tabOrder: 12,
-    label: 'Devices taken in',
-    parent: 'settings:financial',
-    icon: 'Smartphone',
-    section: 'settings',
-    phase: 11,
-    built: true,
-    // Same contract the kiosk card below states: the server already answers 404
-    // on every `/admin/devices` route without this flag, so a card drawn
-    // without it is a tile that opens onto nothing. A parts wholesaler takes no
-    // hardware across a counter and has no list of it to keep.
-    feature: 'sales.devices',
-    title: 'Devices this shop takes in',
-    description: 'The list behind the device pickers on a ticket, an estimate and the kiosk.',
-  },
   '/admin/settings/kiosk': {
     tabOrder: 13,
     label: 'Kiosk',
@@ -751,45 +751,38 @@ export const ADMIN_ROUTES = {
     title: 'Self-service check-in',
     description: 'The counter tablet: whether it is live, its PIN, and what it says.',
   },
+  /**
+   * Taxonomy (2026-10-02): every catalogue type the website sells (Parts,
+   * Phones, Services and any a business adds), each with its category levels,
+   * the first step's entries and its features; a row's menu opens its tree.
+   *
+   * Since 2026-10-03 the Services tree is also the device list a ticket, a
+   * quote, an invoice and the kiosk pick from (Serviced items was retired),
+   * so the tab opens for a business with a website OR a repair counter: the
+   * server gates its routes on either feature, and this entry carries no
+   * single feature of its own.
+   */
   '/admin/settings/taxonomy': {
     tabOrder: 4,
-    // "Device & Models", not "Taxonomy": the second is what the model is
-    // called in the code and means nothing to the person looking for the list
-    // of phones. The page's own title has said devices, brands and models all
-    // along.
-    label: 'Device & Models',
+    label: 'Taxonomy',
     parent: 'settings:financial',
-    // Not `Smartphone`: "Devices taken in" already carries that one, and the
-    // two sit next to each other in the Financial row.
-    icon: 'TabletSmartphone',
+    icon: 'Network',
     section: 'settings',
     phase: 11,
     built: true,
-    /**
-     * The catalogue tree, so it belongs to a business that HAS a catalogue.
-     *
-     * Ungated, this sat in the Financial row of every business beside
-     * "Devices taken in" - two screens with near-identical names, one of
-     * them permanently reading "0 entries · Nothing here" on a repair shop.
-     * Reported as "what is the difference, just keep one", which is the right
-     * reaction to a menu offering both.
-     *
-     * They are NOT the same list, and merging them would break the one that
-     * works: `Taxonomy` is the storefront filter and every read of it counts
-     * products and prunes any branch counting zero, while `DeviceCatalog` is
-     * what a shop takes across the counter - mostly devices it stocks no
-     * parts for, which that pruning rule would delete outright. See the
-     * docstring on `models/DeviceCatalog.js`.
-     *
-     * So the fix is the gate rather than the merge. `storefront.public` is
-     * the exact complement of the `sales.devices` flag on the other screen:
-     * product businesses get this one, service businesses get that one, and
-     * a `both` business genuinely has two lists because it genuinely does
-     * both jobs.
-     */
-    feature: 'storefront.public',
-    title: 'Devices, brands, models & aliases',
-    description: 'The master list behind every device picker and the search box.',
+    title: 'Taxonomy',
+    description: 'What you sell and repair: each type, its category levels and tree, its grades and its features.',
+  },
+  /** One product type's tree (was "Device & Models"). Reached from Taxonomy › Products. */
+  '/admin/settings/taxonomy/tree': {
+    label: 'Category tree',
+    parent: '/admin/settings/taxonomy',
+    icon: 'Network',
+    section: 'settings',
+    phase: 11,
+    built: true,
+    title: 'Category tree',
+    description: 'One row per product line, one column per category level. Click an entry to rename it or edit its aliases.',
   },
   /**
    * Add a device model - a page, not a modal.
@@ -799,28 +792,58 @@ export const ADMIN_ROUTES = {
    * `parent` gives it the breadcrumb back to the list.
    */
   '/admin/settings/taxonomy/add': {
-    label: 'Add Model',
-    parent: '/admin/settings/taxonomy',
-    icon: 'TabletSmartphone',
+    label: 'Add entry',
+    parent: '/admin/settings/taxonomy/tree',
+    icon: 'Network',
     section: 'settings',
     phase: 11,
     built: true,
     // Same gate as the list it belongs to - a child of a hidden screen that
     // stays reachable is a hidden screen with a back door.
-    feature: 'storefront.public',
-    title: 'Add device model',
-    description: 'A new entry for the searchable device picker.',
+    title: 'Add to the category tree',
+    description: "A new row, walking the type's own levels. Anything missing on the way is created.",
   },
-  '/admin/settings/taxonomy/import': {
-    label: 'Import CSV',
+  /** Adding a product type: a page since 2026-10-02 (it was a modal). */
+  '/admin/settings/taxonomy/types/new': {
+    label: 'Add type',
     parent: '/admin/settings/taxonomy',
-    icon: 'TabletSmartphone',
+    icon: 'Layers',
     section: 'settings',
     phase: 11,
     built: true,
-    feature: 'storefront.public',
-    title: 'Import device models',
-    description: 'Bulk-add or update the device master list.',
+    title: 'Add a product type',
+    description: 'Its name and web address, category levels, grades and features.',
+  },
+  '/admin/settings/taxonomy/types/:slug': {
+    label: 'Edit type',
+    parent: '/admin/settings/taxonomy',
+    icon: 'Layers',
+    section: 'settings',
+    phase: 11,
+    built: true,
+    title: 'Edit product type',
+    description: 'Its name and web address, category levels, grades and features.',
+  },
+  /** One row of a category tree, edited as a whole (2026-10-02). */
+  '/admin/settings/taxonomy/row': {
+    label: 'Edit row',
+    parent: '/admin/settings/taxonomy/tree',
+    icon: 'Network',
+    section: 'settings',
+    phase: 11,
+    built: true,
+    title: 'Edit row',
+    description: 'Rename a level, set the aliases, or switch the row off.',
+  },
+  '/admin/settings/taxonomy/import': {
+    label: 'Import CSV',
+    parent: '/admin/settings/taxonomy/tree',
+    icon: 'Network',
+    section: 'settings',
+    phase: 11,
+    built: true,
+    title: 'Import into the category tree',
+    description: "Bulk-add rows to a type's category tree, one column per level.",
   },
   '/admin/settings/shipping': {
     tabOrder: 11,
@@ -1140,8 +1163,15 @@ export function activeNavKeys(pathname, search = '') {
   // hub itself, and from `parent` when they are on a settings page that owns a
   // route of its own (`/admin/settings/users` belongs to `settings:users`).
   if (section === 'settings') {
+    // Walks up the breadcrumb parents: a page reached FROM a settings page
+    // (the finder tree, its Add and Import) belongs to that page's category,
+    // and stopping at the first parent lit up Summary instead.
+    let owner = meta;
+    for (let hops = 0; owner?.parent?.startsWith('/admin') && hops < 4; hops += 1) {
+      owner = ADMIN_ROUTES[owner.parent];
+    }
     const category =
-      (meta?.parent?.startsWith('settings:') ? meta.parent.slice(9) : null) ?? params.get('cat');
+      (owner?.parent?.startsWith('settings:') ? owner.parent.slice(9) : null) ?? params.get('cat');
     const settingsChild = category
       ? group?.children?.find((c) => c.to.endsWith(`?cat=${category}`))
       : group?.children?.find((c) => c.to === '/admin/settings');

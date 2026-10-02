@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, NavLink, useLocation } from 'react-router';
-import { AnimatePresence, motion } from 'motion/react';
-import { Boxes, ChevronDown, Layers, Smartphone, Sparkles, TicketPercent, Wrench } from 'lucide-react';
+import { AnimatePresence, motion } from '@/lib/motionReact';
+import { Boxes, ChevronDown, Layers, Package, Smartphone, Sparkles, TicketPercent, Wrench } from 'lucide-react';
+import { SYSTEM_SLUGS } from '@shared/catalog';
 import cn from '@/lib/cn';
 import { useAuth } from '@/hooks/useAuth';
 import { findExclusive, useOffers } from '@/hooks/useContent';
+import { useCatalogCategories } from '@/hooks/useCatalog';
 import useOnClickOutside from '@/hooks/useOnClickOutside';
 import { ease, popover, pressable } from '@/lib/motion';
+import { useCatalogueLink } from '@/hooks/useCatalog';
 
 /**
  * The static-page navigation strip, below the header.
@@ -132,6 +135,8 @@ function ActiveBar() {
  * shape: parts, services and phones are three catalogues under one word.
  */
 function NavMenu({ label, items, active, pathname, shown }) {
+  // A type's page is under /catalogue at the address it sets (2026-10-03).
+  const link = useCatalogueLink();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -318,7 +323,7 @@ function NavMenu({ label, items, active, pathname, shown }) {
                 return (
                   <li key={item.to}>
                     <Link
-                      to={item.to}
+                      to={link(item.to)}
                       className={cn(
                         pressable,
                         'flex items-start gap-2.5 rounded-md px-2 py-2 hover:bg-surface-2',
@@ -380,8 +385,23 @@ export function PrimaryNav() {
     },
   ];
 
+  // Categories a business added in the ERP (2026-10-01) follow the three
+  // built-in ones, each to its own shop page.
+  const { data: categories = [] } = useCatalogCategories();
+  const extraShop = categories
+    .filter((category) => !SYSTEM_SLUGS.includes(category.slug))
+    .map((category) => ({
+      to: category.path,
+      icon: Package,
+      label: category.name,
+      note: category.description || 'Browse by device and model',
+    }));
+
   const menus = {
-    shop: { items: SHOP_ITEMS, active: SHOP_PATHS.includes(pathname) },
+    shop: {
+      items: [...SHOP_ITEMS, ...extraShop],
+      active: SHOP_PATHS.includes(pathname) || pathname.startsWith('/catalogue/') || pathname.startsWith('/catalog/'),
+    },
     offers: {
       items: offerItems,
       active: pathname === '/offers' || pathname === '/clearance' || pathname.startsWith('/deals'),

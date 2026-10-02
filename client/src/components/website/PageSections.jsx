@@ -1,6 +1,7 @@
 import { matchPath, useLocation } from 'react-router';
 import { WEBSITE_PAGES } from '@shared/websitePages';
 import { useGoogleReviews, usePageSections } from '@/hooks/useContent';
+import { useCatalogCategories } from '@/hooks/useCatalog';
 import ProductArticle from '@/components/product/ProductArticle';
 import ProductFaq from '@/components/product/ProductFaq';
 import GoogleReviewsSection from '@/components/website/GoogleReviewsSection';
@@ -24,8 +25,23 @@ import { openContactForm } from '@/components/website/ContactForm';
  * a moment costs no layout shift anybody is looking at.
  */
 
+/**
+ * A type's page under `/catalogue/<address>` (2026-10-03) takes the sections
+ * written for it when it lived at its old address: Parts the Shop page's,
+ * Phones the Pre-owned page's, Services the Services page's. The address is
+ * the type's to change, so it is looked up, not matched.
+ */
+const SECTIONS_OF_TYPE = { parts: 'shop', phones: 'preowned', services: 'services' };
+
 function useCurrentPage() {
   const { pathname } = useLocation();
+  const catalogue = matchPath({ path: '/catalogue/:address', end: true }, pathname);
+  const { data: categories = [] } = useCatalogCategories();
+  if (catalogue) {
+    const type = categories.find((entry) => entry.address === catalogue.params.address);
+    const key = SECTIONS_OF_TYPE[type?.slug];
+    return key ? (WEBSITE_PAGES.find((page) => page.key === key) ?? null) : null;
+  }
   return WEBSITE_PAGES.find((page) => matchPath({ path: page.path, end: true }, pathname)) ?? null;
 }
 

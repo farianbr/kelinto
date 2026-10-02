@@ -8,6 +8,8 @@ const CONTACT_TOPICS = [
   { value: 'order', label: 'An existing order' },
   { value: 'stock', label: 'Stock or availability' },
   { value: 'warranty', label: 'Warranty or return' },
+  // Filed by "Subscribe" on the Membership page (2026-10-01), and pickable here.
+  { value: 'membership', label: 'Membership plans' },
   { value: 'other', label: 'Something else' },
 ];
 

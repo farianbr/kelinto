@@ -34,7 +34,7 @@ scripts
 Thumbs.db
 
 # playwright-cli session artifacts (snapshots, console logs)
-.playwright-cli/
+.playwright-cli
 
 
 .tmp.drivedownload

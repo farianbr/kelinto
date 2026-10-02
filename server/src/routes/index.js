@@ -33,6 +33,8 @@ import * as settingsController from '../controllers/settingsController.js';
 import * as auditController from '../controllers/auditController.js';
 import * as credentialController from '../controllers/credentialController.js';
 import * as taxonomyAdminController from '../controllers/taxonomyAdminController.js';
+import * as catalogCategoryController from '../controllers/catalogCategoryController.js';
+import { catalogCategorySchema } from '../../../shared/catalog.js';
 import * as deletePreviewController from '../controllers/deletePreviewController.js';
 import * as lowStockAlertController from '../controllers/lowStockAlertController.js';
 import * as invoiceStatusController from '../controllers/invoiceStatusController.js';
@@ -185,7 +187,6 @@ import {
   kioskSellSchema,
   buybackAcceptSchema,
   buybackDeclineSchema,
-  preownedUpdateSchema,
   kioskUnlockSchema,
   kioskPinSchema,
   kioskSettingsSchema,
@@ -211,6 +212,8 @@ import {
   taxonomyNodeSchema,
   taxonomyCreateSchema,
   taxonomyImportSchema,
+  taxonomyRowSchema,
+  taxonomyRowRemoveSchema,
   invoiceStatusRuleSchema,
   invoiceLabelSchema,
   invoiceLabelSetSchema,
@@ -219,6 +222,7 @@ import {
   communicationsSettingsSchema,
 } from '../../../shared/schemas/admin.js';
 import { contactSchema } from '../../../shared/schemas/contact.js';
+import { membershipRequestSchema, membershipSettingsSchema } from '../../../shared/schemas/membership.js';
 import { blogPostSchema, faqSchema, offerSchema, productArticleSchema, reviewSchema, reviewModerationSchema, pageContentSchema, pageFaqSchema, googleReviewSchema, googleSummarySchema } from '../../../shared/schemas/content.js';
 
 const router = Router();
@@ -347,14 +351,19 @@ router.get('/portal/:business/:token', authLimiter, customerPortalController.pro
  * answer is already scoped to whichever business the host resolved to.
  */
 router.get('/business-info', settingsController.publicProfile);
-// The website's Membership page: tiers and their warranty, from Sale Settings.
+// The website's Membership page: plans, benefits and warranty, from Settings.
 router.get('/membership', settingsController.publicMembership);
 // The website's Services page. Open to guests; the price is gated server-side
 // exactly like a part's, and the whole route is off with the price list.
 router.get('/services', requireFeature('sales.services'), serviceCatalogController.publicList);
+router.get('/services/:slug', requireFeature('sales.services'), serviceCatalogController.publicGet);
 
 // --- catalogue -------------------------------------------------------------
 router.get('/taxonomy', taxonomyController.tree);
+// The website's categories (2026-10-01): the Shop menu, and a category page's own settings.
+router.get('/catalog/categories', catalogCategoryController.publicList);
+router.get('/catalog/at/:address', catalogCategoryController.publicAtAddress);
+router.get('/catalog/categories/:slug', catalogCategoryController.publicGet);
 router.get('/products', productController.list);
 router.get('/products/search', productController.search);
 // Both of these sit ABOVE '/products/:slug' on purpose: a literal segment
@@ -377,7 +386,6 @@ router.get('/google-reviews', contentController.listGoogleReviews);
 router.get('/offers', contentController.listOffers);
 // The website's pre-owned phones. Public, like the catalogue, and gated the same
 // way: a guest or a pending account is told what is for sale, never what it costs.
-router.get('/preowned', requireFeature('sales.buyback'), buybackController.publicList);
 router.get('/offers/:slug', contentController.getOffer);
 
 // --- cart ------------------------------------------------------------------
@@ -398,6 +406,15 @@ router.delete('/cart/bundles/:offerId', requireAuth, denyAdmin, requireApproved,
 // A pre-owned phone is a priced thing, so holding one needs approval like a bundle.
 router.post('/cart/preowned', requireAuth, denyAdmin, requireApproved, requireFeature('sales.buyback'), cartController.addPreowned);
 router.delete('/cart/preowned/:deviceId', requireAuth, denyAdmin, cartController.removePreowned);
+// Repair services (2026-10-01): priced things, so approval, like a part or a phone.
+router.post('/cart/services', requireAuth, denyAdmin, requireApproved, requireFeature('sales.services'), cartController.addService);
+// "Subscribe" on the Membership page puts the plan in the cart; checkout
+// turns it into an order and an invoice (2026-10-02). Ordering is what needs
+// approval, so adding does not.
+router.post('/cart/membership', requireAuth, denyAdmin, validate(membershipRequestSchema), cartController.setMembership);
+router.delete('/cart/membership', requireAuth, denyAdmin, cartController.removeMembership);
+router.patch('/cart/services/:serviceId', requireAuth, denyAdmin, cartController.setServiceQty);
+router.delete('/cart/services/:serviceId', requireAuth, denyAdmin, cartController.removeService);
 router.post('/cart/promo', requireAuth, denyAdmin, requireApproved, validate(promoCodeSchema), cartController.applyPromo);
 router.delete('/cart/promo', requireAuth, denyAdmin, requireApproved, cartController.clearPromo);
 
@@ -961,8 +978,9 @@ router.post('/admin/buybacks/:id/reveal-id', ...admin, requireFeature('sales.buy
 router.get('/admin/buybacks/:id/photo', ...admin, requireFeature('sales.buyback'), requirePermission('purchase', 'full'), buybackController.photo);
 router.post('/admin/buybacks/:id/accept', ...admin, requireFeature('sales.buyback'), requirePermission('purchase', 'full'), validate(buybackAcceptSchema), buybackController.accept);
 router.post('/admin/buybacks/:id/decline', ...admin, requireFeature('sales.buyback'), requirePermission('purchase', 'full'), validate(buybackDeclineSchema), buybackController.decline);
-router.get('/admin/preowned', ...admin, requireFeature('sales.buyback'), requirePermission('purchase', 'view'), buybackController.listStock);
-router.patch('/admin/preowned/:id', ...admin, requireFeature('sales.buyback'), requirePermission('purchase', 'full'), validate(preownedUpdateSchema), buybackController.updateStock);
+// Purchase › Membership Plans (moved from Settings › Financial, 2026-10-02).
+router.get('/admin/membership-plans', ...admin, requirePermission('purchase', 'view'), settingsController.adminMembership);
+router.patch('/admin/membership-plans', ...admin, requirePermission('purchase', 'full'), validate(membershipSettingsSchema), settingsController.updateMembership);
 router.patch('/admin/settings/kiosk', ...admin, requireFeature('sales.kiosk'), requirePermission('settings.financial', 'full'), validate(kioskSettingsSchema), settingsController.updateKiosk);
 // Repair estimates - the service side of Sales § Quote. Gated on the SAME
 // 'sales.quotes' flag as the wholesale quote list: they are one section in the
@@ -1203,14 +1221,24 @@ router.get('/admin/credentials', ...adminOnly, credentialController.list);
 router.patch('/admin/credentials/:provider', ...adminOnly, validate(providerCredentialSchema), credentialController.save);
 router.delete('/admin/credentials/:provider', ...adminOnly, credentialController.clear);
 
+// ---- product categories (2026-10-01) -----------------------------------------
+// Beside the taxonomy they each own a tree in, behind the same gate.
+// Read by Settings (to edit them) and by Purchase (the product form asks the
+// product type and its features, Inventory shows them as columns), so either
+// area may read; only Settings may write (2026-10-02).
+router.get('/admin/catalog-categories/slug-check', ...admin, requireFeature(['storefront.public', 'sales.devices']), requirePermission('settings.financial', 'view'), catalogCategoryController.slugCheck);
+router.get('/admin/catalog-categories', ...admin, requireFeature(['storefront.public', 'sales.devices']), requirePermission(['settings.financial', 'purchase'], 'view'), catalogCategoryController.list);
+router.post('/admin/catalog-categories', ...admin, requireFeature(['storefront.public', 'sales.devices']), requirePermission('settings.financial', 'full'), validate(catalogCategorySchema), catalogCategoryController.create);
+router.patch('/admin/catalog-categories/:slug', ...admin, requireFeature(['storefront.public', 'sales.devices']), requirePermission('settings.financial', 'full'), validate(catalogCategorySchema), catalogCategoryController.update);
+
 // ---- phase 11d: taxonomy & invoice status rules -----------------------------
 // Both sit under `settings`, matching where §6.15 files them. The taxonomy
 // decides what the storefront can be filtered by and the rules decide what gets
 // emailed to customers automatically, so neither is a `view`-level write.
-router.get('/admin/taxonomy', ...admin, requireFeature('storefront.public'), requirePermission('settings.financial', 'view'), taxonomyAdminController.list);
+router.get('/admin/taxonomy', ...admin, requireFeature(['storefront.public', 'sales.devices']), requirePermission('settings.financial', 'view'), taxonomyAdminController.list);
 // POST before the ':id' routes is not required here (different verb), but the
 // create route is listed first so the group reads list → create → read → edit.
-router.post('/admin/taxonomy', ...admin, requireFeature('storefront.public'), requirePermission('settings.financial', 'full'), validate(taxonomyCreateSchema), taxonomyAdminController.create);
+router.post('/admin/taxonomy', ...admin, requireFeature(['storefront.public', 'sales.devices']), requirePermission('settings.financial', 'full'), validate(taxonomyCreateSchema), taxonomyAdminController.create);
 /**
  * What a delete would take with it, asked before the confirm dialog opens.
  *
@@ -1220,11 +1248,17 @@ router.post('/admin/taxonomy', ...admin, requireFeature('storefront.public'), re
  */
 router.get('/admin/delete-preview/:type/:id', ...admin, requirePermission('settings', 'view'), deletePreviewController.preview);
 
-router.post('/admin/taxonomy/import', ...admin, requireFeature('storefront.public'), requirePermission('settings.financial', 'full'), validate(taxonomyImportSchema), taxonomyAdminController.importCsv);
+router.post('/admin/taxonomy/import', ...admin, requireFeature(['storefront.public', 'sales.devices']), requirePermission('settings.financial', 'full'), validate(taxonomyImportSchema), taxonomyAdminController.importCsv);
 // Above ':id' - a literal segment registered after a parameter is unreachable.
-router.get('/admin/taxonomy/:id', ...admin, requireFeature('storefront.public'), requirePermission('settings.financial', 'view'), taxonomyAdminController.get);
-router.patch('/admin/taxonomy/:id', ...admin, requireFeature('storefront.public'), requirePermission('settings.financial', 'full'), validate(taxonomyNodeSchema), taxonomyAdminController.update);
-router.delete('/admin/taxonomy/:id', ...admin, requireFeature('storefront.public'), requirePermission('settings.financial', 'full'), taxonomyAdminController.remove);
+// The whole tree, unpruned, for pickers. Any staff member: it is the website's own tree,
+// and the inventory and service forms both need it.
+router.get('/admin/taxonomy/tree', ...admin, requireFeature(['storefront.public', 'sales.devices']), taxonomyAdminController.fullTree);
+router.get('/admin/taxonomy/rows', ...admin, requireFeature(['storefront.public', 'sales.devices']), requirePermission('settings.financial', 'view'), taxonomyAdminController.rows);
+router.patch('/admin/taxonomy/rows', ...admin, requireFeature(['storefront.public', 'sales.devices']), requirePermission('settings.financial', 'full'), validate(taxonomyRowSchema), taxonomyAdminController.updateRow);
+router.post('/admin/taxonomy/rows/remove', ...admin, requireFeature(['storefront.public', 'sales.devices']), requirePermission('settings.financial', 'full'), validate(taxonomyRowRemoveSchema), taxonomyAdminController.removeRow);
+router.get('/admin/taxonomy/:id', ...admin, requireFeature(['storefront.public', 'sales.devices']), requirePermission('settings.financial', 'view'), taxonomyAdminController.get);
+router.patch('/admin/taxonomy/:id', ...admin, requireFeature(['storefront.public', 'sales.devices']), requirePermission('settings.financial', 'full'), validate(taxonomyNodeSchema), taxonomyAdminController.update);
+router.delete('/admin/taxonomy/:id', ...admin, requireFeature(['storefront.public', 'sales.devices']), requirePermission('settings.financial', 'full'), taxonomyAdminController.remove);
 
 router.get('/admin/invoice-rules', ...admin, requirePermission('settings.communications', 'view'), invoiceStatusController.list);
 router.post('/admin/invoice-rules', ...admin, requirePermission('settings.communications', 'full'), validate(invoiceStatusRuleSchema), invoiceStatusController.create);

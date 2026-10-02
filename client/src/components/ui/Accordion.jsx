@@ -1,5 +1,5 @@
 import { useId, useState } from 'react';
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion } from '@/lib/motionReact';
 import { Plus } from 'lucide-react';
 import cn from '@/lib/cn';
 import RichText from '@/lib/richText';
@@ -23,16 +23,19 @@ import { ease, pressable } from '@/lib/motion';
  *
  * Items: `{ id, question, answer }`. Answers go through RichText, so an author
  * can use bullets and bold without any HTML reaching the DOM.
+ *
+ * **Nothing is open on arrival, on any page** (client ruling, 2026-10-01). There
+ * is deliberately no prop to open one by default: the product page used to open
+ * its first entry, and a per-page exception is how a rule like this erodes.
  */
 export function Accordion({
   items = [],
-  defaultOpenId = null,
   className,
   numbered = true,
   /** Rows animate in on scroll. Off inside an already-animated container. */
   reveal = true,
 }) {
-  const [openId, setOpenId] = useState(defaultOpenId);
+  const [openId, setOpenId] = useState(null);
   const reduce = useReducedMotion();
   const baseId = useId();
 

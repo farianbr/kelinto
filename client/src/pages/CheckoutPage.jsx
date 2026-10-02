@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertCircle, ArrowLeft, Banknote, CreditCard, Lock, Package, ShieldCheck, Smartphone, Truck, WalletCards } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Banknote, CreditCard, Lock, Package, ShieldCheck, Smartphone, Truck, WalletCards, Wrench, Crown } from 'lucide-react';
 import cn from '@/lib/cn';
 import api from '@/lib/api';
 import { money } from '@/lib/format';
@@ -117,7 +117,7 @@ export function CheckoutPage() {
   const { user, isApproved } = useAuth();
   const kiosk = useKioskShopping();
   const steps = kiosk ? KIOSK_STEPS : CHECKOUT_STEPS;
-  const { items, bundles, preowned, count, subtotal, priceVisible, hasStockIssue, isReady } = useCart();
+  const { items, bundles, preowned, services, membership, count, subtotal, priceVisible, hasStockIssue, isReady } = useCart();
 
   const [activeStep, setActiveStep] = useState('contact');
   const [completed, setCompleted] = useState(new Set());
@@ -175,10 +175,10 @@ export function CheckoutPage() {
   // Wait for `isReady` - before the cart resolves, `items` is empty for a
   // reason that has nothing to do with the cart actually being empty.
   useEffect(() => {
-    if (isReady && items.length === 0 && bundles.length === 0 && preowned.length === 0) {
+    if (isReady && items.length === 0 && bundles.length === 0 && preowned.length === 0 && services.length === 0 && membership.length === 0) {
       navigate('/cart', { replace: true });
     }
-  }, [isReady, items.length, bundles.length, preowned.length, navigate]);
+  }, [isReady, items.length, bundles.length, preowned.length, services.length, membership.length, navigate]);
 
   /**
    * The binding price, from the server, re-fetched when the delivery method
@@ -191,7 +191,10 @@ export function CheckoutPage() {
   const { data: quoted } = useQuery({
     queryKey: ['orders', 'quote', values.deliveryMethod],
     queryFn: () => api.get('/orders/quote', { deliveryMethod: values.deliveryMethod }),
-    enabled: isApproved && isReady && (items.length > 0 || bundles.length > 0 || preowned.length > 0),
+    enabled:
+      isApproved &&
+      isReady &&
+      (items.length > 0 || bundles.length > 0 || preowned.length > 0 || services.length > 0 || membership.length > 0),
     placeholderData: (previous) => previous,
     staleTime: 0,
   });
@@ -262,6 +265,8 @@ export function CheckoutPage() {
       // The order may have spent held credit.
       queryClient.invalidateQueries({ queryKey: ['store-credit'] });
       queryClient.invalidateQueries({ queryKey: ['account', 'summary'] });
+      // A membership on the order moves the account onto its tier.
+      queryClient.invalidateQueries({ queryKey: ['auth', 'me'] });
       navigate(`/thank-you/${order.orderNumber}`, { replace: true });
     },
     onError: (error) => {
@@ -776,6 +781,38 @@ export function CheckoutPage() {
                     <span className="min-w-0 flex-1">
                       <span className="line-clamp-1 text-md font-medium text-ink-900">{line.name}</span>
                       <span className="tnum block font-mono text-2xs text-ink-300">{line.stockNumber} · ×1</span>
+                    </span>
+                    <span className="tnum shrink-0 font-display text-md font-bold">{money(line.lineTotal)}</span>
+                  </li>
+                ))}
+                {membership.map((line) => (
+                  <li key={line.tier} className="flex items-center gap-3 p-3">
+                    <span className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-brand-gradient-compact text-white">
+                      <Crown className="size-5" strokeWidth={1.75} aria-hidden="true" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="line-clamp-1 text-md font-medium text-ink-900">{line.name}</span>
+                      <span className="tnum block font-mono text-2xs text-ink-300">
+                        {line.sku} · {line.interval === 'month' ? '1 month' : '1 year'}
+                      </span>
+                    </span>
+                    <span className="tnum shrink-0 font-display text-md font-bold">{money(line.lineTotal)}</span>
+                  </li>
+                ))}
+                {services.map((line) => (
+                  <li key={line.serviceId} className="flex items-center gap-3 p-3">
+                    <span className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-surface-2">
+                      {line.photo ? (
+                        <img src={line.photo} alt="" width={48} height={48} loading="lazy" className="size-full object-cover" />
+                      ) : (
+                        <Wrench className="size-5 text-ink-300" strokeWidth={1.5} aria-hidden="true" />
+                      )}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="line-clamp-1 text-md font-medium text-ink-900">{line.name}</span>
+                      <span className="tnum block font-mono text-2xs text-ink-300">
+                        {line.sku} · ×{line.qty}
+                      </span>
                     </span>
                     <span className="tnum shrink-0 font-display text-md font-bold">{money(line.lineTotal)}</span>
                   </li>

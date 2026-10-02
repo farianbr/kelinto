@@ -84,6 +84,15 @@ const WEBSITE_PAGES = [
     note: 'Each part has its own article and FAQ, written under Parts.',
     sections: ['reviews', 'location'],
   },
+  {
+    // A service's own page ends like a product's (2026-10-02): its details are
+    // its article, the Services page's FAQ is its FAQ, then reviews and location.
+    key: 'service',
+    label: 'Each service page',
+    path: '/services/:slug',
+    note: 'Each service has its own details, written under Purchase › Services.',
+    sections: ['reviews', 'location'],
+  },
 ];
 
 const PAGE_KEYS = WEBSITE_PAGES.map((page) => page.key);

@@ -34,22 +34,14 @@ export function useBuybackRequest(id) {
   });
 }
 
-export function usePreownedStock(params) {
-  return useQuery({
-    queryKey: KEYS.stock(params),
-    queryFn: () => api.get('/admin/preowned', params),
-    placeholderData: (previous) => previous,
-  });
-}
-
 export function usePreownedMutations() {
   const queryClient = useQueryClient();
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ['admin', 'buybacks'] });
-    queryClient.invalidateQueries({ queryKey: ['admin', 'preowned'] });
-    // The sidebar badge counts pending requests from the dashboard stats.
+    // Accepting one adds stock to a phone product, so Inventory and the website move too.
+    queryClient.invalidateQueries({ queryKey: ['admin', 'inventory'] });
     queryClient.invalidateQueries({ queryKey: ['admin', 'stats'] });
-    queryClient.invalidateQueries({ queryKey: ['preowned'] });
+    queryClient.invalidateQueries({ queryKey: ['catalog'] });
   };
 
   return {
@@ -64,21 +56,9 @@ export function usePreownedMutations() {
     revealId: useMutation({
       mutationFn: (id) => api.post(`/admin/buybacks/${id}/reveal-id`, {}),
     }),
-    updateStock: useMutation({
-      mutationFn: ({ id, ...body }) => api.patch(`/admin/preowned/${id}`, body),
-      onSuccess: refresh,
-    }),
   };
 }
 
-/** The website's pre-owned page. Keyed on approval, because prices are gated on it. */
-export function usePreownedListings() {
-  const { user, isApproved } = useAuth();
-  return useQuery({
-    queryKey: ['preowned', user?.id ?? 'guest', isApproved],
-    queryFn: () => api.get('/preowned'),
-  });
-}
 
 /** "Phones you sold us", on the customer's account. */
 export function useMyBuybacks() {

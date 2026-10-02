@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { Menu, ShoppingCart, User } from 'lucide-react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion } from '@/lib/motionReact';
 import cn from '@/lib/cn';
 import { BOTTOM_NAV_REVEAL_AT } from '@/lib/constants';
 import useBusinessInfo from '@/hooks/useBusinessInfo';

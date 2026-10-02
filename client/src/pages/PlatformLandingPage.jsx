@@ -1,6 +1,6 @@
 import { Fragment, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useInView } from 'motion/react';
+import { useInView } from '@/lib/motionReact';
 import {
   AlertTriangle,
   ArrowRight,

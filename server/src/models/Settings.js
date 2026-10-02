@@ -24,7 +24,9 @@ import { KIOSK_CLOCKS } from '../../../shared/kiosk.js';
  * to it: a schema `default` only fires when a document is created, and every
  * existing deployment already has its Settings row.
  */
-const DEFAULT_TIER_WARRANTY_BONUS = { standard: 0, silver: 30, gold: 90, platinum: 180 };
+// Silver 0 (was 30) since 2026-10-01: the client's plan sheet gives Silver the
+// standard 90 days, Gold 180 and Platinum 270 on the 90-day base.
+const DEFAULT_TIER_WARRANTY_BONUS = { standard: 0, silver: 0, gold: 90, platinum: 180 };
 
 /**
  * Standard 2026 provincial rates (§0.13 - to be confirmed with the client,
@@ -517,6 +519,20 @@ const settingsSchema = new mongoose.Schema(
           alertEmail: { type: String, default: '' },
         },
       },
+    },
+
+    /**
+     * Membership plans and their benefit matrix (client ruling, 2026-10-01).
+     *
+     * Shape and defaults live in `shared/schemas/membership.js`. Mixed rather
+     * than nested schemas because a cell is keyed on the tier and the matrix
+     * is always written whole from one screen. **No default here**: a business
+     * that never saved the screen reads `DEFAULT_MEMBERSHIP` from the service,
+     * so improving the defaults improves every business that kept them.
+     */
+    membership: {
+      plans: { type: mongoose.Schema.Types.Mixed, default: undefined },
+      sections: { type: mongoose.Schema.Types.Mixed, default: undefined },
     },
   },
   { timestamps: true },

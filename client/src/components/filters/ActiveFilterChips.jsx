@@ -1,6 +1,7 @@
 import { useShallow } from 'zustand/react/shallow';
 import Chip from '@/components/ui/Chip';
-import { FILTER_LEVELS, GRADES } from '@/lib/constants';
+import { gradeMeta } from '@/lib/constants';
+import { useCatalogConfig } from '@/lib/catalogs';
 import useFilterStore from '@/store/filterStore';
 import { pressable } from '@/lib/motion';
 import cn from '@/lib/cn';
@@ -10,7 +11,10 @@ import cn from '@/lib/cn';
  * a user who filtered via the mega menu has no idea why the grid is narrow.
  */
 export function ActiveFilterChips({ facetMeta }) {
-  const { path, labels, facets, q, clearLevel, toggleFacet, setFacet, setQuery, resetAll } =
+  // Chip labels follow the catalogue in context: "Repair" on Services, "Model"
+  // everywhere, and no facet chip on Phones, which has no such step.
+  const catalog = useCatalogConfig();
+  const { path, labels, facets, q, clearLevel, toggleFacet, toggleAttribute, setFacet, setQuery, resetAll } =
     useFilterStore(
       useShallow((s) => ({
         path: s.path,
@@ -19,6 +23,7 @@ export function ActiveFilterChips({ facetMeta }) {
         q: s.q,
         clearLevel: s.clearLevel,
         toggleFacet: s.toggleFacet,
+        toggleAttribute: s.toggleAttribute,
         setFacet: s.setFacet,
         setQuery: s.setQuery,
         resetAll: s.resetAll,
@@ -35,15 +40,14 @@ export function ActiveFilterChips({ facetMeta }) {
     const meta = facetMeta?.partType?.find((p) => p.value === value);
     chips.push({
       key: `part-${value}`,
-      label: 'Component',
+      label: catalog.facetShort || 'Type',
       value: meta?.label ?? value,
       onRemove: () => toggleFacet('partType', value),
     });
   }
 
-  for (const level of FILTER_LEVELS) {
-    // componentType is a facet, not a path level - it is chipped just above.
-    if (level.key === 'componentType' || !path[level.key]) continue;
+  for (const level of catalog.levels) {
+    if (!path[level.key]) continue;
     chips.push({
       key: `path-${level.key}`,
       label: level.short,
@@ -52,11 +56,24 @@ export function ActiveFilterChips({ facetMeta }) {
     });
   }
 
+  // Feature filters (2026-10-02), named and worded from the facet the server sent.
+  for (const [key, values] of Object.entries(facets.attrs ?? {})) {
+    const meta = facetMeta?.attributes?.find((feature) => feature.key === key);
+    for (const value of values) {
+      chips.push({
+        key: `attr-${key}-${value}`,
+        label: meta?.label ?? key,
+        value: meta?.options?.find((option) => option.value === value)?.label ?? value,
+        onRemove: () => toggleAttribute(key, value),
+      });
+    }
+  }
+
   for (const value of facets.grade) {
     chips.push({
       key: `grade-${value}`,
       label: 'Grade',
-      value: GRADES[value]?.label ?? value,
+      value: facetMeta?.grade?.find((g) => g.value === value)?.label ?? gradeMeta(value, catalog.grades).label,
       onRemove: () => toggleFacet('grade', value),
     });
   }

@@ -53,6 +53,7 @@ const TOPIC_TONES = {
   order: 'warn',
   stock: 'info',
   warranty: 'danger',
+  membership: 'ok',
   other: 'neutral',
 };
 

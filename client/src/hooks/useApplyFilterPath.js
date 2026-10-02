@@ -1,6 +1,8 @@
 import { useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router';
+import { categoryPath } from '@shared/catalog';
 import useFilterStore, { toQueryParams } from '@/store/filterStore';
+import { useCatalogueLink } from '@/hooks/useCatalog';
 
 /**
  * Applies a taxonomy path from anywhere in the app.
@@ -33,9 +35,11 @@ import useFilterStore, { toQueryParams } from '@/store/filterStore';
 function useGoToFilteredShop() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  // Parts' page, wherever its address puts it under /catalogue (2026-10-03).
+  const shop = useCatalogueLink()('/shop');
 
   return useCallback(() => {
-    if (pathname === '/shop') return;
+    if (pathname === shop) return;
 
     // Built from the store's own serializer rather than from the caller's
     // argument, so a facet or a search term already in play survives the jump.
@@ -50,8 +54,8 @@ function useGoToFilteredShop() {
     }
 
     const query = params.toString();
-    navigate(query ? `/shop?${query}` : '/shop');
-  }, [navigate, pathname]);
+    navigate(query ? `${shop}?${query}` : shop);
+  }, [navigate, pathname, shop]);
 }
 
 export function useApplyFilterPath() {
@@ -88,6 +92,47 @@ export function useApplyPartsPath() {
       goToShop();
     },
     [setComponentTypes, setPath, goToShop],
+  );
+}
+
+/**
+ * Apply a filter in any catalogue (Parts, Phones, Services, an added category),
+ * from the mega menu (2026-10-02).
+ *
+ * **On that catalogue's own page** the store is the whole answer, as it always
+ * was: the grid behind re-renders over AJAX and the route never changes.
+ * `facet` (component or repair type slugs) is optional; leaving it out keeps
+ * whatever is ticked, so a buyer who ticked Battery and then picks a brand
+ * gets that brand's batteries.
+ *
+ * **On any other page** the store is not touched at all. It belongs to the page
+ * on screen, and writing a Services filter into it while the Parts grid owns
+ * it would filter that grid by repair types it has never heard of. The filter
+ * travels in the URL instead, and the catalogue page hydrates from it.
+ */
+export function useApplyCatalogFilter() {
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const setPath = useFilterStore((s) => s.setPath);
+  const setComponentTypes = useFilterStore((s) => s.setComponentTypes);
+
+  return useCallback(
+    (category, { path = {}, labels = {}, facet, facetLabels = {} } = {}) => {
+      const target = categoryPath(category);
+
+      if (pathname === target) {
+        if (facet) setComponentTypes(facet, facetLabels);
+        setPath(path, labels);
+        return;
+      }
+
+      const params = new URLSearchParams();
+      if (facet?.length) params.set('partType', facet.join(','));
+      for (const [level, slug] of Object.entries(path)) if (slug) params.set(level, slug);
+      const query = params.toString();
+      navigate(query ? `${target}?${query}` : target);
+    },
+    [navigate, pathname, setPath, setComponentTypes],
   );
 }
 

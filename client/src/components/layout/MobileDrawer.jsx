@@ -11,13 +11,15 @@ import Button from '@/components/ui/Button';
 import LiveSearch from '@/components/search/LiveSearch';
 import useUiStore from '@/store/uiStore';
 import { useApplyPartsPath } from '@/hooks/useApplyFilterPath';
-import { useComponentTypes, useWizardTaxonomy } from '@/hooks/useCatalog';
+import { useCatalogCategories, useComponentTypes, useWizardTaxonomy } from '@/hooks/useCatalog';
+import { SYSTEM_SLUGS } from '@shared/catalog';
 import { findExclusive, useOffers, usePublicServices } from '@/hooks/useContent';
 import { useAuth, useSignOut } from '@/hooks/useAuth';
 import { ACCOUNT_NAV } from '@shared/schemas/account';
 import { accountIcon } from '@/components/account/accountIcons';
 import { pressable } from '@/lib/motion';
 import BusinessMark from './BusinessMark';
+import { useCatalogueLink } from '@/hooks/useCatalog';
 
 /**
  * Left slide-in navigation drawer (brief §4.2), reworked 2026-09-30.
@@ -128,6 +130,7 @@ function Empty({ children }) {
 }
 
 function MenuTab({ close }) {
+  const link = useCatalogueLink();
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const applyParts = useApplyPartsPath();
@@ -145,12 +148,15 @@ function MenuTab({ close }) {
   const { data: pruned, isPlaceholderData: prunedStale } = useWizardTaxonomy(component?.slug);
   const { data: offers } = useOffers(isApproved);
   const services = usePublicServices(isApproved || isPanelAccount);
+  // Categories a business added in the ERP, after the three built-in ones.
+  const { data: categories = [] } = useCatalogCategories();
+  const extraCategories = categories.filter((category) => !SYSTEM_SLUGS.includes(category.slug));
 
   const exclusive = findExclusive(offers);
   const levelKeys = ['deviceType', 'brand', 'series', 'model'];
 
   function go(to) {
-    navigate(to);
+    navigate(link(to));
     close();
   }
 
@@ -171,7 +177,17 @@ function MenuTab({ close }) {
         <LevelHead backLabel="Menu" onBack={() => setPanel('root')} />
         <Row label="Parts" hint="By component, device and model" drills onClick={() => setPanel('parts')} />
         <Row label="Services" hint="Repairs and what they cost" drills onClick={() => setPanel('services')} />
-        <Row label="Phones" hint="Pre-owned, tested and graded" to="/pre-owned" active={pathname === '/pre-owned'} onNavigate={close} />
+        <Row label="Phones" hint="Pre-owned, tested and graded" to={link('/pre-owned')} active={pathname === link('/pre-owned')} onNavigate={close} />
+        {extraCategories.map((category) => (
+          <Row
+            key={category.slug}
+            label={category.name}
+            hint={category.description || 'Browse by device and model'}
+            to={category.path}
+            active={pathname === category.path}
+            onNavigate={close}
+          />
+        ))}
       </nav>
     );
   }
@@ -206,7 +222,7 @@ function MenuTab({ close }) {
               key={category.slug}
               label={category.name}
               hint={`${formatCount(category.count)} ${category.count === 1 ? 'service' : 'services'}`}
-              onClick={() => go(`/services?category=${category.slug}`)}
+              onClick={() => go(`/services?partType=${category.slug}`)}
             />
           ))
         )}

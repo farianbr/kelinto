@@ -3,7 +3,7 @@ import { Check, ChevronRight, RotateCcw, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import cn from '@/lib/cn';
 import { pressable, pressableSurface } from '@/lib/motion';
-import { FILTER_LEVELS } from '@/lib/constants';
+import { useCatalogConfig } from '@/lib/catalogs';
 import { optionsFor } from '@/lib/taxonomy';
 import { StepIndicator } from '@/components/ui/StepIndicator';
 import WizardOverlay from './WizardOverlay';
@@ -11,7 +11,19 @@ import useFilterStore from '@/store/filterStore';
 import { useWizardTaxonomy } from '@/hooks/useCatalog';
 import Skeleton from '@/components/ui/Skeleton';
 
-const LEVEL_KEYS = FILTER_LEVELS.map((l) => l.key);
+/** "All five steps answered", in words up to seven. */
+const STEP_WORDS = { 1: 'one', 2: 'two', 3: 'three', 4: 'four', 5: 'five', 6: 'six', 7: 'seven' };
+
+/** One card per step at lg, wrapping to rows of three or four at md. */
+const STEP_GRID = {
+  1: 'md:grid-cols-1',
+  2: 'md:grid-cols-2',
+  3: 'md:grid-cols-3',
+  4: 'md:grid-cols-4',
+  5: 'md:grid-cols-3 lg:grid-cols-5',
+  6: 'md:grid-cols-3 lg:grid-cols-6',
+  7: 'md:grid-cols-4 lg:grid-cols-7',
+};
 
 /**
  * The guided tab-wizard filter (brief §5.3).
@@ -54,6 +66,16 @@ const LEVEL_KEYS = FILTER_LEVELS.map((l) => l.key);
  */
 export function TabWizard({ onComplete }) {
   const [openLevel, setOpenLevel] = useState(null);
+
+  /**
+   * The steps come from the catalogue in context (`lib/catalogs.js`): five
+   * for Parts and Services, whose first step is the component or repair type,
+   * four for Phones, which have none. Everything below reads STEPS, so the
+   * same wizard walks all three.
+   */
+  const catalog = useCatalogConfig();
+  const STEPS = catalog.steps;
+  const LEVEL_KEYS = STEPS.map((level) => level.key);
 
   // True while the user is walking the steps in order. A non-linear edit clears
   // it so we do not chain-open overlays they did not ask for.
@@ -178,7 +200,7 @@ export function TabWizard({ onComplete }) {
 
       setOpenLevel(nextLevel);
     },
-    [openLevel, setPathLevel, wizardComponentType, onComplete],
+    [openLevel, setPathLevel, wizardComponentType, onComplete, LEVEL_KEYS],
   );
 
   function openStep(level, index) {
@@ -206,7 +228,7 @@ export function TabWizard({ onComplete }) {
   // The one step the mobile layout leaves open: the first that is neither
   // answered nor locked. Null once every level has an answer.
   const expandedKey =
-    FILTER_LEVELS.find(
+    STEPS.find(
       (level, index) => !answers[level.key] && (index === 0 || Boolean(answers[LEVEL_KEYS[index - 1]])),
     )?.key ?? null;
 
@@ -214,7 +236,7 @@ export function TabWizard({ onComplete }) {
   if (isLoading) {
     return (
       <div className="flex gap-2 overflow-hidden rounded-lg border border-line bg-surface p-3">
-        {FILTER_LEVELS.map((level) => (
+        {STEPS.map((level) => (
           <Skeleton key={level.key} className="h-14 flex-1" />
         ))}
       </div>
@@ -223,11 +245,11 @@ export function TabWizard({ onComplete }) {
 
   return (
     <section
-      aria-label="Guided part finder"
+      aria-label={catalog.finderTitle}
       className="overflow-hidden rounded-lg border border-line bg-surface"
     >
       <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
-        <p className="eyebrow text-ink-400">Find your part</p>
+        <p className="eyebrow text-ink-400">{catalog.finderTitle}</p>
 
         {/* No "See parts" shortcut.
 
@@ -274,7 +296,7 @@ export function TabWizard({ onComplete }) {
         {expandedKey ? (
           <>
             <ol className="flex items-center gap-1.5">
-              {FILTER_LEVELS.map((level, index) => {
+              {STEPS.map((level, index) => {
                 const value = answers[level.key];
                 const { state, locked } = stateOf(level, index);
                 const isCurrent = level.key === expandedKey;
@@ -311,7 +333,7 @@ export function TabWizard({ onComplete }) {
             {/* The step in hand, its own full width. */}
             {(() => {
               const index = LEVEL_KEYS.indexOf(expandedKey);
-              const level = FILTER_LEVELS[index];
+              const level = STEPS[index];
               return (
                 <button
                   type="button"
@@ -354,14 +376,14 @@ export function TabWizard({ onComplete }) {
           <div className="flex items-center gap-2.5 rounded-md border border-ok/25 bg-ok-50/60 py-2 pl-3 pr-2">
             <Check className="size-4 shrink-0 text-ok" strokeWidth={2} aria-hidden="true" />
             <p className="min-w-0 flex-1 text-sm font-medium leading-snug text-ink-700">
-              All five steps answered.
+              All {STEP_WORDS[STEPS.length] ?? STEPS.length} steps answered.
             </p>
             <button
               type="button"
-              onClick={() => openStep('model', LEVEL_KEYS.indexOf('model'))}
+              onClick={() => openStep(LEVEL_KEYS.at(-1), LEVEL_KEYS.length - 1)}
               className={cn(pressable, 'shrink-0 rounded-sm px-2 py-1 text-xs font-semibold text-brand hover:bg-surface')}
             >
-              Change model
+              Change {(STEPS.at(-1)?.label ?? 'model').toLowerCase()}
             </button>
           </div>
         )}
@@ -371,8 +393,10 @@ export function TabWizard({ onComplete }) {
           Five across only from lg. At md each card would be ~140px and the
           model names inside them truncate to nothing, so the steps wrap to a
           3+2 grid instead - still no scroller, every label still readable. */}
-      <ol className="hidden gap-2 p-3 md:grid md:grid-cols-3 lg:grid-cols-5">
-        {FILTER_LEVELS.map((level, index) => {
+      {/* As many columns as steps at lg, up to the seven a six-level type with
+          a first step has (2026-10-02); md wraps them. */}
+      <ol className={cn('hidden gap-2 p-3 md:grid', STEP_GRID[STEPS.length] ?? 'md:grid-cols-4')}>
+        {STEPS.map((level, index) => {
           const value = answers[level.key];
           const label = answerLabels[level.key];
           const { state, locked } = stateOf(level, index);
@@ -494,8 +518,8 @@ export function TabWizard({ onComplete }) {
           setOpenLevel(LEVEL_KEYS[1]);
         }}
         level={openLevel}
-        label={openLevel ? FILTER_LEVELS.find((l) => l.key === openLevel)?.label : ''}
-        title={openLevel ? `Select ${FILTER_LEVELS.find((l) => l.key === openLevel)?.label}` : ''}
+        label={openLevel ? STEPS.find((l) => l.key === openLevel)?.label : ''}
+        title={openLevel ? `Select ${STEPS.find((l) => l.key === openLevel)?.label}` : ''}
         options={options}
         // An ARRAY for step 1, so the overlay renders it as multi-select and
         // stays open; a slug for every other step.

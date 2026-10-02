@@ -5,12 +5,12 @@ import { db, controlModels } from '../db/models.js';
 import '../models/Settings.js';
 import '../models/Ticket.js';
 import '../models/User.js';
-import '../models/DeviceCatalog.js';
+import deviceCatalogService from './deviceCatalogService.js';
 import env from '../config/env.js';
 import ApiError from '../utils/ApiError.js';
 import { migrateColorToken } from '../../../shared/businessPalette.js';
-import { kioskClocks, maskEmail, maskName, maskPhone } from '../../../shared/kiosk.js';
-import { CONDITION_GRADES, CONDITION_PARTS } from '../models/Ticket.js';
+import { kioskClocks, nameCase } from '../../../shared/kiosk.js';
+import { conditionProblems, isConditionValue } from '../../../shared/deviceCondition.js';
 import * as authService from './authService.js';
 import auditService from './auditService.js';
 import referralService from './referralService.js';
@@ -194,26 +194,10 @@ async function setPin({ pin } = {}) {
  * takes in.
  */
 async function getDeviceOptions() {
-  const nodes = await db()
-    .DeviceCatalog.find({ isActive: true })
-    .sort({ order: 1, name: 1 })
-    .select('name kind parent order')
-    .lean();
-
-  const byId = new Map();
-  for (const node of nodes) {
-    byId.set(String(node._id), { id: String(node._id), name: node.name, kind: node.kind, children: [] });
-  }
-
-  const roots = [];
-  for (const node of nodes) {
-    const shaped = byId.get(String(node._id));
-    const parentId = node.parent ? String(node.parent) : null;
-    if (parentId && byId.has(parentId)) byId.get(parentId).children.push(shaped);
-    else roots.push(shaped);
-  }
-
-  return { devices: roots };
+  // The Services category tree (2026-10-03; Serviced items before), active only.
+  const { tree } = await deviceCatalogService.getTree({ status: 'active' });
+  const strip = (nodes) => nodes.map((node) => ({ id: node.id, name: node.name, kind: node.kind, children: strip(node.children) }));
+  return { devices: strip(tree) };
 }
 
 /**
@@ -313,7 +297,7 @@ async function lookupCustomer({ query } = {}, businessId = null) {
   if (text.includes('@')) {
     user = await db()
       .User.findOne({ ...CUSTOMER_FILTER, email: text.toLowerCase() })
-      .select('contactName businessName email phone identity.idLast4')
+      .select('contactName businessName email phone createdAt identity.idLast4')
       .lean();
   } else {
     const pattern = phonePattern(text);
@@ -322,7 +306,7 @@ async function lookupCustomer({ query } = {}, businessId = null) {
         .User.findOne({ ...CUSTOMER_FILTER, phone: pattern })
         // The most recently active account, where a number was reused.
         .sort({ updatedAt: -1 })
-        .select('contactName businessName email phone identity.idLast4')
+        .select('contactName businessName email phone createdAt identity.idLast4')
         .lean();
     }
   }
@@ -332,9 +316,14 @@ async function lookupCustomer({ query } = {}, businessId = null) {
   return {
     match: {
       token: signCustomerToken(user._id, businessId),
-      name: maskName(user.contactName || user.businessName),
-      phone: maskPhone(user.phone),
-      email: maskEmail(user.email),
+      /**
+       * The full name and when they first came to us (client ruling,
+       * 2026-10-02), and nothing else. It used to be initials plus a masked
+       * number and email; the client wants a customer to recognise themselves
+       * at a glance, and the number or email they just typed is not shown back.
+       */
+      name: user.contactName || user.businessName || 'A customer',
+      since: user.createdAt ?? null,
       /**
        * Whether a photo ID is already on file, so "Sell your phone" can skip
        * asking for it again. Only a yes or no: never the type or the digits.
@@ -427,7 +416,7 @@ async function resolveCustomer(intake, businessId, now) {
   }
 
   const contactName = [intake.firstName, intake.lastName]
-    .map((part) => String(part ?? '').trim())
+    .map((part) => nameCase(part ?? ''))
     .filter(Boolean)
     .join(' ');
 
@@ -505,13 +494,14 @@ async function checkIn(intake = {}, businessId = null) {
   const notes = String(intake.notes ?? '').trim();
 
   /**
-   * Only the parts the customer actually answered. "Not sure" is `untested`,
-   * which IS an answer here, so it stays; a part missing from the map was never
-   * shown, and inventing a grade for it would be the shop speaking for them.
+   * Only the parts the customer actually answered, each in its own part's
+   * vocabulary. "Not Possible to Check" IS an answer here, so it stays; a part
+   * missing from the map was never shown, and inventing a grade for it would
+   * be the shop speaking for them.
    */
   const customerCondition = Object.fromEntries(
     Object.entries(intake.condition ?? {}).filter(([key, grade]) =>
-      CONDITION_PARTS.includes(key) && CONDITION_GRADES.includes(grade),
+      isConditionValue(key, grade),
     ),
   );
 
@@ -531,7 +521,14 @@ async function checkIn(intake = {}, businessId = null) {
     // The legacy single-device columns the list and search read.
     deviceBrand: intake.brand || undefined,
     deviceModel: intake.model || undefined,
-    issue: problem || notes || 'Checked in at the kiosk; fault not described.',
+    // The tablet no longer asks "What's wrong with it?" (client ruling
+    // 2026-10-02): the eight condition answers say it part by part, so the
+    // list's one-line issue falls back to the parts the customer flagged.
+    issue:
+      problem ||
+      notes ||
+      conditionProblems(customerCondition) ||
+      'Checked in at the kiosk; fault not described.',
 
     devices: [
       {
@@ -577,7 +574,7 @@ async function checkIn(intake = {}, businessId = null) {
 
   return {
     ticketNumber: ticket.ticketNumber,
-    firstName: returning ? '' : String(intake.firstName ?? '').trim(),
+    firstName: returning ? '' : nameCase(intake.firstName ?? ''),
   };
 }
 
@@ -679,7 +676,11 @@ async function shopSignIn(req, res, body) {
  * and signed in, where a website sign-up waits for a person.
  */
 async function shopSignUp(req, res, body) {
-  const user = await authService.register(body, { ip: req.ip, via: 'kiosk' });
+  // Recased here as well as on the tablet: the account is named by this.
+  const user = await authService.register(
+    { ...body, contactName: nameCase(body.contactName) },
+    { ip: req.ip, via: 'kiosk' },
+  );
   await approveAtKiosk(user, req);
   authService.issueSession(res, user, false, req.businessScope ?? null, { expiresIn: SHOP_SESSION });
   return { user: user.toPublic() };

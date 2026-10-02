@@ -1,5 +1,4 @@
-import { useState } from 'react';
-import { Link, useParams } from 'react-router';
+import { Link, useNavigate, useParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowRight,
@@ -43,13 +42,20 @@ import GradeBadge from '@/components/product/GradeBadge';
  * it checks out through `/cart/bundles` like every other offer - a second way
  * to buy one product would be a second place for a price to be decided, and
  * there is exactly one of those.
+ *
+ * **The button is Checkout, not Add to cart** (client ruling, 2026-10-01). A
+ * deal page argues for ONE purchase; dropping the buyer back into a basket
+ * once they are convinced asks them to decide twice. It still goes through the
+ * cart, the only road to an order, and adds the deal only when the cart does
+ * not already hold it, so coming back from checkout and pressing it again does
+ * not buy two.
  */
 export function DealPage() {
   const { slug } = useParams();
   const queryClient = useQueryClient();
   const { user, isAuthenticated } = useAuth();
   const isApproved = user?.status === 'approved';
-  const [added, setAdded] = useState(false);
+  const navigate = useNavigate();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['offer', slug],
@@ -60,12 +66,15 @@ export function DealPage() {
 
   useDocumentTitle(data?.title);
 
-  const addBundle = useMutation({
-    mutationFn: () => api.post('/cart/bundles', { offer: slug, qty: 1 }),
+  const checkout = useMutation({
+    mutationFn: async () => {
+      const { cart } = await api.get('/cart');
+      const held = (cart?.bundles ?? []).some((bundle) => bundle.slug === slug);
+      if (!held) await api.post('/cart/bundles', { offer: slug, qty: 1 });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cart'] });
-      setAdded(true);
-      setTimeout(() => setAdded(false), 2400);
+      navigate('/checkout');
     },
   });
 
@@ -408,8 +417,8 @@ export function DealPage() {
             <div className="p-5">
               <button
                 type="button"
-                disabled={!canBuy || addBundle.isPending}
-                onClick={() => addBundle.mutate()}
+                disabled={!canBuy || checkout.isPending}
+                onClick={() => checkout.mutate()}
                 className={cn(
                   pressable,
                   'flex h-12 w-full items-center justify-center gap-2 rounded-lg font-display text-md font-semibold transition-[filter]',
@@ -418,12 +427,7 @@ export function DealPage() {
                     : 'cursor-not-allowed border border-line bg-surface-2 text-ink-300',
                 )}
               >
-                {added ? (
-                  <>
-                    <Check className="size-4" strokeWidth={2.5} aria-hidden="true" />
-                    Added to cart
-                  </>
-                ) : expired ? (
+                {expired ? (
                   'This deal has ended'
                 ) : unavailable ? (
                   'Temporarily unavailable'
@@ -431,21 +435,20 @@ export function DealPage() {
                   'Sign in to order'
                 ) : !isApproved ? (
                   'Pending approval'
-                ) : addBundle.isPending ? (
-                  'Adding…'
+                ) : checkout.isPending ? (
+                  'Opening checkout…'
                 ) : (
-                  'Add to cart'
+                  <>
+                    Checkout
+                    <ArrowRight className="size-4" strokeWidth={2} aria-hidden="true" />
+                  </>
                 )}
               </button>
 
-              {added && (
-                <Link
-                  to="/cart"
-                  className={cn(pressable, 'mt-3 flex h-11 w-full items-center justify-center gap-1.5 rounded-lg border border-line-strong bg-surface font-display text-md font-semibold text-ink-700 hover:border-ink-300 hover:bg-surface-2')}
-                >
-                  Go to cart
-                  <ArrowRight className="size-4" strokeWidth={2} aria-hidden="true" />
-                </Link>
+              {checkout.isError && (
+                <p role="alert" className="mt-3 text-sm leading-relaxed text-danger">
+                  {checkout.error?.message || 'The deal could not be added to your cart.'}
+                </p>
               )}
 
               {unavailable && !expired && (

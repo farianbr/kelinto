@@ -1,10 +1,10 @@
 import { Suspense, lazy } from 'react';
 import Toaster from '@/components/ui/Toaster';
-import { Navigate, Route, Routes } from 'react-router';
+import { Navigate, Route, Routes, useParams } from 'react-router';
 import RootLayout from '@/components/layout/RootLayout';
 import RouteProgress from '@/components/layout/RouteProgress';
 import useEarlyBusinessTheme from '@/hooks/useEarlyBusinessTheme';
-import ShopPage from '@/pages/ShopPage';
+import CataloguePage, { LegacyCatalogueRedirect } from '@/pages/CataloguePage';
 import HomeOrShop from '@/components/layout/HomeOrShop';
 import RouteFallback from '@/components/layout/RouteFallback';
 import GoToPanel, { GoToHost } from '@/components/layout/GoToPanel';
@@ -32,10 +32,9 @@ const FaqPage = lazy(() => import('@/pages/FaqPage'));
 const OffersPage = lazy(() => import('@/pages/OffersPage'));
 const DealPage = lazy(() => import('@/pages/DealPage'));
 const DealsIndexPage = lazy(() => import('@/pages/DealsIndexPage'));
-const ServicesPage = lazy(() => import('@/pages/ServicesPage'));
+const ServiceDetailPage = lazy(() => import('@/pages/ServiceDetailPage'));
 const MembershipPage = lazy(() => import('@/pages/MembershipPage'));
 const ClearancePage = lazy(() => import('@/pages/ClearancePage'));
-const PreownedPage = lazy(() => import('@/pages/PreownedPage'));
 // Public and outside RootLayout: somebody arriving here is leaving, and the
 // shop header would be reading the moment badly (phase 9, §6.13).
 const UnsubscribePage = lazy(() => import('@/pages/UnsubscribePage'));
@@ -115,7 +114,6 @@ const AdminExpenseCategoriesPage = lazy(
   () => import('@/pages/admin/AdminExpenseCategoriesPage'),
 );
 const AdminInventoryDetailPage = lazy(() => import('@/pages/admin/AdminInventoryDetailPage'));
-const AdminPreownedPage = lazy(() => import('@/pages/admin/AdminPreownedPage'));
 const AdminBuybackDetailPage = lazy(() => import('@/pages/admin/AdminBuybackDetailPage'));
 const AdminReportsPage = lazy(() => import('@/pages/admin/AdminReportsPage'));
 const AdminBusinessReportPage = lazy(() => import('@/pages/admin/AdminBusinessReportPage'));
@@ -124,7 +122,6 @@ const AdminWebQuotesPage = lazy(() => import('@/pages/admin/AdminWebQuotesPage')
 const AdminQuoteDetailPage = lazy(() => import('@/pages/admin/AdminQuoteDetailPage'));
 const AdminServicesPage = lazy(() => import('@/pages/admin/AdminServicesPage'));
 const AdminServiceImportPage = lazy(() => import('@/pages/admin/AdminServiceImportPage'));
-const AdminDevicesPage = lazy(() => import('@/pages/admin/AdminDevicesPage'));
 const AdminServiceQuoteFormPage = lazy(() => import('@/pages/admin/AdminServiceQuoteFormPage'));
 const AdminTicketsPage = lazy(() => import('@/pages/admin/AdminTicketsPage'));
 const AdminTicketFormPage = lazy(() => import('@/pages/admin/AdminTicketFormPage'));
@@ -148,6 +145,8 @@ const AdminShippingSettingsPage = lazy(() => import('@/pages/admin/AdminShipping
 const AdminPaymentMethodsPage = lazy(() => import('@/pages/admin/AdminPaymentMethodsPage'));
 const AdminInventorySettingsPage = lazy(() => import('@/pages/admin/AdminInventorySettingsPage'));
 const AdminKioskSettingsPage = lazy(() => import('@/pages/admin/AdminKioskSettingsPage'));
+const AdminMembershipPlansPage = lazy(() => import('@/pages/admin/AdminMembershipPlansPage'));
+const AdminTaxonomyHubPage = lazy(() => import('@/pages/admin/AdminTaxonomyHubPage'));
 const AdminAgreementsPage = lazy(() => import('@/pages/admin/AdminAgreementsPage'));
 const AdminActivityLogPage = lazy(() => import('@/pages/admin/AdminActivityLogPage'));
 const AdminSupportPage = lazy(() => import('@/pages/admin/AdminSupportPage'));
@@ -156,6 +155,8 @@ const AdminApiKeysPage = lazy(() => import('@/pages/admin/AdminApiKeysPage'));
 const AdminThirdPartyPage = lazy(() => import('@/pages/admin/AdminThirdPartyPage'));
 const AdminTaxonomyPage = lazy(() => import('@/pages/admin/AdminTaxonomyPage'));
 const AdminTaxonomyAddPage = lazy(() => import('@/pages/admin/AdminTaxonomyAddPage'));
+const AdminCatalogTypePage = lazy(() => import('@/pages/admin/AdminCatalogTypePage'));
+const AdminProductFormPage = lazy(() => import('@/pages/admin/AdminProductFormPage'));
 const AdminTaxonomyImportPage = lazy(() => import('@/pages/admin/AdminTaxonomyImportPage'));
 const AdminInvoiceLabelsPage = lazy(() => import('@/pages/admin/AdminInvoiceLabelsPage'));
 const AdminEmailSettingsPage = lazy(() => import('@/pages/admin/AdminEmailSettingsPage'));
@@ -200,16 +201,23 @@ const adminRoutes = (
     <Route path="clients/:id/edit" element={<AdminCustomerEditPage />} />
     <Route path="orders" element={<AdminOrdersPage />} />
     <Route path="inventory" element={<AdminProductsPage />} />
+    <Route path="inventory/new" element={<AdminProductFormPage />} />
+    <Route path="inventory/:id/edit" element={<AdminProductFormPage />} />
     <Route path="inventory/:id" element={<AdminInventoryDetailPage />} />
-    <Route path="preowned" element={<AdminPreownedPage />} />
-    <Route path="preowned/requests/:id" element={<AdminBuybackDetailPage />} />
+    {/* Pre-owned folded into Inventory (2026-10-02): phones are products with
+        stock, and kiosk buybacks are a tab beside them. Old links still land. */}
+    <Route path="inventory/buybacks/:id" element={<AdminBuybackDetailPage />} />
+    <Route path="preowned" element={<Navigate to="/admin/inventory?tab=buybacks" replace />} />
+    <Route path="preowned/requests/:id" element={<BuybackRedirect />} />
     <Route path="invoices" element={<AdminInvoicesPage />} />
 
     {/* Purchase (phase 5). */}
     <Route path="suppliers" element={<AdminSuppliersPage />} />
     <Route path="suppliers/:id" element={<AdminSupplierProfilePage />} />
     <Route path="supplier-returns" element={<AdminSupplierReturnsPage />} />
-    <Route path="supplier-subscriptions" element={<AdminSupplierServicesPage mode="subscription" />} />
+    {/* Membership plans took the Subscription Plans row (2026-10-02); supplier
+        subscriptions are a tab on Purchase › Services, and the old path lands there. */}
+    <Route path="membership-plans" element={<AdminMembershipPlansPage />} />
     {/* Supplier bidding lives on the purchase order itself (§6.8a) - the
         separate `/admin/rfqs` screens folded in on 2026-09-11, and
         `ADMIN_LEGACY_REDIRECTS` forwards the old path. */}
@@ -305,10 +313,18 @@ const adminRoutes = (
     <Route path="settings/third-party" element={<AdminThirdPartyPage />} />
     {/* Reference data a staff member sets up once, so it sits beside the parts
         taxonomy in Settings rather than in the daily Sales list. */}
-    <Route path="settings/devices" element={<AdminDevicesPage />} />
     <Route path="settings/kiosk" element={<AdminKioskSettingsPage />} />
-    <Route path="settings/taxonomy" element={<AdminTaxonomyPage />} />
+    {/* Taxonomy: every type sold, each with its category tree. Serviced items
+        was retired on 2026-10-03: the Services tree is the device list every
+        picker reads, so its old address opens that tree. */}
+    <Route path="settings/taxonomy" element={<AdminTaxonomyHubPage />} />
+    <Route path="settings/taxonomy/tree" element={<AdminTaxonomyPage />} />
+    <Route path="settings/categories" element={<Navigate to="/admin/settings/taxonomy" replace />} />
+    <Route path="settings/devices" element={<Navigate to="/admin/settings/taxonomy/tree?category=services" replace />} />
     <Route path="settings/taxonomy/add" element={<AdminTaxonomyAddPage />} />
+    <Route path="settings/taxonomy/row" element={<AdminTaxonomyAddPage />} />
+    <Route path="settings/taxonomy/types/new" element={<AdminCatalogTypePage />} />
+    <Route path="settings/taxonomy/types/:slug" element={<AdminCatalogTypePage />} />
     <Route path="settings/taxonomy/import" element={<AdminTaxonomyImportPage />} />
     <Route path="settings/invoice-labels" element={<AdminInvoiceLabelsPage />} />
     <Route path="settings/email" element={<AdminEmailSettingsPage />} />
@@ -350,6 +366,12 @@ const adminRoutes = (
     <Route
       path="supplier-services"
       element={<Navigate to="/admin/services?tab=products" replace />}
+    />
+    {/* 2026-10-02: membership moved to Purchase, supplier subscriptions to a tab. */}
+    <Route path="settings/membership" element={<Navigate to="/admin/membership-plans" replace />} />
+    <Route
+      path="supplier-subscriptions"
+      element={<Navigate to="/admin/services?tab=subscriptions" replace />}
     />
 
     <Route path="*" element={<Navigate to="/admin" replace />} />
@@ -533,7 +555,14 @@ function SiteRoutes() {
             every filtered link ever shared points at '/?deviceType=...', and
             those forward to /shop with the query intact. See HomeOrShop. */}
         <Route index element={<HomeOrShop />} />
-        <Route path="shop" element={<ShopPage />} />
+        {/* Every type's page lives under /catalogue (client ruling 2026-10-03),
+            at the address the type sets in Settings › Taxonomy. */}
+        <Route path="catalogue/:address" element={<CataloguePage />} />
+        {/* Where they used to live: forwarded, query intact. */}
+        <Route path="shop" element={<LegacyCatalogueRedirect slug="parts" />} />
+        <Route path="pre-owned" element={<LegacyCatalogueRedirect slug="phones" />} />
+        <Route path="services" element={<LegacyCatalogueRedirect slug="services" />} />
+        <Route path="catalog/:slug" element={<LegacyCatalogueRedirect />} />
 
         <Route
           path="clearance"
@@ -544,15 +573,6 @@ function SiteRoutes() {
           }
         />
 
-        {/* Phones bought from customers at the kiosk, one of each. */}
-        <Route
-          path="pre-owned"
-          element={
-            <Suspense fallback={<RouteFallback />}>
-              <PreownedPage />
-            </Suspense>
-          }
-        />
 
         {/* Offers › Exclusive Deals: forwards to the live deal, or says there
             is none (2026-09-30). */}
@@ -573,12 +593,12 @@ function SiteRoutes() {
           }
         />
 
-        {/* Shop › Services: the repair price list (2026-09-30). */}
+        {/* A service's own page, like a part's (2026-10-02). */}
         <Route
-          path="services"
+          path="services/:slug"
           element={
             <Suspense fallback={<RouteFallback />}>
-              <ServicesPage />
+              <ServiceDetailPage />
             </Suspense>
           }
         />
@@ -857,6 +877,12 @@ export function App() {
       )}
     </>
   );
+}
+
+/** An old buyback link (`/admin/preowned/requests/:id`), forwarded to Inventory. */
+function BuybackRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/admin/inventory/buybacks/${id}`} replace />;
 }
 
 export default App;

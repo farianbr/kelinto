@@ -3,14 +3,17 @@ import { ChevronDown, ChevronLeft, ChevronRight, SlidersHorizontal } from 'lucid
 import { useShallow } from 'zustand/react/shallow';
 import cn from '@/lib/cn';
 import { count as formatCount } from '@/lib/format';
-import { GRADES, GRADE_ORDER } from '@/lib/constants';
+import { GRADE_ORDER, gradeMeta } from '@/lib/constants';
 import Checkbox from '@/components/ui/Checkbox';
 import Skeleton from '@/components/ui/Skeleton';
 import useFilterStore from '@/store/filterStore';
 import { useTaxonomy } from '@/hooks/useCatalog';
+import { useCatalogConfig } from '@/lib/catalogs';
 import { pressable } from '@/lib/motion';
+import { TREE_LEVEL_KEYS } from '@shared/catalog';
 
-const LEVEL_BY_DEPTH = ['deviceType', 'brand', 'series', 'model'];
+// Every finder level, the two a product type may add included (2026-10-02).
+const LEVEL_BY_DEPTH = TREE_LEVEL_KEYS;
 
 /** Facet rows shown before the list folds behind "See more". */
 const FACET_PREVIEW = 8;
@@ -235,24 +238,38 @@ function Section({ title, children, defaultOpen = true }) {
 
 export function SidebarFilter({ facets, className }) {
   const { data: tree, isLoading } = useTaxonomy();
+  // Section titles and which sections exist follow the catalogue in context.
+  const catalog = useCatalogConfig();
 
-  const { path, facetState, setPathLevel, toggleFacet, toggleComponentType, setFacet } = useFilterStore(
+  const { path, facetState, setPathLevel, toggleFacet, toggleComponentType, toggleAttribute, setFacet } = useFilterStore(
     useShallow((s) => ({
       path: s.path,
       facetState: s.facets,
       setPathLevel: s.setPathLevel,
       toggleFacet: s.toggleFacet,
       toggleComponentType: s.toggleComponentType,
+      toggleAttribute: s.toggleAttribute,
       setFacet: s.setFacet,
     })),
   );
 
-  const gradeOptions = GRADE_ORDER.filter((grade) =>
-    facets?.grade?.some((entry) => entry.value === grade),
-  ).map((grade) => {
-    const option = facets.grade.find((entry) => entry.value === grade);
-    return { value: grade, label: GRADES[grade]?.label ?? grade, count: option.count };
-  });
+  // A product type's grades read in the type's own order and names (grades per
+  // type, 2026-10-02: Parts' five, Phones' Excellent, Good, Fair); services
+  // arrive ordered and labelled by the server.
+  const order = catalog.grades?.length ? catalog.grades.map((grade) => grade.value) : GRADE_ORDER;
+  const rank = (value) => (order.includes(value) ? order.indexOf(value) : order.length);
+  const gradeOptions =
+    catalog.kind === 'part'
+      ? [...(facets?.grade ?? [])]
+          // A type with no grades leaves its products without one: no option for it.
+          .filter((option) => option.value)
+          .sort((a, b) => rank(a.value) - rank(b.value))
+          .map((option) => ({
+            value: option.value,
+            label: gradeMeta(option.value, catalog.grades).label,
+            count: option.count,
+          }))
+      : (facets?.grade ?? []);
 
   return (
     <aside className={cn('rounded-lg border border-line bg-surface', className)}>
@@ -274,8 +291,8 @@ export function SidebarFilter({ facets, className }) {
             category path: a buyer who has drilled to a model and then ticks
             Battery wants that model's battery, and resetting them to the top of
             the tree throws away the more specific thing they said. */}
-        {facets?.partType?.length > 0 && (
-          <Section title="Component Type">
+        {catalog.facetLabel && facets?.partType?.length > 0 && (
+          <Section title={catalog.facetLabel}>
             <FacetList
               options={facets.partType}
               isChecked={(value) => facetState.partType.includes(value)}
@@ -296,8 +313,20 @@ export function SidebarFilter({ facets, className }) {
           )}
         </Section>
 
+        {/* The product type's own features marked "Website filter" in ERP ›
+            Settings (2026-10-02), each counted without its own ticks. */}
+        {(facets?.attributes ?? []).map((feature) => (
+          <Section key={feature.key} title={feature.label}>
+            <FacetList
+              options={feature.options}
+              isChecked={(value) => (facetState.attrs?.[feature.key] ?? []).includes(value)}
+              onToggle={(value) => toggleAttribute(feature.key, value)}
+            />
+          </Section>
+        ))}
+
         {gradeOptions.length > 0 && (
-          <Section title="Condition Grade">
+          <Section title={catalog.gradeTitle}>
             <FacetList
               options={gradeOptions}
               isChecked={(value) => facetState.grade.includes(value)}
@@ -306,14 +335,16 @@ export function SidebarFilter({ facets, className }) {
           </Section>
         )}
 
-        <Section title="Availability">
-          <Checkbox
-            label="In stock"
-            count={facets?.availability?.inStock}
-            checked={facetState.inStockOnly}
-            onChange={(event) => setFacet('inStockOnly', event.target.checked)}
-          />
-        </Section>
+        {catalog.hasAvailability && (
+          <Section title="Availability">
+            <Checkbox
+              label="In stock"
+              count={facets?.availability?.inStock}
+              checked={facetState.inStockOnly}
+              onChange={(event) => setFacet('inStockOnly', event.target.checked)}
+            />
+          </Section>
+        )}
       </div>
     </aside>
   );

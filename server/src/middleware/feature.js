@@ -132,7 +132,10 @@ function requireFeature(key) {
       }
     }
 
-    if (!featureEnabled(features, key)) {
+    // One key, or a list any one of which opens the gate (Taxonomy serves a
+    // website catalogue and the counter's device list alike, 2026-10-03).
+    const keys = Array.isArray(key) ? key : [key];
+    if (!keys.some((entry) => featureEnabled(features, entry))) {
       // Deliberately the same shape as any other 404 - no `FEATURE_DISABLED`
       // code, no mention of the key. A body that named the feature would give
       // back exactly what the status code is withholding.

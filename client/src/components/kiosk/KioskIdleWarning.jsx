@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react';
+
 import useFocusTrap from '@/hooks/useFocusTrap';
 import KioskButton from './KioskButton';
 
@@ -12,9 +14,23 @@ import KioskButton from './KioskButton';
  *
  * `alertdialog` because it interrupts: a screen reader user has to hear that
  * their session is about to end without having moved focus to it.
+ *
+ * **It reads itself aloud** when read-aloud is on (client ruling 2026-10-02),
+ * like every other screen on the tablet. A customer who has turned away to
+ * dig out an ID is exactly the one who will not see it. Said once, as it
+ * opens, with the seconds left at that moment; the countdown is not read out
+ * tick by tick.
  */
-export function KioskIdleWarning({ open, remaining, onStay, onLeave, leaveLabel = 'Start over' }) {
+export function KioskIdleWarning({ open, remaining, onStay, onLeave, leaveLabel = 'Start over', speak }) {
   const trapRef = useFocusTrap(open);
+  const remainingRef = useRef(remaining);
+  remainingRef.current = remaining;
+
+  useEffect(() => {
+    if (!open) return;
+    speak?.(`Still there? For your privacy, this screen clears itself in ${remainingRef.current} seconds.`);
+  }, [open, speak]);
+
   if (!open) return null;
 
   return (

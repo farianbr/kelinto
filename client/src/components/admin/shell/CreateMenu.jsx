@@ -70,7 +70,8 @@ const GROUPS = [
       // `?new=1` nothing reads, so the menu item silently did nothing.
       { key: 'po', label: 'Purchase Order', to: '/admin/purchase-orders/create', page: true, icon: 'ClipboardList', area: 'purchase', feature: 'purchase.orders' },
       { key: 'expense', label: 'Expense', to: '/admin/expenses', icon: 'Receipt', area: 'purchase', feature: 'purchase.expenses' },
-      { key: 'product', label: 'Product', to: '/admin/inventory', icon: 'Boxes', area: 'purchase', feature: 'purchase.inventory' },
+      // A product has its own page since 2026-10-02 (it was a modal).
+      { key: 'product', label: 'Product', to: '/admin/inventory/new', page: true, icon: 'Boxes', area: 'purchase', feature: 'purchase.inventory' },
     ],
   },
 ];

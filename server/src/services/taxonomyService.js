@@ -2,6 +2,8 @@ import { db } from '../db/models.js';
 import '../models/Taxonomy.js';
 import '../models/Product.js';
 import { HAS_PICTURE } from '../../../shared/partPhotos.js';
+import { currentBusinessId } from '../db/context.js';
+import { categoryFilter, invalidateCatalog } from './catalogService.js';
 
 /**
  * Normalises the component-type argument, which is multi-select.
@@ -16,9 +18,36 @@ function toPartTypes(value) {
   return [...new Set(list.map((item) => String(item).trim()).filter(Boolean))].sort();
 }
 
-let cache = null;
-let cachedAt = 0;
+/**
+ * Caches, keyed by business and category (2026-10-01).
+ *
+ * They were module-level single values, so with one process serving every
+ * business the first shop to ask filled the cache for all of them. Keyed now,
+ * which also gives each part-kind category (Parts, and any a business adds)
+ * its own tree.
+ */
 const TTL_MS = 5 * 60 * 1000;
+const treeCache = new Map();
+
+/** Where a product filed at no level is counted: above every root. */
+const ROOT = Symbol('root');
+
+/**
+ * "Any" (2026-10-03): a product filed no deeper than a node fits every entry
+ * under it, and the website's filters show it under each one
+ * (`productService.levelClause`). So each node also counts what its ancestors
+ * hold themselves, or a filter would read "0" over a grid that is not empty.
+ * Runs after the rollup, which counts each node's own and deeper products.
+ */
+function addFitsAll(nodes, ownCounts, carry = ownCounts.get(ROOT) ?? 0) {
+  for (const node of nodes) {
+    const own = ownCounts.get(node.slug) ?? 0;
+    addFitsAll(node.children, ownCounts, carry + own);
+    node.count += carry;
+  }
+}
+const keyOf = (category, extra = '') =>
+  [String(currentBusinessId() ?? 'default'), category || 'parts', extra].join('|');
 
 /**
  * Pruned trees, keyed by component type.
@@ -27,7 +56,6 @@ const TTL_MS = 5 * 60 * 1000;
  * same shape as the full tree, so the client cannot tell which it got.
  */
 const prunedCache = new Map();
-let prunedAt = 0;
 
 /**
  * Returns the whole category tree in one payload.
@@ -35,10 +63,16 @@ let prunedAt = 0;
  * The sidebar, mega menu and tab wizard all render from this single response
  * three sources would drift. It changes rarely, so it is cached in process.
  */
-async function getTree({ force = false } = {}) {
-  if (!force && cache && Date.now() - cachedAt < TTL_MS) return cache;
+async function getTree({ force = false, category = 'parts' } = {}) {
+  const key = keyOf(category);
+  const hit = treeCache.get(key);
+  if (!force && hit && Date.now() - hit.at < TTL_MS) return hit.value;
 
-  const nodes = await db().Taxonomy.find({}).sort({ order: 1, name: 1 }).lean();
+  // A first level's entries (Component Type) are not part of the device tree.
+  const nodes = await db()
+    .Taxonomy.find({ ...categoryFilter(category), kind: { $ne: 'partType' } })
+    .sort({ order: 1, name: 1 })
+    .lean();
 
   /**
    * Counts come from the PRODUCTS, not from the stored `productCount`.
@@ -55,7 +89,7 @@ async function getTree({ force = false } = {}) {
    * is the same aggregate without the component-type match, so the two agree.
    */
   const groups = await db().Product.aggregate([
-    { $match: { isActive: true, ...HAS_PICTURE } },
+    { $match: { isActive: true, ...HAS_PICTURE, ...categoryFilter(category) } },
     {
       $group: {
         _id: {
@@ -63,21 +97,27 @@ async function getTree({ force = false } = {}) {
           brand: '$brandSlug',
           series: '$seriesSlug',
           model: '$modelSlug',
+          level5: '$level5Slug',
+          level6: '$level6Slug',
         },
         count: { $sum: 1 },
       },
     },
   ]);
 
-  // A model's count is its own group; every level above it is the rollup below.
+  // A product counts at the deepest level it is filed at: the model on a
+  // four-level type, the brand on a two-level one (finder depth per type,
+  // 2026-10-02). Every level above is the rollup below.
   const modelCounts = new Map();
   const live = new Set();
   for (const group of groups) {
-    const { deviceType, brand, series, model } = group._id;
-    for (const slug of [deviceType, brand, series, model]) {
+    const { deviceType, brand, series, model, level5, level6 } = group._id;
+    for (const slug of [deviceType, brand, series, model, level5, level6]) {
       if (slug) live.add(slug);
     }
-    if (model) modelCounts.set(model, (modelCounts.get(model) ?? 0) + group.count);
+    const leaf = level6 || level5 || model || series || brand || deviceType;
+    // Filed at no level at all: "Any" from the first, so it fits every entry.
+    modelCounts.set(leaf || ROOT, (modelCounts.get(leaf || ROOT) ?? 0) + group.count);
   }
 
   const byId = new Map();
@@ -105,13 +145,15 @@ async function getTree({ force = false } = {}) {
     }
   }
 
-  // Roll counts up so a device type shows the sum of its models, not zero.
+  // Roll counts up so a device type shows the sum of its models, not zero,
+  // plus anything filed at that level itself.
   const rollup = (node) => {
     if (node.children.length === 0) return node.count;
-    node.count = node.children.reduce((sum, child) => sum + rollup(child), 0);
+    node.count += node.children.reduce((sum, child) => sum + rollup(child), 0);
     return node.count;
   };
   roots.forEach(rollup);
+  addFitsAll(roots, modelCounts);
 
   // Drop what the catalogue cannot show. A branch counting zero is a filter
   // that opens an empty grid, and offering it is the dead end the pruned tree
@@ -122,9 +164,9 @@ async function getTree({ force = false } = {}) {
       .map((node) => ({ ...node, children: prune(node.children) }))
       .filter((node) => node.count > 0 || node.children.length > 0);
 
-  cache = { tree: prune(roots) };
-  cachedAt = Date.now();
-  return cache;
+  const value = { tree: prune(roots) };
+  treeCache.set(key, { at: Date.now(), value });
+  return value;
 }
 
 /**
@@ -141,16 +183,15 @@ async function getTree({ force = false } = {}) {
  * `productCount`, which is a total across every part type and would tell a
  * buyer looking at batteries that Samsung has 97 of them.
  */
-async function getTreeForPartType(partType) {
+async function getTreeForPartType(partType, category = 'parts') {
   const types = toPartTypes(partType);
-  if (types.length === 0) return getTree();
+  if (types.length === 0) return getTree({ category });
 
   // Sorted and joined, so ticking A then B and ticking B then A are one entry.
-  const key = types.join(',');
+  const key = keyOf(category, types.join(','));
 
-  if (prunedCache.has(key) && Date.now() - prunedAt < TTL_MS) {
-    return prunedCache.get(key);
-  }
+  const hit = prunedCache.get(key);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.value;
 
   // One pass over the matching products gives the exact count for every node in
   // the tree at once: a model's count is its own group, and the levels above it
@@ -160,7 +201,7 @@ async function getTreeForPartType(partType) {
   // component type would be offered brands and models whose products the grid
   // then hides, which is the dead end this pruning exists to prevent.
   const groups = await db().Product.aggregate([
-    { $match: { partType: { $in: types }, isActive: true, ...HAS_PICTURE } },
+    { $match: { partType: { $in: types }, isActive: true, ...HAS_PICTURE, ...categoryFilter(category) } },
     {
       $group: {
         _id: {
@@ -168,6 +209,8 @@ async function getTreeForPartType(partType) {
           brand: '$brandSlug',
           series: '$seriesSlug',
           model: '$modelSlug',
+          level5: '$level5Slug',
+          level6: '$level6Slug',
         },
         count: { $sum: 1 },
       },
@@ -180,45 +223,45 @@ async function getTreeForPartType(partType) {
   const live = new Set();
   const modelCounts = new Map();
   for (const group of groups) {
-    const { deviceType, brand, series, model } = group._id;
-    for (const slug of [deviceType, brand, series, model]) {
+    const { deviceType, brand, series, model, level5, level6 } = group._id;
+    for (const slug of [deviceType, brand, series, model, level5, level6]) {
       if (slug) live.add(slug);
     }
-    if (model) modelCounts.set(model, (modelCounts.get(model) ?? 0) + group.count);
+    // At the deepest level filed, as in getTree.
+    const leaf = level6 || level5 || model || series || brand || deviceType;
+    // Filed at no level at all: "Any" from the first, so it fits every entry.
+    modelCounts.set(leaf || ROOT, (modelCounts.get(leaf || ROOT) ?? 0) + group.count);
   }
 
-  const { tree: full } = await getTree();
+  const { tree: full } = await getTree({ category });
 
-  const prune = (nodes) =>
+  // `fits`: a product above this node was set to "Any" below it, so the node
+  // opens a grid that shows it even when nothing is filed here.
+  const prune = (nodes, fits = (modelCounts.get(ROOT) ?? 0) > 0) =>
     nodes
-      .filter((node) => live.has(node.slug))
+      .filter((node) => fits || live.has(node.slug))
       .map((node) => {
-        const children = prune(node.children ?? []);
+        const children = prune(node.children ?? [], fits || (modelCounts.get(node.slug) ?? 0) > 0);
         return {
           ...node,
           children,
-          count: children.length
-            ? children.reduce((sum, child) => sum + child.count, 0)
-            : (modelCounts.get(node.slug) ?? 0),
+          count: (modelCounts.get(node.slug) ?? 0) + children.reduce((sum, child) => sum + child.base, 0),
         };
       })
+      .map((node) => ({ ...node, base: node.count }))
       // A branch that kept no children and counts nothing is a node whose slug
       // matched but whose products all sit under a level we dropped.
-      .filter((node) => node.count > 0 || node.children.length > 0);
+      .filter((node) => node.count > 0 || node.children.length > 0 || fits);
 
-  const result = { tree: prune(full) };
-
-  if (Date.now() - prunedAt >= TTL_MS) {
-    prunedCache.clear();
-    prunedAt = Date.now();
-  }
-  prunedCache.set(key, result);
-
+  const pruned = prune(full);
+  addFitsAll(pruned, modelCounts);
+  const drop = (nodes) => nodes.filter((node) => node.count > 0).map(({ base, ...node }) => ({ ...node, children: drop(node.children) }));
+  const result = { tree: drop(pruned) };
+  prunedCache.set(key, { at: Date.now(), value: result });
   return result;
 }
 
-let componentCache = null;
-let componentsAt = 0;
+const componentCache = new Map();
 
 /**
  * Every component type in the catalogue, with its label and how many live
@@ -228,15 +271,17 @@ let componentsAt = 0;
  * taxonomy tree: a component type cuts across the tree (a battery exists for
  * phones, laptops and watches alike) and has no node of its own.
  */
-async function getComponentTypes() {
-  if (componentCache && Date.now() - componentsAt < TTL_MS) return componentCache;
+async function getComponentTypes(category = 'parts') {
+  const key = keyOf(category);
+  const hit = componentCache.get(key);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.value;
 
   // `HAS_PICTURE` so this counts what the grid will actually show. Counted
   // without it, a component type whose every product is pictureless would be
   // offered as step 1 of the wizard and lead straight to an empty grid - and
   // the counts beside the live types would overstate by the hidden rows.
   const rows = await db().Product.aggregate([
-    { $match: { isActive: true, ...HAS_PICTURE } },
+    { $match: { isActive: true, ...HAS_PICTURE, ...categoryFilter(category) } },
     {
       $group: {
         _id: '$partType',
@@ -247,23 +292,22 @@ async function getComponentTypes() {
     { $sort: { label: 1 } },
   ]);
 
-  componentCache = {
+  const value = {
     componentTypes: rows
       .filter((row) => row._id)
       .map((row) => ({ slug: row._id, name: row.label || row._id, count: row.count })),
   };
-  componentsAt = Date.now();
-  return componentCache;
+  componentCache.set(key, { at: Date.now(), value });
+  return value;
 }
 
 /** Call after any catalogue mutation so the next request rebuilds the tree. */
 function invalidateTree() {
-  cache = null;
-  cachedAt = 0;
+  treeCache.clear();
   prunedCache.clear();
-  prunedAt = 0;
-  componentCache = null;
-  componentsAt = 0;
+  componentCache.clear();
+  // The Phones and Services trees are built from the same collection.
+  invalidateCatalog();
 }
 
 export { getTree, getTreeForPartType, getComponentTypes, invalidateTree };

@@ -11,7 +11,7 @@ import { TREE_LEVELS } from '@/lib/constants';
 
 const LEVELS = TREE_LEVELS.map((l) => l.key); // deviceType, brand, series, model
 
-const emptyPath = () => ({ deviceType: null, brand: null, series: null, model: null });
+const emptyPath = () => Object.fromEntries(LEVELS.map((level) => [level, null]));
 
 const emptyFacets = () => ({
   partType: [],
@@ -19,6 +19,9 @@ const emptyFacets = () => ({
   inStockOnly: false,
   priceMin: null,
   priceMax: null,
+  // A product type's features as filters (2026-10-02): `{ colour: ['Black'] }`,
+  // carried in the URL as `a.colour=Black`.
+  attrs: {},
 });
 
 const initial = {
@@ -193,6 +196,18 @@ export const useFilterStore = create((set, get) => ({
     });
   },
 
+  /** Tick or untick one value of one feature. An emptied feature drops out. */
+  toggleAttribute(key, value) {
+    set((state) => {
+      const current = state.facets.attrs?.[key] ?? [];
+      const next = current.includes(value) ? current.filter((v) => v !== value) : [...current, value];
+      const attrs = { ...state.facets.attrs };
+      if (next.length) attrs[key] = next;
+      else delete attrs[key];
+      return { facets: { ...state.facets, attrs }, page: 1 };
+    });
+  },
+
   setFacet(key, value) {
     set((state) => ({ facets: { ...state.facets, [key]: value }, page: 1 }));
   },
@@ -248,6 +263,7 @@ export const useFilterStore = create((set, get) => ({
       facets.inStockOnly ||
       facets.priceMin !== null ||
       facets.priceMax !== null ||
+      Object.keys(facets.attrs ?? {}).length > 0 ||
       q.length > 0
     );
   },
@@ -260,6 +276,8 @@ export function toQueryParams(state) {
     brand: state.path.brand,
     series: state.path.series,
     model: state.path.model,
+    level5: state.path.level5 ?? null,
+    level6: state.path.level6 ?? null,
     partType: state.facets.partType,
     grade: state.facets.grade,
     inStockOnly: state.facets.inStockOnly || null,
@@ -268,6 +286,7 @@ export function toQueryParams(state) {
     q: state.q || null,
     sort: state.sort === 'relevance' ? null : state.sort,
     page: state.page > 1 ? state.page : null,
+    ...Object.fromEntries(Object.entries(state.facets.attrs ?? {}).map(([key, values]) => [`a.${key}`, values])),
   };
 }
 

@@ -1,5 +1,6 @@
 import { asyncHandler } from '../utils/ApiError.js';
 import * as taxonomyService from '../services/taxonomyService.js';
+import * as catalogService from '../services/catalogService.js';
 
 /**
  * The category tree, optionally pruned to the selected component types.
@@ -22,12 +23,32 @@ const tree = asyncHandler(async (req, res) => {
       ? raw.trim()
       : '';
 
+  /**
+   * `?category=` picks the catalogue category's tree (2026-10-01): Parts by
+   * default, so every existing caller is unchanged. Phones are products like
+   * any type since 2026-10-02 and take the product tree; Services count the services that apply
+   * to each device, and their first step is the repair type.
+   */
+  const slug = typeof req.query.category === 'string' && req.query.category.trim() ? req.query.category.trim() : 'parts';
+  const category = slug === 'parts' ? { slug, kind: 'part' } : await catalogService.getCategory(slug, { activeOnly: true });
+
+  if (category.kind === 'service') {
+    const [treePayload, componentTypes] = await Promise.all([
+      catalogService.serviceTree(partType ? partType.split(',') : []),
+      catalogService.serviceTypes(),
+    ]);
+    res.json({ ...treePayload, componentTypes });
+    return;
+  }
+
   // Component types ride along on every response: they are step 1 of the wizard
   // and never change with the path, so fetching them separately would be a
   // second round trip for a list the first response could have carried.
   const [treePayload, components] = await Promise.all([
-    partType ? taxonomyService.getTreeForPartType(partType) : taxonomyService.getTree(),
-    taxonomyService.getComponentTypes(),
+    partType
+      ? taxonomyService.getTreeForPartType(partType, category.slug)
+      : taxonomyService.getTree({ category: category.slug }),
+    taxonomyService.getComponentTypes(category.slug),
   ]);
 
   res.json({ ...treePayload, ...components });

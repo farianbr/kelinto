@@ -1,13 +1,32 @@
+import { useMemo } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { LEGACY_PATHS, SYSTEM_SLUGS } from '@shared/catalog';
 import { useShallow } from 'zustand/react/shallow';
 import api from '@/lib/api';
 import { useFilterStore, toQueryParams } from '@/store/filterStore';
+import { catalogFrom, useCatalogConfig } from '@/lib/catalogs';
+
+/**
+ * The tree request for the catalogue in context (`lib/catalogs.js`). Parts
+ * keeps its bare `/taxonomy` and its old query key, so every cached Parts
+ * tree and every invalidation of `['taxonomy']` behave as before.
+ */
+function taxonomyRequest(category, partType) {
+  const params = {
+    ...(category && category !== 'parts' ? { category } : {}),
+    ...(partType ? { partType } : {}),
+  };
+  return () => api.get('/taxonomy', Object.keys(params).length ? params : undefined);
+}
+
+const treeKey = (category) => (category && category !== 'parts' ? ['taxonomy', 'category', category] : ['taxonomy']);
 
 /** The full category tree. One request feeds sidebar, mega menu and wizard. */
 export function useTaxonomy() {
+  const { slug } = useCatalogConfig();
   return useQuery({
-    queryKey: ['taxonomy'],
-    queryFn: () => api.get('/taxonomy'),
+    queryKey: treeKey(slug),
+    queryFn: taxonomyRequest(slug),
     staleTime: 10 * 60 * 1000,
     select: (data) => data.tree,
   });
@@ -28,9 +47,10 @@ export function useTaxonomy() {
  * had nothing to filter on.
  */
 export function useComponentTypes() {
+  const { slug } = useCatalogConfig();
   return useQuery({
-    queryKey: ['taxonomy'],
-    queryFn: () => api.get('/taxonomy'),
+    queryKey: treeKey(slug),
+    queryFn: taxonomyRequest(slug),
     staleTime: 10 * 60 * 1000,
     select: (data) => data.componentTypes ?? [],
   });
@@ -49,9 +69,10 @@ export function useComponentTypes() {
  * and a flash of empty cards reads as a bug.
  */
 export function useWizardTaxonomy(partType) {
+  const { slug } = useCatalogConfig();
   return useQuery({
-    queryKey: ['taxonomy', partType ?? null],
-    queryFn: () => api.get('/taxonomy', partType ? { partType } : undefined),
+    queryKey: [...treeKey(slug), partType ?? null],
+    queryFn: taxonomyRequest(slug, partType),
     staleTime: 10 * 60 * 1000,
     placeholderData: (previous) => previous,
   });
@@ -81,6 +102,7 @@ export function usePartTypes() {
  * rather than as a flash of empty page.
  */
 export function useProducts() {
+  const catalog = useCatalogConfig();
   // useShallow is required: zustand v5 compares with Object.is, so returning a
   // fresh object from the selector without it re-renders on every store touch.
   const state = useFilterStore(
@@ -93,11 +115,16 @@ export function useProducts() {
     })),
   );
 
-  const params = toQueryParams(state);
+  // Another part-kind category asks `/products` for its own; phones and
+  // services ask their own endpoints the same question.
+  const params = {
+    ...toQueryParams(state),
+    ...(catalog.kind === 'part' && catalog.slug !== 'parts' ? { category: catalog.slug } : {}),
+  };
 
   return useQuery({
-    queryKey: ['products', params],
-    queryFn: ({ signal }) => api.get('/products', params, { signal }),
+    queryKey: catalog.slug === 'parts' ? ['products', params] : ['catalog', catalog.slug, params],
+    queryFn: ({ signal }) => api.get(catalog.endpoint, params, { signal }),
     placeholderData: keepPreviousData,
     staleTime: 30 * 1000,
   });
@@ -136,5 +163,74 @@ export function useClearance({ page = 1, sort = 'newest' } = {}) {
     queryFn: ({ signal }) => api.get('/products/clearance', { page, sort }, { signal }),
     placeholderData: keepPreviousData,
     staleTime: 60 * 1000,
+  });
+}
+
+/**
+ * A catalogue category as its shop page is configured (`lib/catalogs.js`).
+ *
+ * The three system pages render at once from the built-in definition and pick
+ * up the business's own names (a renamed "Repair Type", say) when the record
+ * lands; a category a business added has no built-in definition, so its page
+ * waits for the record and `isError` covers a slug that does not exist.
+ */
+export function useCatalogCategory(slug) {
+  const query = useQuery({
+    queryKey: ['catalog-category', slug],
+    queryFn: () => api.get(`/catalog/categories/${slug}`),
+    enabled: Boolean(slug),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+  const catalog = useMemo(
+    // A type switched off answers 404 and has no page, Parts, Phones and
+    // Services included (2026-10-02); while the answer is on its way, theirs
+    // is drawn from the defaults so the page does not flash.
+    () =>
+      query.data?.category
+        ? catalogFrom(query.data.category)
+        : !query.isError && SYSTEM_SLUGS.includes(slug)
+          ? catalogFrom({ slug })
+          : null,
+    [query.data, query.isError, slug],
+  );
+  return { catalog, isLoading: query.isLoading, isError: query.isError, error: query.error };
+}
+
+/** The website's active categories, for the Shop menu. */
+export function useCatalogCategories() {
+  return useQuery({
+    queryKey: ['catalog-categories'],
+    queryFn: () => api.get('/catalog/categories'),
+    staleTime: 5 * 60 * 1000,
+    select: (data) => data.categories ?? [],
+  });
+}
+
+/**
+ * A link written against a type's old address (`/shop`, `/pre-owned`,
+ * `/services`), turned into its page under `/catalogue` (2026-10-03), so a
+ * menu points at the live address and can tell when it is the page open.
+ * Anything else, or an old address before the types have loaded, is returned
+ * as it is (the old addresses redirect).
+ */
+export function useCatalogueLink() {
+  const { data: categories = [] } = useCatalogCategories();
+  return (to) => {
+    const [path, query = ''] = String(to ?? '').split('?');
+    const slug = Object.entries(LEGACY_PATHS).find(([, legacy]) => legacy === path)?.[0];
+    const category = slug ? categories.find((entry) => entry.slug === slug) : null;
+    return category ? `${category.path}${query ? `?${query}` : ''}` : to;
+  };
+}
+
+/** One service's page on the website (`/services/:slug`, 2026-10-02). */
+export function useServiceDetail(slug) {
+  return useQuery({
+    queryKey: ['service', slug],
+    queryFn: () => api.get(`/services/${slug}`),
+    enabled: Boolean(slug),
+    staleTime: 60 * 1000,
+    retry: false,
   });
 }

@@ -97,6 +97,35 @@ const removePreowned = asyncHandler(async (req, res) => {
   await respond(res, cart, req.user);
 });
 
+// ---- a membership plan (2026-10-02) -------------------------------------------
+
+const setMembership = asyncHandler(async (req, res) => {
+  const cart = await cartService.setMembership(req.user._id, req.body.tier);
+  await respond(res, cart, req.user, 201);
+});
+
+const removeMembership = asyncHandler(async (req, res) => {
+  const cart = await cartService.removeMembership(req.user._id);
+  await respond(res, cart, req.user);
+});
+
+// ---- repair services (2026-10-01) -------------------------------------------
+
+const addService = asyncHandler(async (req, res) => {
+  const cart = await cartService.addService(req.user._id, req.body.service, req.body.qty);
+  await respond(res, cart, req.user, 201);
+});
+
+const setServiceQty = asyncHandler(async (req, res) => {
+  const cart = await cartService.setServiceQty(req.user._id, req.params.serviceId, req.body.qty);
+  await respond(res, cart, req.user);
+});
+
+const removeService = asyncHandler(async (req, res) => {
+  const cart = await cartService.removeService(req.user._id, req.params.serviceId);
+  await respond(res, cart, req.user);
+});
+
 // ---- promo code -------------------------------------------------------------
 
 const applyPromo = asyncHandler(async (req, res) => {
@@ -109,4 +138,4 @@ const clearPromo = asyncHandler(async (req, res) => {
   await respond(res, cart, req.user);
 });
 
-export { get, addItem, setQty, removeItem, merge, save, clear, listSaved, restoreSaved, deleteSaved, bulkAdd, addBundle, setBundleQty, removeBundle, addPreowned, removePreowned, applyPromo, clearPromo };
+export { setMembership, removeMembership, get, addItem, setQty, removeItem, merge, save, clear, listSaved, restoreSaved, deleteSaved, bulkAdd, addBundle, setBundleQty, removeBundle, addPreowned, removePreowned, addService, setServiceQty, removeService, applyPromo, clearPromo };

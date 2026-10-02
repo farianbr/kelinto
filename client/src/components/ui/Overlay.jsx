@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion } from '@/lib/motionReact';
 import useFocusTrap from '@/hooks/useFocusTrap';
 import useLockBodyScroll from '@/hooks/useLockBodyScroll';
 import cn from '@/lib/cn';

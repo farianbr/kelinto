@@ -256,6 +256,7 @@ function KioskFlow() {
       remaining={idle.remaining}
       onStay={idle.stillHere}
       onLeave={goHome}
+      speak={speak}
     />
   );
 

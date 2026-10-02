@@ -11,6 +11,7 @@ import { backfillCompetitors } from './backfill-competitors.js';
 import { backfillLoginDirectory } from '../services/loginDirectory.js';
 import { backfillSupplierLogins } from '../services/supplierPortalService.js';
 import { backfillKelintoNaming } from './backfill-kelinto-naming.js';
+import { backfillPhonesToProducts } from './backfill-phones-to-products.js';
 
 /**
  * One door onto the seven one-off migrations.
@@ -88,6 +89,11 @@ const TASKS = [
     name: 'kelinto-naming',
     run: backfillKelintoNaming,
     summary: 'Move Kelinto’s brand files from platform/ to kelinto/ in R2, and rename the "Platform" super admin and plan.',
+  },
+  {
+    name: 'phones-to-products',
+    run: backfillPhonesToProducts,
+    summary: 'Move every unsold pre-owned phone onto a product with stock in the Phones type.',
   },
 ];
 

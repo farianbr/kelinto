@@ -10,6 +10,8 @@ import Skeleton from '@/components/ui/Skeleton';
 import CartLine from '@/components/cart/CartLine';
 import CartBundleLine from '@/components/cart/CartBundleLine';
 import CartPreownedLine from '@/components/cart/CartPreownedLine';
+import CartServiceLine from '@/components/cart/CartServiceLine';
+import CartMembershipLine from '@/components/cart/CartMembershipLine';
 import PromoCodeField from '@/components/cart/PromoCodeField';
 import { useCart } from '@/hooks/useCart';
 import { useAuth } from '@/hooks/useAuth';
@@ -22,6 +24,8 @@ export function CartPage() {
     items,
     bundles,
     preowned,
+    services,
+    membership,
     count,
     subtotal,
     payable,
@@ -38,6 +42,9 @@ export function CartPage() {
     setBundleQty,
     removeBundle,
     removePreowned,
+    setServiceQty,
+    removeService,
+    removeMembership,
     saveForLater,
     isSaving,
   } = useCart();
@@ -78,7 +85,7 @@ export function CartPage() {
     );
   }
 
-  if (items.length === 0 && bundles.length === 0 && preowned.length === 0) {
+  if (items.length === 0 && bundles.length === 0 && preowned.length === 0 && services.length === 0 && membership.length === 0) {
     return (
       <div className="mx-auto flex max-w-xl flex-col items-center px-4 py-20 text-center">
         <span className="mb-5 flex size-16 items-center justify-center rounded-full bg-surface-3 text-ink-300">
@@ -124,6 +131,9 @@ export function CartPage() {
             {/* Bundles first: they are the one thing in here that is priced as a
                 unit, and burying them under loose lines hides why the total is
                 lower than the parts add up to. */}
+            {membership.map((line) => (
+              <CartMembershipLine key={line.tier} line={line} onRemove={removeMembership} />
+            ))}
             {bundles.map((bundle) => (
               <CartBundleLine
                 key={bundle.offerId}
@@ -134,6 +144,14 @@ export function CartPage() {
             ))}
             {preowned.map((line) => (
               <CartPreownedLine key={line.deviceId} line={line} onRemove={removePreowned} />
+            ))}
+            {services.map((line) => (
+              <CartServiceLine
+                key={line.serviceId}
+                line={line}
+                onQtyChange={setServiceQty}
+                onRemove={removeService}
+              />
             ))}
             {items.map((item) => (
               <CartLine key={item.productId} item={item} onQtyChange={setQty} onRemove={removeItem} />

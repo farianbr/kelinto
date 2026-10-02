@@ -1,5 +1,5 @@
 import cn from '@/lib/cn';
-import { GRADES } from '@/lib/constants';
+import { gradeMeta } from '@/lib/constants';
 
 /**
  * The circular grade overlay that sits on the product image (brief §6, "PULL A").
@@ -18,8 +18,9 @@ import { GRADES } from '@/lib/constants';
  *  3. The circle grows with the CARD (@container), not the viewport - 40px on a
  *     two-up phone card, 44px once there is room for it.
  */
-export function GradeBadge({ grade, className }) {
-  const meta = GRADES[grade] ?? { short: grade, tone: 'neutral' };
+export function GradeBadge({ grade, grades = [], className }) {
+  if (!grade) return null;
+  const meta = gradeMeta(grade, grades);
 
   /**
    * A pale tint with dark ink, not a saturated fill with white text.
@@ -60,6 +61,26 @@ export function GradeBadge({ grade, className }) {
     return index === 0
       ? 'text-2xs leading-[1.25] @min-[260px]:text-2xs'
       : 'text-sm leading-[1] @min-[260px]:text-md';
+  }
+
+  /**
+   * A grade another type defines (Phones' Excellent, Good, Fair; grades per
+   * type, 2026-10-02) is a word, not a code, and a word cut to fit a circle
+   * ("EXCE") reads as a typo. It gets the same tint and ring as a pill that
+   * holds the whole name.
+   */
+  if (meta.pill) {
+    return (
+      <span
+        className={cn(
+          'inline-flex h-7 items-center rounded-full px-2.5 font-display text-2xs font-bold uppercase tracking-[0.04em] ring-2 ring-surface @min-[260px]:text-xs',
+          tones[meta.tone],
+          className,
+        )}
+      >
+        {meta.label}
+      </span>
+    );
   }
 
   return (

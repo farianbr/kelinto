@@ -23,6 +23,7 @@
     "seed:tickets": "node src/seed/tickets.js",
     "seed:bids": "node src/seed/purchase-bids.js",
     "seed:storefront": "node src/seed/storefront-pages.js",
+    "seed:phones": "node src/seed/phones.js",
     "seed:website": "node src/seed/website-sections.js",
     "drop:pictureless": "node src/seed/drop-pictureless.js",
     "seed:agreements": "node src/seed/agreements.js",

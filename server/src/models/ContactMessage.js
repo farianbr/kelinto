@@ -17,7 +17,8 @@ const contactMessageSchema = new mongoose.Schema(
     topic: {
       type: String,
       // `quote` (2026-09-30): the "Get a quote" button on every website page.
-      enum: ['quote', 'account', 'order', 'stock', 'warranty', 'other'],
+      // `membership` (2026-10-01): "Subscribe" on the Membership page.
+      enum: ['quote', 'account', 'order', 'stock', 'warranty', 'membership', 'other'],
       default: 'other',
       index: true,
     },

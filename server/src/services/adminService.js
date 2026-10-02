@@ -17,7 +17,7 @@ import '../models/Settings.js';
 import ApiError from '../utils/ApiError.js';
 import env from '../config/env.js';
 import { currentContext } from '../db/context.js';
-import storage from './storageService.js';
+import storage, { urlOf } from './storageService.js';
 import creditService from './creditService.js';
 import storeCredit from './storeCreditService.js';
 import referralService from './referralService.js';
@@ -39,6 +39,8 @@ import { sendingBusiness } from './sendingBusiness.js';
 import { lowStockThreshold } from './lowStockService.js';
 import { costRepairParts, commitRepairParts, adjustRepairParts, returnRepairParts, partsDemand } from './repairPartsService.js';
 import { invalidateTree } from './taxonomyService.js';
+import { addLine, categoryAttributes, categoryFilter, getCategory } from './catalogService.js';
+import { TREE_LEVEL_KEYS, levelKeysOf } from '../../../shared/catalog.js';
 import {
   ORDER_STATUS_FLOW,
   ORDER_OPEN_STATUSES,
@@ -1311,6 +1313,7 @@ function shapeProduct(product) {
     description: product.description,
     partType: product.partType,
     partTypeLabel: product.partTypeLabel,
+    category: product.category || 'parts',
     grade: product.grade,
     price: product.price,
     compareAtPrice: product.compareAtPrice ?? null,
@@ -1323,11 +1326,16 @@ function shapeProduct(product) {
     seriesName: product.seriesName,
     modelSlug: product.modelSlug,
     modelName: product.modelName,
+    level5Slug: product.level5Slug ?? '',
+    level5Name: product.level5Name ?? '',
+    level6Slug: product.level6Slug ?? '',
+    level6Name: product.level6Name ?? '',
     isActive: product.isActive,
     image: urlOf(product.image) ?? '',
     images: (product.images ?? []).map(urlOf),
     video: urlOf(product.video) ?? '',
     videoPoster: urlOf(product.videoPoster) ?? '',
+    attributes: product.attributes instanceof Map ? Object.fromEntries(product.attributes) : (product.attributes ?? {}),
     updatedAt: product.updatedAt,
   };
 }
@@ -1357,7 +1365,7 @@ function mediaOf(product) {
  * a screen asking for the whole catalogue by accident, and an export asking on
  * purpose should have to say so.
  */
-async function listProducts({ q, stock, page = 1, limit = 40, all = false } = {}) {
+async function listProducts({ q, stock, category, page = 1, limit = 40, all = false } = {}) {
   // The same fallback the dashboard badge counts by, so clicking that badge
   // still lands on exactly the rows it was counting.
   const lowStockFallback = await lowStockThreshold();
@@ -1379,6 +1387,12 @@ async function listProducts({ q, stock, page = 1, limit = 40, all = false } = {}
     query.stock = { $lt: lowStockFallback };
   }
   else if (stock === 'inactive') query.isActive = false;
+
+  // One product type at a time (2026-10-02), so the list can show that type's
+  // features as columns. Blank is every type.
+  if (typeof category === 'string' && category && category !== 'all') {
+    Object.assign(query, categoryFilter(category));
+  }
 
   const pageNumber = all ? 1 : Math.max(1, Number(page) || 1);
   const pageSize = all ? 0 : Math.min(100, Number(limit) || 40);
@@ -1410,8 +1424,12 @@ function slugify(value) {
 
 /** Denormalised taxonomy names have to be looked up, not trusted from the client. */
 async function resolveTaxonomyNames(data) {
-  const slugs = [data.deviceTypeSlug, data.brandSlug, data.seriesSlug, data.modelSlug].filter(Boolean);
-  const nodes = await db().Taxonomy.find({ slug: { $in: slugs } }).lean();
+  const slugs = TREE_LEVEL_KEYS.map((key) => data[`${key}Slug`]).filter(Boolean);
+  // From the product's own category's tree, so a slug from another tree
+  // resolves to nothing rather than to a name that is not its own.
+  const nodes = await db()
+    .Taxonomy.find({ slug: { $in: slugs }, ...categoryFilter(data.category) })
+    .lean();
   const bySlug = new Map(nodes.map((node) => [node.slug, node]));
 
   return {
@@ -1419,6 +1437,8 @@ async function resolveTaxonomyNames(data) {
     brandName: bySlug.get(data.brandSlug)?.name,
     seriesName: bySlug.get(data.seriesSlug)?.name,
     modelName: bySlug.get(data.modelSlug)?.name,
+    level5Name: bySlug.get(data.level5Slug)?.name,
+    level6Name: bySlug.get(data.level6Slug)?.name,
   };
 }
 
@@ -1431,7 +1451,129 @@ function mediaAsKeys(data) {
   return data;
 }
 
+/**
+ * The product's category (2026-10-01): a part-kind one, checked. Parts is
+ * stored as nothing, like every product before categories existed, so the
+ * Parts filters keep matching it.
+ */
+async function productCategory(data) {
+  const slug = data.category || 'parts';
+  const category = await getCategory(slug);
+  if (slug !== 'parts' && category.kind !== 'part') {
+    throw ApiError.badRequest(`${category.name} is not sold as products.`, 'CATEGORY_KIND');
+  }
+
+  /**
+   * Filed with the type's own category levels (2026-10-02). The deepest entry
+   * picked is read back from the tree and the levels above it come from its
+   * path, so a product can never claim a model under the wrong brand. A level
+   * the type marks required must be on that path; an optional one may be
+   * skipped (a model hanging off its brand). Levels the type does not keep
+   * are cleared, so a product cannot hide below the last step a buyer reaches.
+   */
+  const keys = levelKeysOf(category);
+  const deepestKey = keys.slice().reverse().find((key) => String(data[`${key}Slug`] ?? '').trim());
+  const node = deepestKey
+    ? await db()
+        .Taxonomy.findOne({ slug: data[`${deepestKey}Slug`], kind: deepestKey, ...categoryFilter(slug) })
+        .lean()
+    : null;
+  if (deepestKey && !node) {
+    throw ApiError.badRequest('Pick the levels from the category tree.', 'FITMENT_UNKNOWN');
+  }
+  for (const key of TREE_LEVEL_KEYS) data[`${key}Slug`] = keys.includes(key) ? (node?.path?.[key] ?? undefined) : undefined;
+
+  /**
+   * "Any" (2026-10-03): the product fits everything from this level down, so
+   * it is filed no deeper and shows under every option there in the website's
+   * filters (`productService.levelClause`). Only chosen in so many words, so a
+   * required level left blank by accident is still refused.
+   */
+  const anyAt = keys.includes(data.anyFrom) ? keys.indexOf(data.anyFrom) : -1;
+  delete data.anyFrom;
+  if (anyAt >= 0 && keys.slice(anyAt).some((key) => data[`${key}Slug`])) {
+    throw ApiError.badRequest('A level set to Any has nothing picked below it.', 'FITMENT_ANY');
+  }
+  for (const level of category.levels ?? []) {
+    if (anyAt >= 0 && keys.indexOf(level.key) >= anyAt) continue;
+    if (level.required !== false && !data[`${level.key}Slug`]) {
+      throw ApiError.badRequest(`Select a ${level.label.toLowerCase()}.`, 'FITMENT_REQUIRED');
+    }
+  }
+
+  /**
+   * The first level is picked from the type's own entries, like every level
+   * below it. The label is the entry's, never the form's, so a renamed entry
+   * renames one place. A type with no first level (or a product that skips an
+   * optional one) is filed under the type's own name.
+   */
+  const option = category.facetLabel ? (category.facetOptions ?? []).find((entry) => entry.value === data.partType) : null;
+  if (option) {
+    data.partTypeLabel = option.label;
+  } else if (category.facetLabel && (category.facetRequired !== false || data.partType)) {
+    throw ApiError.badRequest(`Pick a ${category.facetLabel.toLowerCase()} from its list.`, 'FACET_REQUIRED');
+  } else {
+    data.partType = category.slug;
+    data.partTypeLabel = category.name;
+  }
+
+  // One of the type's own grades (grades per type, 2026-10-02); none when the
+  // type has none, so its products carry no badge.
+  if (!(category.grades ?? []).length) data.grade = '';
+  else if (!category.grades.some((grade) => grade.value === data.grade)) {
+    throw ApiError.badRequest(`Pick one of ${category.name}'s grades.`, 'GRADE_UNKNOWN');
+  }
+
+  data.category = slug === 'parts' ? undefined : slug;
+  // Where its row in the category tree is marked, once it is saved.
+  data.lineAt = option && node ? node.slug : null;
+  return data;
+}
+
+/** Mark the category-tree row a product was just filed under. */
+async function markLine(product, lineAt) {
+  if (lineAt) await addLine(product.category || 'parts', lineAt, product.partType);
+}
+
+/**
+ * A product's answers to its category's features, checked against the
+ * definitions (2026-10-02): unknown keys dropped, a list answer one of its
+ * choices, a number a number, yes or no for a yes-or-no, blanks left out, and
+ * a required feature refused by name when it is missing. `undefined` leaves
+ * a product's stored answers alone (a form that did not send them).
+ */
+async function productAttributes(data) {
+  if (data.attributes === undefined) return;
+  const defs = await categoryAttributes(data.category || 'parts');
+  const answers = {};
+  for (const def of defs) {
+    const raw = String(data.attributes?.[def.key] ?? '').trim();
+    if (!raw) {
+      if (def.required) throw ApiError.badRequest(`Enter the ${def.label.toLowerCase()}.`, 'ATTRIBUTE_REQUIRED');
+      continue;
+    }
+    if (def.type === 'select' && !def.options.includes(raw)) {
+      throw ApiError.badRequest(`Pick a ${def.label.toLowerCase()} from its list.`, 'ATTRIBUTE_INVALID');
+    }
+    if (def.type === 'number' && !Number.isFinite(Number(raw))) {
+      throw ApiError.badRequest(`${def.label} must be a number.`, 'ATTRIBUTE_INVALID');
+    }
+    if (def.type === 'boolean' && !['yes', 'no'].includes(raw)) {
+      throw ApiError.badRequest(`${def.label} is yes or no.`, 'ATTRIBUTE_INVALID');
+    }
+    answers[def.key] = raw;
+  }
+  data.attributes = answers;
+}
+
 async function createProduct(data) {
+  await productCategory(data);
+  const { lineAt } = data;
+  delete data.lineAt;
+  // A new product is checked even when no answers came: a required feature
+  // must be refused, not skipped.
+  data.attributes = data.attributes ?? {};
+  await productAttributes(data);
   assertOwnMedia(data);
   mediaAsKeys(data);
   const existing = await db().Product.findOne({ sku: data.sku.toUpperCase() });
@@ -1442,14 +1584,18 @@ async function createProduct(data) {
     ...data,
     ...names,
     sku: data.sku.toUpperCase(),
-    slug: slugify(`${data.modelSlug}-${data.partType}-${data.grade}-${Date.now().toString(36)}`),
-    searchTerms: [data.name, names.modelName, names.brandName, data.partTypeLabel, data.grade].filter(
+    // The deepest level filed: the model on Parts, the brand on a two-level type.
+    slug: slugify(
+      `${data.level6Slug || data.level5Slug || data.modelSlug || data.seriesSlug || data.brandSlug || data.deviceTypeSlug}-${data.partType}-${data.grade}-${Date.now().toString(36)}`,
+    ),
+    searchTerms: [data.name, names.modelName, names.level5Name, names.level6Name, names.brandName, data.partTypeLabel, data.grade].filter(
       Boolean,
     ),
   });
 
   // Its uploads are saved now, so the sweeper must leave them alone.
   await storage.claim(mediaOf(product), currentContext()?.code);
+  await markLine(product, lineAt);
   invalidateTree();
   return shapeProduct(product.toObject());
 }
@@ -1460,6 +1606,13 @@ async function updateProduct(id, data) {
 
   const duplicate = await db().Product.findOne({ sku: data.sku.toUpperCase(), _id: { $ne: id } });
   if (duplicate) throw ApiError.conflict('That SKU already exists.', 'DUPLICATE_SKU');
+
+  if (data.category !== undefined) await productCategory(data);
+  else data.category = product.category;
+  const { lineAt } = data;
+  delete data.lineAt;
+  await productAttributes(data);
+  if (data.attributes === undefined) delete data.attributes;
 
   assertOwnMedia(data);
   // Absent media fields mean "not edited", never "cleared": a form that did not
@@ -1474,6 +1627,7 @@ async function updateProduct(id, data) {
 
   await product.save();
   await storage.releaseReplaced(before, mediaOf(product), currentContext()?.code);
+  await markLine(product, lineAt);
   invalidateTree();
   return shapeProduct(product.toObject());
 }

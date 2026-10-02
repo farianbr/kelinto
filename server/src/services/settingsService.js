@@ -14,7 +14,7 @@ import { migrateColorToken } from '../../../shared/businessPalette.js';
 import { BUSINESS_INFO } from '../../../shared/business.js';
 import { COUNTRIES } from '../../../shared/countries.js';
 import { kioskClocks } from '../../../shared/kiosk.js';
-import { MEMBERSHIP_TIERS } from '../../../shared/schemas/admin.js';
+import { DEFAULT_MEMBERSHIP, PLAN_TIERS } from '../../../shared/schemas/membership.js';
 import '../models/Settings.js';
 import ApiError from '../utils/ApiError.js';
 
@@ -288,6 +288,8 @@ async function get() {
     // that changes nothing is worse than a missing one, because somebody will
     // switch it on and believe the emails are going out.
     communicationsWired: COMMUNICATIONS_WIRED,
+    // The plans and their benefit matrix, as the ERP screen edits them.
+    membership: membershipOf(doc),
     /**
      * Defaulted field by field, for the reason the financial block above gives:
      * a schema `default` only fires when a document is created, and every
@@ -760,28 +762,125 @@ async function updateKiosk(input) {
 }
 
 /**
- * The website's Membership page (2026-09-30).
+ * The stored plans and matrix, or the client's defaults when the screen was
+ * never saved. Read whole: the matrix is written whole, so there is no partial
+ * state to default field by field.
+ */
+function membershipOf(doc) {
+  const stored = doc?.membership;
+  if (!Array.isArray(stored?.plans) || stored.plans.length === 0) return structuredClone(DEFAULT_MEMBERSHIP);
+  return { plans: stored.plans, sections: Array.isArray(stored.sections) ? stored.sections : [] };
+}
+
+/**
+ * Save the plans and the matrix (ERP › Settings › Membership plans).
  *
- * Built from what the ERP already holds about membership and nothing else:
- * the four tiers (`User.tier`, set by staff on a customer) and the warranty
- * each carries, from Sale Settings' base days plus the tier's bonus. A tier
- * does not touch price (see `User.tier`), so the page promises no discount.
+ * The plan's warranty bonus is written into `financial.warrantyBonusByTier`,
+ * the field Sale Settings edits, merged rather than replaced so Standard's
+ * entry is never lost. One field, two doors: the warranty a repair carries and
+ * the one the plan promises cannot drift apart.
+ */
+async function updateMembership(input) {
+  const plans = input.plans.map((plan) => ({
+    tier: plan.tier,
+    name: plan.name,
+    priceCents: Math.round(plan.priceDollars * 100),
+    interval: plan.interval,
+    tagline: plan.tagline ?? '',
+    isFeatured: Boolean(plan.isFeatured),
+    isActive: plan.isActive !== false,
+  }));
+  // Plans in tier order, whatever order the form sent them in, so the website
+  // always reads Silver, Gold, Platinum left to right.
+  plans.sort((a, b) => PLAN_TIERS.indexOf(a.tier) - PLAN_TIERS.indexOf(b.tier));
+
+  const sections = input.sections.map((section) => ({
+    title: section.title,
+    rows: section.rows.map((row) => ({
+      label: row.label,
+      highlight: Boolean(row.highlight),
+      source: row.source || '',
+      // A warranty row carries no cells: they are computed on every read.
+      cells: row.source === 'warranty' ? {} : row.cells,
+    })),
+  }));
+
+  const set = { 'membership.plans': plans, 'membership.sections': sections };
+
+  if (input.warrantyBonusByTier) {
+    const { financial } = await get();
+    set['financial.warrantyBonusByTier'] = { ...financial.warrantyBonusByTier, ...input.warrantyBonusByTier };
+  }
+
+  return patch(set);
+}
+
+/**
+ * One plan on sale, for the cart and checkout (2026-10-02).
+ *
+ * "Subscribe" used to file a request in Web Quotes for staff to take payment
+ * by hand. It is bought through checkout now, so the cart needs the live plan:
+ * its name, price, billing interval and the warranty it carries. Null when the
+ * tier is not on sale, which the cart shows as unavailable rather than
+ * charging for it.
+ */
+async function membershipPlan(tier) {
+  const { plans } = await publicMembership();
+  return plans.find((plan) => plan.tier === tier) ?? null;
+}
+
+/**
+ * Plans and the warranty base, for the ERP editor (Purchase › Membership
+ * Plans). Its own read rather than `get()`: the editor moved out of Settings
+ * on 2026-10-02, and a role with Purchase access but no Settings access must
+ * still be able to open it.
+ */
+async function membershipForAdmin() {
+  const settings = await get();
+  return {
+    membership: settings.membership,
+    warrantyBaseDays: settings.financial?.warrantyBaseDays ?? 90,
+    warrantyBonusByTier: settings.financial?.warrantyBonusByTier ?? {},
+  };
+}
+
+/**
+ * The website's Membership page.
+ *
+ * The active plans, the matrix with each warranty row filled from Sale
+ * Settings (base days plus the tier's bonus), and nothing about Standard,
+ * which every account starts on and nobody buys. Prices are public: a plan
+ * is sold to the public, unlike a wholesale part.
  */
 async function publicMembership() {
-  const { financial } = await get();
-  const base = financial.warrantyBaseDays ?? 90;
+  const settings = await get();
+  const { plans, sections } = membershipOf(await db().Settings.load());
+  const base = settings.financial.warrantyBaseDays ?? 90;
+  const warrantyDays = (tier) => base + (Number(settings.financial.warrantyBonusByTier?.[tier] ?? 0) || 0);
+
+  const live = plans.filter((plan) => plan.isActive !== false);
+  const tiers = new Set(live.map((plan) => plan.tier));
 
   return {
     warrantyBaseDays: base,
-    tiers: MEMBERSHIP_TIERS.map((tier) => {
-      const bonus = Number(financial.warrantyBonusByTier?.[tier.value] ?? 0) || 0;
-      return {
-        value: tier.value,
-        label: tier.label,
-        warrantyBonusDays: bonus,
-        warrantyDays: base + bonus,
-      };
-    }),
+    plans: live.map((plan) => ({ ...plan, warrantyDays: warrantyDays(plan.tier) })),
+    sections: sections
+      .map((section) => ({
+        title: section.title,
+        rows: section.rows.map((row) => ({
+          label: row.label,
+          highlight: Boolean(row.highlight),
+          cells: Object.fromEntries(
+            [...tiers].map((tier) => [
+              tier,
+              row.source === 'warranty'
+                ? { kind: 'text', text: `${warrantyDays(tier)} days` }
+                : (row.cells?.[tier] ?? { kind: 'no', text: '' }),
+            ]),
+          ),
+        })),
+      }))
+      .filter((section) => section.rows.length > 0),
   };
 }
 
@@ -789,6 +888,9 @@ export default {
   get,
   publicProfile,
   publicMembership,
+  updateMembership,
+  membershipPlan,
+  membershipForAdmin,
   updateKiosk,
   updateBusiness,
   updateSale,
@@ -805,6 +907,9 @@ export {
   get,
   publicProfile,
   publicMembership,
+  updateMembership,
+  membershipPlan,
+  membershipForAdmin,
   updateKiosk,
   updateBusiness,
   updateSale,

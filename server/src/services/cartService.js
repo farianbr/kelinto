@@ -6,7 +6,9 @@ import ApiError from '../utils/ApiError.js';
 import { canSeePricing } from '../middleware/auth.js';
 import '../models/Offer.js';
 import { offerStatus } from './offerService.js';
-import { OfferRejection, expandPreowned, priceCart, resolveCode } from './pricingService.js';
+import { OfferRejection, expandMembership, expandPreowned, expandServices, priceCart, resolveCode } from './pricingService.js';
+import { membershipPlan } from './settingsService.js';
+import '../models/Service.js';
 import '../models/PreownedDevice.js';
 import { formatDate } from '../../../shared/dates.js';
 
@@ -69,14 +71,29 @@ async function serialize(cart, user) {
     priceVisible: true,
   }));
 
+  const services = priced.services.map(({ unitCost, service, ...line }) => ({
+    ...line,
+    serviceId: String(service),
+    priceVisible: true,
+  }));
+
+  const membership = priced.membership.map((line) => ({ ...line, priceVisible: true }));
+
   return {
     id: cart._id.toString(),
     items,
     bundles: priced.bundles,
     preowned,
+    services,
+    membership,
     // The badge counts parts, so a bundle contributes the parts inside it
     // "3 items" that turns into six things in a box is a bad surprise.
-    count: items.reduce((sum, item) => sum + item.qty, 0) + bundleUnits + preowned.length,
+    count:
+      items.reduce((sum, item) => sum + item.qty, 0) +
+      bundleUnits +
+      preowned.length +
+      services.reduce((sum, line) => sum + line.qty, 0) +
+      membership.length,
     subtotal: priced.subtotal,
     bundleDiscount: priced.bundleDiscount,
     promoDiscount: priced.promoDiscount,
@@ -148,12 +165,32 @@ async function serializeUnpriced(cart) {
     }),
   );
 
+  // A service, without its price: the same gate again.
+  const services = (await expandServices(cart)).map(
+    ({ unitCost, service, unitPrice, lineTotal, priceAtAdd, priceChanged, ...line }) => ({
+      ...line,
+      serviceId: String(service),
+      priceVisible: false,
+    }),
+  );
+
+  // A plan, without its price, under the same gate as every other line.
+  const membership = (await expandMembership(cart)).map(
+    ({ unitPrice, lineTotal, priceAtAdd, priceChanged, ...line }) => ({ ...line, priceVisible: false }),
+  );
+
   return {
     id: cart._id.toString(),
     items,
     bundles: [],
     preowned,
-    count: items.reduce((sum, item) => sum + item.qty, 0) + preowned.length,
+    services,
+    membership,
+    count:
+      items.reduce((sum, item) => sum + item.qty, 0) +
+      preowned.length +
+      services.reduce((sum, line) => sum + line.qty, 0) +
+      membership.length,
     subtotal: null,
     bundleDiscount: null,
     promoDiscount: null,
@@ -221,6 +258,8 @@ async function clearCart(userId) {
   cart.items = [];
   cart.bundles = [];
   cart.preowned = [];
+  cart.services = [];
+  cart.membership = undefined;
   // A code attached to a cart that no longer exists would silently re-apply to
   // whatever is added next.
   cart.promoCode = '';
@@ -453,6 +492,75 @@ async function removePreowned(userId, deviceId) {
   return cart;
 }
 
+/**
+ * Put a repair service in the cart, or set how many (2026-10-01).
+ *
+ * Only an active service with a price: one "quoted on inspection" cannot be
+ * bought before somebody has looked at the device, so it answers the same as
+ * one that does not exist and the website offers a quote instead.
+ */
+async function addService(userId, serviceId, qty = 1) {
+  const service = /^[0-9a-f]{24}$/i.test(String(serviceId ?? ''))
+    ? await db().Service.findOne({ _id: serviceId, isActive: true }).lean()
+    : null;
+  if (!service || !(service.priceCents > 0)) {
+    throw ApiError.notFound('That service cannot be booked online. Ask us for a quote.', 'SERVICE_UNAVAILABLE');
+  }
+
+  const cart = await getOrCreateCart(userId);
+  cart.services = cart.services ?? [];
+  const count = Math.min(Math.max(Number(qty) || 1, 1), 20);
+  const existing = cart.services.find((line) => String(line.service) === String(service._id));
+  if (existing) existing.qty = Math.min(existing.qty + count, 20);
+  else cart.services.push({ service: service._id, qty: count, priceAtAdd: service.priceCents });
+  await cart.save();
+  return cart;
+}
+
+async function setServiceQty(userId, serviceId, qty) {
+  const cart = await getOrCreateCart(userId);
+  const count = Math.min(Math.max(Number(qty) || 0, 0), 20);
+  for (const line of cart.services ?? []) {
+    if (String(line.service) === String(serviceId)) line.qty = Math.max(count, 1);
+  }
+  if (count === 0) {
+    cart.services = (cart.services ?? []).filter((line) => String(line.service) !== String(serviceId));
+  }
+  await cart.save();
+  return cart;
+}
+
+async function removeService(userId, serviceId) {
+  const cart = await getOrCreateCart(userId);
+  cart.services = (cart.services ?? []).filter((line) => String(line.service) !== String(serviceId));
+  await cart.save();
+  return cart;
+}
+
+/**
+ * Put a membership plan in the cart: "Subscribe" on the Membership page
+ * (2026-10-02). One plan at most, so a second choice replaces the first. A
+ * plan the account already holds can be bought again: that is a renewal, and
+ * checkout extends the term rather than starting a second one.
+ */
+async function setMembership(userId, tier) {
+  const plan = await membershipPlan(tier);
+  if (!plan || !(plan.priceCents > 0)) {
+    throw ApiError.notFound('That plan is not on sale right now.', 'PLAN_NOT_FOUND');
+  }
+  const cart = await getOrCreateCart(userId);
+  cart.membership = { tier, priceAtAdd: plan.priceCents, addedAt: new Date() };
+  await cart.save();
+  return cart;
+}
+
+async function removeMembership(userId) {
+  const cart = await getOrCreateCart(userId);
+  cart.membership = undefined;
+  await cart.save();
+  return cart;
+}
+
 async function findLiveCombo(slugOrId) {
   const query = /^[0-9a-fA-F]{24}$/.test(slugOrId) ? { _id: slugOrId } : { slug: slugOrId };
   const offer = await db().Offer.findOne(query).lean();
@@ -503,4 +611,4 @@ async function clearPromoCode(userId) {
   return cart;
 }
 
-export { addPreowned, removePreowned, getOrCreateCart, serialize, addItem, setQty, removeItem, clearCart, mergeGuestCart, saveForLater, listSaved, restoreSaved, deleteSaved, bulkAdd, addBundle, setBundleQty, removeBundle, applyPromoCode, clearPromoCode };
+export { setMembership, removeMembership, addService, setServiceQty, removeService, addPreowned, removePreowned, getOrCreateCart, serialize, addItem, setQty, removeItem, clearCart, mergeGuestCart, saveForLater, listSaved, restoreSaved, deleteSaved, bulkAdd, addBundle, setBundleQty, removeBundle, applyPromoCode, clearPromoCode };

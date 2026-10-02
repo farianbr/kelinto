@@ -9,7 +9,7 @@ import { useKioskMutations } from '@/hooks/useKiosk';
 import { startKioskShopping } from '@/lib/kioskShopping';
 import KioskStepper from './KioskStepper';
 import KioskOption from './KioskOption';
-import { hasNumber } from './customerSteps';
+import { hasNumber, nameStep } from './customerSteps';
 
 /**
  * "Buy parts": sign the customer in to the website from the tablet.
@@ -128,31 +128,7 @@ export function BuyFlow({ speak, chrome }) {
       },
 
       // ---- a new account ---------------------------------------------------
-      {
-        key: 'name',
-        when: isNew,
-        prompt: "What's your name?",
-        valid: (a) => a.firstName.trim().length > 0 && a.lastName.trim().length > 0,
-        render: ({ answers: a, set }) => (
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Input
-              label="First name"
-              required
-              autoComplete="given-name"
-              value={a.firstName}
-              onChange={(event) => set('firstName', event.target.value)}
-              autoFocus
-            />
-            <Input
-              label="Last name"
-              required
-              autoComplete="family-name"
-              value={a.lastName}
-              onChange={(event) => set('lastName', event.target.value)}
-            />
-          </div>
-        ),
-      },
+      nameStep({ confirm: false, when: isNew }),
       {
         key: 'email',
         when: isNew,

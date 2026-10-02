@@ -140,12 +140,12 @@ function normalise(values, optionalIds = []) {
       /*
         An ungraded component is "not recorded", which is not a grade.
 
-        The intake grid seeds every component with '' and `conditionGrade` is
-        an enum, so an untouched grid fails on all eight rows at once - and the
-        summary reports eight copies of zod's bare "Required" for a section the
-        form states is optional. `TicketForm`'s own submit already strips the
-        blanks for exactly this reason; this is the same filter, one step
-        earlier, so what validates is what gets sent.
+        The intake grid seeds every component with ''. Every part is required
+        since 2026-10-02, and a blank dropped here reaches the schema as a
+        missing key, so the select says "Record the screen condition." rather
+        than "Pick one of the listed answers." for an answer nobody gave.
+        `TicketForm`'s own submit strips the blanks too; this is the same
+        filter, one step earlier, so what validates is what gets sent.
       */
       condition: Object.fromEntries(
         Object.entries(device?.condition ?? {}).filter(([, grade]) => grade),
