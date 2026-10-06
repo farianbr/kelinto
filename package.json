@@ -17,6 +17,8 @@
     "seed": "npm run seed --workspace server",
     "seed:demo": "npm run seed:demo --workspace server --",
     "backfill": "npm run backfill --workspace server --",
+    "purge:business": "npm run purge:business --workspace server --",
+    "move:kelinto": "npm run move:kelinto --workspace server --",
     "seed:articles": "npm run seed:articles --workspace server",
     "seed:reviews": "npm run seed:reviews --workspace server",
     "seed:superadmin": "npm run seed:superadmin --workspace server",

@@ -10,6 +10,8 @@
     "seed": "node src/seed/run.js",
     "seed:demo": "node src/seed/demo.js",
     "backfill": "node src/seed/backfill.js",
+    "purge:business": "node src/seed/purge-business.js",
+    "move:kelinto": "node src/seed/move-to-kelinto.js",
     "seed:articles": "node src/seed/articles.js",
     "seed:reviews": "node src/seed/reviews.js",
     "seed:superadmin": "node src/seed/superadmin.js",

@@ -453,6 +453,27 @@ async function listKeys(prefix) {
   return keys;
 }
 
+/**
+ * Delete EVERY object under one business's folder, library included. Only for
+ * purging a business for good (`seed/purge-business.js`); nothing else may
+ * remove a library file. Refuses anything but `businesses/<folder>/`.
+ * Returns how many objects went.
+ */
+async function purgePrefix(prefix) {
+  if (!/^businesses\/[a-z0-9_-]+\/$/i.test(prefix)) throw new Error(`Refusing to purge ${prefix}`);
+  if (!isConfigured()) throw new Error('R2 is not configured');
+  const keys = await listKeys(prefix);
+  for (let i = 0; i < keys.length; i += 1000) {
+    await s3().send(
+      new DeleteObjectsCommand({
+        Bucket: env.R2_BUCKET,
+        Delete: { Objects: keys.slice(i, i + 1000).map((Key) => ({ Key })), Quiet: true },
+      }),
+    );
+  }
+  return keys.length;
+}
+
 /** Is there an object at this key? For migrations that copy only what is missing. */
 async function hasKey(key) {
   try {
@@ -485,6 +506,7 @@ const storage = {
   KINDS,
   listKeys,
   hasKey,
+  purgePrefix,
   copyKey,
   MAX_UPLOAD_BYTES,
   isConfigured,
@@ -508,6 +530,7 @@ export {
   KINDS,
   listKeys,
   hasKey,
+  purgePrefix,
   copyKey,
   MAX_UPLOAD_BYTES,
   sniff,
