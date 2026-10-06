@@ -71,7 +71,8 @@ const serviceSchema = new mongoose.Schema(
      * long-form copy, and the address it lives at.
      *
      * `image` is an R2 KEY, never a URL (`storage.urlOf` on the way out);
-     * blank falls back to the stock photo matched by name (`SERVICE_PHOTOS`).
+     * blank means no picture (the name-matched stock fallback went 2026-10-06:
+     * seeded photos are written here as keys into the business's own library).
      * `details` is admin-authored copy, rendered through `lib/richText.jsx`.
      * `slug` is derived from the name once and kept, so a renamed service keeps
      * its address; one written before slugs existed gets one on first read.

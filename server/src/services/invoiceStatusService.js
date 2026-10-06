@@ -230,6 +230,12 @@ async function run({ dryRun = false, now = new Date() } = {}) {
     keys on the status's own id, so "once per invoice" holds for them too and
     can never collide with a rule's rows. `fromLabel` stops the pass stamping
     `lastRunAt` on a rule that does not exist.
+
+    A status sends on every channel it lists (2026-10-06), narrowed per invoice
+    to the ones the staff member left ticked when they set it
+    (`Invoice.labelChannels`). Still ONE run row per invoice: the row says the
+    status has spoken to this customer, and each channel's own outcome is in
+    the message history.
   */
   const statusMessages = (await db().InvoiceLabel.find({ messageActive: true }).lean())
     .filter((label) => label.message?.trim())
@@ -239,24 +245,50 @@ async function run({ dryRun = false, now = new Date() } = {}) {
       trigger: 'label_set',
       labelId: label._id,
       delayDays: label.delayDays ?? 0,
-      channel: label.channel ?? 'email',
+      channels: label.channels?.length ? label.channels : ['email'],
       subject: label.subject,
       message: label.message,
       fromLabel: true,
     }));
 
-  const rules = [...(await InvoiceStatusRule.find({ isActive: true }).lean()), ...statusMessages];
+  const rules = [
+    ...(await InvoiceStatusRule.find({ isActive: true }).lean()).map((rule) => ({
+      ...rule,
+      channels: [rule.channel ?? 'email'],
+    })),
+    ...statusMessages,
+  ];
   const results = [];
 
+  // Asked once per channel per pass, not once per invoice.
+  const statusOf = new Map();
+  const transport = async (channel) => {
+    if (!statusOf.has(channel)) statusOf.set(channel, await channelStatus(channel));
+    return statusOf.get(channel);
+  };
+  const smtpReady = await mailerConfigured();
+
   for (const rule of rules) {
-    const status = await channelStatus(rule.channel);
     const candidates = await candidatesFor(rule, now);
 
     let sent = 0;
     let skipped = 0;
     const reasons = [];
+    const tally = (outcome, detail) => {
+      if (outcome === 'sent') sent += 1;
+      else {
+        skipped += 1;
+        if (detail && !reasons.includes(detail)) reasons.push(detail);
+      }
+    };
 
     for (const invoice of candidates) {
+      // The channels this invoice allows. An empty list was a status set
+      // silently: the run row is still written, so it is not asked again.
+      const channels = Array.isArray(invoice.labelChannels) && rule.fromLabel
+        ? rule.channels.filter((channel) => invoice.labelChannels.includes(channel))
+        : rule.channels;
+
       // Rule 1: the index decides, not a prior read. A duplicate key here means
       // another pass got there first, which is exactly the outcome we want.
       if (!dryRun) {
@@ -265,7 +297,7 @@ async function run({ dryRun = false, now = new Date() } = {}) {
             rule: rule._id,
             invoice: invoice._id,
             invoiceNumber: invoice.number,
-            channel: rule.channel,
+            channel: channels.join(','),
             status: 'pending',
           });
         } catch (error) {
@@ -273,6 +305,17 @@ async function run({ dryRun = false, now = new Date() } = {}) {
           throw error;
         }
       } else if (await InvoiceStatusRun.exists({ rule: rule._id, invoice: invoice._id })) {
+        continue;
+      }
+
+      if (!channels.length) {
+        if (!dryRun) {
+          await InvoiceStatusRun.updateOne(
+            { rule: rule._id, invoice: invoice._id },
+            { $set: { status: 'skipped', detail: 'Set without notifying the customer.', at: new Date() } },
+          );
+        }
+        tally('skipped', 'Set without notifying the customer.');
         continue;
       }
 
@@ -289,80 +332,89 @@ async function run({ dryRun = false, now = new Date() } = {}) {
       const body = InvoiceStatusRule.render(rule.message, context);
       const subject = InvoiceStatusRule.render(rule.subject || `Invoice ${invoice.number}`, context);
 
-      let outcome = 'sent';
-      let detail = '';
+      const details = [];
+      let anySent = false;
 
-      if (!user?.email) {
-        outcome = 'skipped';
-        detail = 'That account has no email address on file.';
-      } else if (!status.delivers) {
-        // Rule 4: a channel with no transport records what it could not do.
-        outcome = 'skipped';
-        detail = status.reason ?? `${rule.channel} cannot send yet.`;
-      } else if (rule.channel === 'email' && !(await mailerConfigured())) {
-        // A dry run has to predict the same outcome the real run produces.
-        // Without this it reported "would send 3" against a server with no SMTP
-        // transport, where the real run then failed all three - and a preview
-        // that disagrees with the thing it is previewing is worse than no
-        // preview.
-        outcome = 'skipped';
-        detail = 'No SMTP transport is configured, so the message cannot be sent.';
-      }
+      for (const channel of channels) {
+        const status = await transport(channel);
+        const isEmail = channel === 'email';
+        const to = isEmail ? user?.email : user?.phone;
 
-      if (dryRun) {
-        if (outcome === 'sent') sent += 1;
-        else {
-          skipped += 1;
-          if (!reasons.includes(detail)) reasons.push(detail);
-        }
-        continue;
-      }
+        let outcome = 'sent';
+        let detail = '';
 
-      if (outcome === 'sent') {
-        try {
-          const result = await sendMail({
-            to: user.email,
-            subject,
-            text: toPlainText(body),
-            // Plain bodies still go as text alone, as they always did; an HTML
-            // one is sanitised first (services/messageBody.js).
-            html: looksLikeHtml(body) ? toEmailHtml(body) : undefined,
-          });
-          if (!result.delivered) {
-            outcome = 'skipped';
-            detail = `Sending failed: ${result.error ?? 'the message could not be delivered.'}`;
-          }
-        } catch (error) {
-          // Rule 2: the run row already exists, so a thrown send is recorded as
-          // a failure rather than silently retried tomorrow.
+        if (!to) {
           outcome = 'skipped';
-          detail = `Sending failed: ${error.message}`;
+          detail = isEmail
+            ? 'That account has no email address on file.'
+            : 'That account has no phone number on file.';
+        } else if (!status.delivers) {
+          // Rule 4: a channel with no transport records what it could not do.
+          outcome = 'skipped';
+          detail = status.reason ?? `${channel} cannot send yet.`;
+        } else if (isEmail && !smtpReady) {
+          // A dry run has to predict the same outcome the real run produces.
+          outcome = 'skipped';
+          detail = 'No SMTP transport is configured, so the message cannot be sent.';
         }
+
+        if (dryRun) {
+          tally(outcome, detail);
+          continue;
+        }
+
+        if (outcome === 'sent' && isEmail) {
+          try {
+            const result = await sendMail({
+              to: user.email,
+              subject,
+              text: toPlainText(body),
+              // Plain bodies still go as text alone, as they always did; an HTML
+              // one is sanitised first (services/messageBody.js).
+              html: looksLikeHtml(body) ? toEmailHtml(body) : undefined,
+            });
+            if (!result.delivered) {
+              outcome = 'skipped';
+              detail = `Sending failed: ${result.error ?? 'the message could not be delivered.'}`;
+            }
+          } catch (error) {
+            // Rule 2: the run row already exists, so a thrown send is recorded
+            // as a failure rather than silently retried tomorrow.
+            outcome = 'skipped';
+            detail = `Sending failed: ${error.message}`;
+          }
+        }
+
+        // Every attempt is in the message history, so the invoice's contact
+        // record is complete whether or not it went out.
+        await db().MessageLog.create({
+          channel,
+          direction: 'outbound',
+          user: invoice.user,
+          businessName: user?.businessName ?? '',
+          to: to ?? '',
+          subject: isEmail ? subject : undefined,
+          body: isEmail ? body : toPlainText(body),
+          status: outcome === 'sent' ? 'sent' : 'queued_unconfigured',
+          unconfiguredReason: outcome === 'sent' ? undefined : detail,
+        });
+
+        if (outcome === 'sent') anySent = true;
+        else details.push(`${channel}: ${detail}`);
+        tally(outcome, detail);
       }
 
-      // Every attempt is in the message history, so the invoice's contact
-      // record is complete whether or not it went out.
-      await db().MessageLog.create({
-        channel: rule.channel,
-        direction: 'outbound',
-        user: invoice.user,
-        businessName: user?.businessName ?? '',
-        to: user?.email ?? '',
-        subject,
-        body,
-        status: outcome === 'sent' ? 'sent' : 'queued_unconfigured',
-        unconfiguredReason: outcome === 'sent' ? undefined : detail,
-      });
-
-      await InvoiceStatusRun.updateOne(
-        { rule: rule._id, invoice: invoice._id },
-        { $set: { status: outcome, detail, at: new Date() } },
-      );
-
-      if (outcome === 'sent') sent += 1;
-      else {
-        skipped += 1;
-        if (detail && !reasons.includes(detail)) reasons.push(detail);
+      if (!dryRun) {
+        await InvoiceStatusRun.updateOne(
+          { rule: rule._id, invoice: invoice._id },
+          {
+            $set: {
+              status: anySent ? 'sent' : 'skipped',
+              detail: details.join(' · '),
+              at: new Date(),
+            },
+          },
+        );
       }
     }
 
@@ -372,7 +424,7 @@ async function run({ dryRun = false, now = new Date() } = {}) {
 
     results.push({
       rule: rule.label,
-      channel: rule.channel,
+      channel: rule.channels.join(', '),
       matched: candidates.length,
       sent,
       skipped,

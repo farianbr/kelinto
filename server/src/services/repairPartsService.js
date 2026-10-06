@@ -1,4 +1,5 @@
 import { db } from '../db/models.js';
+import ApiError from '../utils/ApiError.js';
 import '../models/Product.js';
 import '../models/StockMovement.js';
 
@@ -11,11 +12,10 @@ import '../models/StockMovement.js';
  * by every part ever fitted and the reorder point never fired for repair
  * stock. Orders have always moved stock; the repair side never did.
  *
- * Runs at the moment a repair is BILLED - converting a ticket into its invoice,
- * or an admin raising an itemised invoice with parts on it - because both
- * happen exactly once per job. Earlier, at intake, a part is only a quote: the
- * customer may decline it. And `ticket.invoice` already refuses a second
- * conversion, so a part can never come off twice.
+ * Runs when an admin raises an itemised invoice with parts on it, and when a
+ * ticket that predates `partsStockMovedAt` is converted. A ticket written since
+ * 2026-10-06 takes its parts when it is saved instead - see the ticket section
+ * at the foot of this file - and its invoice does not take them again.
  *
  * **Stock is floored at zero, not refused.** An order refuses to sell what is
  * not on hand, because nothing has left the building yet. A repair is the
@@ -112,6 +112,40 @@ async function commitRepairParts(demand, { reference, business, createdBy } = {}
   }
 }
 
+/**
+ * Refuse a part the shelf does not have (client ruling 2026-10-06: "a part
+ * showed 0 in inventory but I could still add it to a ticket - that is not how
+ * it should work").
+ *
+ * Called BEFORE anything is written, by every path that takes stock: a new or
+ * edited ticket, a reopened one, a quote converted to one, and a service
+ * invoice raised or edited by hand. `demand` is what this write would take,
+ * per product id - for an edit, only what it adds. The flooring in
+ * `commitRepairParts` stays, for the race between this check and the write.
+ */
+async function assertPartsAvailable(demand) {
+  if (!demand?.size) return;
+
+  const products = await db()
+    .Product.find({ _id: { $in: [...demand.keys()] } })
+    .select('name stock')
+    .lean();
+
+  const short = products.filter((product) => (product.stock ?? 0) < demand.get(String(product._id)));
+  if (!short.length) return;
+
+  throw ApiError.badRequest(
+    short
+      .map((product) =>
+        (product.stock ?? 0) > 0
+          ? `${product.name}: only ${product.stock} in stock`
+          : `${product.name} is out of stock`,
+      )
+      .join('; ') + '.',
+    'PART_OUT_OF_STOCK',
+  );
+}
+
 /** What a set of devices takes off the shelf, per product id. */
 function partsDemand(devices = []) {
   const demand = new Map();
@@ -175,6 +209,8 @@ async function adjustRepairParts(oldDevices, newDevices, { returnRemoved = true,
     if (delta < 0) removed.set(id, -delta);
   }
 
+  await assertPartsAvailable(added);
+
   const commit = async () => {
     await commitRepairParts(added, opts);
     if (returnRemoved) {
@@ -185,5 +221,95 @@ async function adjustRepairParts(oldDevices, newDevices, { returnRemoved = true,
   return { devices, commit };
 }
 
-export { costRepairParts, commitRepairParts, returnRepairParts, adjustRepairParts, partsDemand };
-export default { costRepairParts, commitRepairParts, returnRepairParts, adjustRepairParts, partsDemand };
+// ---- tickets ----------------------------------------------------------------
+//
+// **A ticket takes its parts off the shelf when it names them** (client ruling
+// 2026-10-06: "does add part reduce stock? I think it should"). This reverses
+// the earlier rule above, that stock moved only when the repair was billed: a
+// part a technician has picked for a job is no longer free to sell, and
+// Inventory showing it on the shelf until the invoice existed let the counter
+// promise the same last screen to two customers.
+//
+// So the ticket holds them from the moment it is saved with them
+// (`Ticket.partsStockMovedAt` records that it does), an edit moves only the
+// difference, cancelling or deleting the ticket puts them back, and the
+// invoice a ticket becomes does NOT take them a second time. A ticket written
+// before this rule has no stamp; its parts are still on the shelf, so its first
+// edit takes them all and its conversion still takes them as it always did.
+
+function ticketReference(ticket) {
+  return { kind: 'ticket', id: ticket._id, label: ticket.ticketNumber };
+}
+
+/** Take every part a ticket names, and stamp it as holding them. */
+async function takeTicketParts(ticket, { createdBy } = {}) {
+  const demand = partsDemand(ticket.devices);
+  await assertPartsAvailable(demand);
+  ticket.partsStockMovedAt = new Date();
+  await commitRepairParts(demand, {
+    reference: ticketReference(ticket),
+    business: ticket.business ?? undefined,
+    createdBy,
+  });
+}
+
+/**
+ * After an edit to a ticket's devices: move only what changed.
+ *
+ * `before` is the devices as they were. A ticket that never took its parts
+ * (written before the rule) takes all of the new ones instead.
+ */
+async function adjustTicketParts(ticket, before, { createdBy } = {}) {
+  if (!ticket.partsStockMovedAt) return takeTicketParts(ticket, { createdBy });
+
+  const was = partsDemand(before);
+  const now = partsDemand(ticket.devices);
+  const added = new Map();
+  const removed = new Map();
+  for (const id of new Set([...was.keys(), ...now.keys()])) {
+    const delta = (now.get(id) ?? 0) - (was.get(id) ?? 0);
+    if (delta > 0) added.set(id, delta);
+    if (delta < 0) removed.set(id, -delta);
+  }
+
+  await assertPartsAvailable(added);
+
+  const opts = { reference: ticketReference(ticket), business: ticket.business ?? undefined, createdBy };
+  await commitRepairParts(added, opts);
+  await returnRepairParts(removed, { ...opts, note: 'Back on the shelf: removed from a repair ticket.' });
+}
+
+/** Put a ticket's parts back: it was cancelled or deleted before it was billed. */
+async function releaseTicketParts(ticket, { createdBy, note } = {}) {
+  if (!ticket.partsStockMovedAt) return;
+  ticket.partsStockMovedAt = null;
+  await returnRepairParts(partsDemand(ticket.devices), {
+    reference: ticketReference(ticket),
+    business: ticket.business ?? undefined,
+    createdBy,
+    note: note ?? 'Back on the shelf: the repair ticket was cancelled.',
+  });
+}
+
+export {
+  assertPartsAvailable,
+  costRepairParts,
+  commitRepairParts,
+  returnRepairParts,
+  adjustRepairParts,
+  partsDemand,
+  takeTicketParts,
+  adjustTicketParts,
+  releaseTicketParts,
+};
+export default {
+  assertPartsAvailable,
+  costRepairParts,
+  commitRepairParts,
+  returnRepairParts,
+  adjustRepairParts,
+  partsDemand,
+  takeTicketParts,
+  adjustTicketParts,
+  releaseTicketParts,
+};

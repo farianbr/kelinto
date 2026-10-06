@@ -330,7 +330,7 @@ const listInvoices = asyncHandler(async (req, res) => {
 });
 
 const createInvoice = asyncHandler(async (req, res) => {
-  const invoice = await adminService.createInvoice(req.body);
+  const invoice = await adminService.createInvoice(req.body, req.businessScope);
 
   await auditService.record({
     req,

@@ -29,8 +29,8 @@ import User from '../models/User.js';
  * `--force` restamps every row from its current paid status, which is what you
  * want if the rule itself changed.
  *
- *   npm run backfill:invoice-kind
- *   npm run backfill:invoice-kind -- --force
+ *   npm run backfill -- invoice-kind
+ *   npm run backfill -- invoice-kind -- --force
  */
 async function backfillInvoiceKind({ force = false, quiet = false } = {}) {
   const log = quiet ? () => {} : (...args) => console.log(...args);

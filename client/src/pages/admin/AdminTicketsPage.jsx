@@ -1,36 +1,23 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
-import { useForm } from 'react-hook-form';
 import {
-  AlertCircle,
   AlertTriangle,
   Bell,
   ClipboardList,
   Download,
   Hourglass,
-  Mail,
-  MessageCircle,
-  MessageSquare,
   Pencil,
   Plus,
   Smartphone,
   Trash2,
   Wrench,
 } from 'lucide-react';
-import {
-  TICKET_STATUSES,
-  TICKET_STATUS_LABELS,
-  TICKET_PRIORITIES,
-  TICKET_SOURCES,
-} from '@shared/schemas/admin';
+import { TICKET_STATUS_LABELS } from '@shared/schemas/admin';
 import cn from '@/lib/cn';
 import { apiUrl } from '@/lib/api';
-import reportStatusOutcome from '@/lib/ticketStatusOutcome';
-import { count as formatCount, titleize } from '@/lib/format';
+import { count as formatCount } from '@/lib/format';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
-import Checkbox from '@/components/ui/Checkbox';
-import Input from '@/components/ui/Input';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import SelectMenu from '@/components/ui/SelectMenu';
@@ -40,6 +27,7 @@ import BadgeExplainer from '@/components/admin/BadgeExplainer';
 import KpiRow from '@/components/admin/KpiRow';
 import FilterStrip from '@/components/admin/FilterStrip';
 import DataTable, { CountLine } from '@/components/admin/DataTable';
+import TicketStatusDialog from '@/components/admin/TicketStatusDialog';
 import { PER_PAGE_OPTIONS, DEFAULT_PER_PAGE } from '@/hooks/useTablePage';
 import { ADMIN_ROUTES } from '@/lib/adminRoutes';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
@@ -90,8 +78,6 @@ const STATUS_TONES = {
   cancelled: 'danger',
 };
 
-const PRIORITY_TONES = { low: 'neutral', normal: 'neutral', high: 'warn', urgent: 'danger' };
-
 /**
  * The dot beside each status in the menu.
  *
@@ -111,25 +97,6 @@ const PRIORITY_TONES = { low: 'neutral', normal: 'neutral', high: 'warn', urgent
  * token tint with its own ink, so the text clears contrast on its own ground
  * rather than relying on a single grey that happens to work on four of them.
  */
-/**
- * The channels the confirmation offers to suppress.
- *
- * **These are permissions, not sends.** The customer is messaged on the ONE
- * channel recorded on their profile; unticking a row here says "not by that
- * route this time", and unticking every row changes the status silently. Which
- * is why all three start ticked: the default is the behaviour the move already
- * had, and the dialog exists to let somebody opt OUT of it.
- *
- * `call` is deliberately absent. It is a task logged for a staff member rather
- * than a message anything transmits, so offering to switch it off would imply
- * the system was about to ring somebody.
- */
-const NOTIFY_CHANNELS = [
-  { value: 'email', label: 'Email', icon: Mail },
-  { value: 'sms', label: 'SMS', icon: MessageSquare },
-  { value: 'whatsapp', label: 'WhatsApp', icon: MessageCircle },
-];
-
 const STATUS_PILL = {
   diagnosis: 'bg-info-50 text-info',
   accepted: 'bg-warn-50 text-warn',
@@ -169,8 +136,6 @@ const STATUS_OPTIONS = PILL_STATUSES.map((value) => ({
   dotClass: STATUS_DOTS[value],
 }));
 
-const PRIORITY_OPTIONS = TICKET_PRIORITIES.map((value) => ({ value, label: titleize(value) }));
-const SOURCE_OPTIONS = TICKET_SOURCES.map((value) => ({ value, label: titleize(value) }));
 
 
 
@@ -187,7 +152,6 @@ export function AdminTicketsPage() {
    * texted somebody that their device was ready.
    */
   const [statusMove, setStatusMove] = useState(null);
-  const [notifyVia, setNotifyVia] = useState(() => NOTIFY_CHANNELS.map((c) => c.value));
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -207,7 +171,6 @@ export function AdminTicketsPage() {
   useCreateRedirect('/admin/tickets/new');
 
   const status = searchParams.get('status') ?? 'all';
-  const priority = searchParams.get('priority') ?? 'all';
   const technician = searchParams.get('technician') ?? 'all';
   const perPage = searchParams.get('perPage') ?? String(DEFAULT_PER_PAGE);
   const page = Number(searchParams.get('page') ?? 1);
@@ -215,13 +178,12 @@ export function AdminTicketsPage() {
   const { data, isLoading } = useAdminTickets({
     status,
     q: query || undefined,
-    priority: priority === 'all' ? undefined : priority,
     technician: technician === 'all' ? undefined : technician,
     limit: perPage,
     page,
   });
 
-  const { createTicket, updateTicket, setTicketStatus, deleteTicket } = useAdminMutations();
+  const { deleteTicket } = useAdminMutations();
 
   const tickets = data?.tickets ?? [];
   const counts = data?.counts ?? {};
@@ -242,7 +204,7 @@ export function AdminTicketsPage() {
   }
 
   const activeFilterCount =
-    (priority === 'all' ? 0 : 1) + (technician === 'all' ? 0 : 1) + (perPage === String(DEFAULT_PER_PAGE) ? 0 : 1);
+    (technician === 'all' ? 0 : 1) + (perPage === String(DEFAULT_PER_PAGE) ? 0 : 1);
 
   const columns = [
     {
@@ -330,7 +292,22 @@ export function AdminTicketsPage() {
           <SelectMenu
             srLabel={`Repair status for ${ticket.ticketNumber}`}
             value={ticket.status}
-            options={STATUS_OPTIONS}
+            // The menu offers the live rungs only (see `STATUS_OPTIONS`), but
+            // the pill has to be able to SHOW where the ticket is: without its
+            // own status in the list, a completed or cancelled ticket read
+            // "Diagnosis", the first entry, in the right colour.
+            options={
+              STATUS_OPTIONS.some((option) => option.value === ticket.status)
+                ? STATUS_OPTIONS
+                : [
+                    ...STATUS_OPTIONS,
+                    {
+                      value: ticket.status,
+                      label: TICKET_STATUS_LABELS[ticket.status] ?? ticket.status,
+                      dotClass: STATUS_DOTS[ticket.status],
+                    },
+                  ]
+            }
             align="left"
             /**
              * A status pill, not a form field.
@@ -378,21 +355,10 @@ export function AdminTicketsPage() {
             // the picker had before.
             onChange={(next) => {
               if (next === ticket.status) return;
-              setNotifyVia(NOTIFY_CHANNELS.map((channel) => channel.value));
               setStatusMove({ ticket, status: next });
             }}
           />
         </div>
-      ),
-    },
-    {
-      key: 'priority',
-      header: 'Priority',
-      priority: 2,
-      render: (ticket) => (
-        <Badge tone={PRIORITY_TONES[ticket.priority]} size="sm">
-          {titleize(ticket.priority)}
-        </Badge>
       ),
     },
     {
@@ -543,23 +509,11 @@ export function AdminTicketsPage() {
           activeFilterCount={activeFilterCount}
           onClearFilters={() => {
             const params = new URLSearchParams(searchParams);
-            ['priority', 'technician', 'perPage', 'page'].forEach((key) => params.delete(key));
+            ['technician', 'perPage', 'page'].forEach((key) => params.delete(key));
             setSearchParams(params, { replace: true });
           }}
           filters={
             <div className="space-y-3">
-              <div>
-                <p className="eyebrow mb-1.5 text-ink-400">Priority</p>
-                <SelectMenu
-                  srLabel="Filter by priority"
-                  value={priority}
-                  onChange={(next) => setParam('priority', next)}
-                  options={[{ value: 'all', label: 'Any priority' }, ...PRIORITY_OPTIONS]}
-                  align="left"
-                  className="w-full"
-                />
-              </div>
-
               <div>
                 <p className="eyebrow mb-1.5 text-ink-400">Technician</p>
                 <SelectMenu
@@ -635,93 +589,9 @@ export function AdminTicketsPage() {
 
       {/* A status change messages a customer, so it confirms (§3.0.1) - and the
           confirmation is where the channels can be unticked, because "move it but
-          do not tell them" is a real thing a counter needs: a device marked ready
-          by mistake, or a customer already standing there being handed it.
-
-          `tone="info"`, not the default danger: this is an ordinary, reversible
-          move a technician makes many times a day, and a red alarm on every one
-          teaches them to click through reds. */}
-      <ConfirmDialog
-        open={Boolean(statusMove)}
-        onClose={() => setStatusMove(null)}
-        tone="info"
-        heading="Change repair status?"
-        title={
-          statusMove ? (
-            <>
-              Change <strong className="font-semibold text-ink-900">ticket {statusMove.ticket.ticketNumber}</strong>{' '}
-              to{' '}
-              <strong className="font-semibold text-ink-900">
-                {TICKET_STATUS_LABELS[statusMove.status] ?? titleize(statusMove.status)}
-              </strong>
-              ?
-            </>
-          ) : (
-            ''
-          )
-        }
-        body={
-          <div className="rounded-lg border border-line bg-surface-2 p-3.5">
-            <p className="eyebrow mb-2.5 text-ink-400">Notify the customer via:</p>
-
-            <div className="space-y-1">
-              {NOTIFY_CHANNELS.map(({ value, label, icon: Icon }) => (
-                <div key={value} className="flex items-center gap-2">
-                  <Checkbox
-                    checked={notifyVia.includes(value)}
-                    onChange={(event) =>
-                      setNotifyVia((current) =>
-                        event.target.checked
-                          ? [...current, value]
-                          : current.filter((entry) => entry !== value),
-                      )
-                    }
-                    label={
-                      <span className="flex items-center gap-2">
-                        <Icon
-                          className="size-4 shrink-0 text-ink-400"
-                          strokeWidth={2}
-                          aria-hidden="true"
-                        />
-                        {label}
-                      </span>
-                    }
-                    className="flex-1"
-                  />
-                </div>
-              ))}
-            </div>
-
-            {/* Says what unticking DOES, because the checkboxes cannot: the
-                customer is reached on the one channel they chose, so these are
-                permissions rather than three separate messages. */}
-            <p className="mt-3 text-xs leading-relaxed text-ink-400">
-              Uncheck a channel to skip it. Uncheck all to change the status silently.
-            </p>
-          </div>
-        }
-        confirmLabel="Confirm change"
-        loading={setTicketStatus.isPending}
-        error={setTicketStatus.error?.message}
-        onConfirm={() =>
-          setTicketStatus.mutate(
-            {
-              id: statusMove.ticket.id,
-              status: statusMove.status,
-              channels: notifyVia,
-            },
-            {
-              // The move can silently fail to reach the customer - no channel on
-              // file, a declined one, no provider wired - and the staff member has
-              // to learn that now, not when somebody rings to ask.
-              onSuccess: (result) => {
-                reportStatusOutcome(result);
-                setStatusMove(null);
-              },
-            },
-          )
-        }
-      />
+          do not tell them" is a real thing a counter needs. The same dialog the
+          ticket's own page raises. */}
+      <TicketStatusDialog move={statusMove} onClose={() => setStatusMove(null)} />
       <ConfirmDialog
         open={Boolean(deleting)}
         onClose={() => setDeleting(null)}

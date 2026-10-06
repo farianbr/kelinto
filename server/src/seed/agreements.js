@@ -16,7 +16,7 @@ const DEMO_PASSWORD = 'Cellvix123!';
 /**
  * The supplier master agreement, and a demo signature against it.
  *
- * **Additive and idempotent**, like `seed:expense-categories`: it upserts the
+ * **Additive and idempotent**, like `seed:demo -- expense-categories`: it upserts the
  * template by name and attaches it to suppliers who have none, so it is safe on
  * a database with real suppliers and safe to run twice. It never deletes a
  * signature - that is evidence, and a seed script has no business destroying it.

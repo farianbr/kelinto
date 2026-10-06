@@ -204,6 +204,12 @@ export function DataTable({
   loading,
   footer,
   className,
+  /**
+   * Extra classes for one row, from the row: how a list tells its states apart
+   * at a glance (an unanswered web quote tinted, a closed one recessed). A
+   * selected row keeps the selection tint over it.
+   */
+  rowClassName,
 }) {
   const [sort, setSort] = useState(defaultSort ?? null);
   const [expanded, setExpanded] = useState(null);
@@ -407,7 +413,7 @@ export function DataTable({
                       // ground only on hover, which is what makes the row
                       // rather than the cell under the pointer - read as the
                       // unit being acted on.
-                      isSelected ? 'bg-brand-50/60' : 'hover:bg-surface-2',
+                      isSelected ? 'bg-brand-50/60' : cn('hover:bg-surface-2', rowClassName?.(row)),
                       // Press feedback on a full-width row has to be far
                       // gentler than on a button: 0.97 on something 1100px wide
                       // is a visible lurch, so this is the 0.995 variant.

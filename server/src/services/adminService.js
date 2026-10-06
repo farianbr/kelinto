@@ -37,7 +37,14 @@ import { sendMail } from './mailer.js';
 import { BUSINESS_INFO } from '../../../shared/business.js';
 import { sendingBusiness } from './sendingBusiness.js';
 import { lowStockThreshold } from './lowStockService.js';
-import { costRepairParts, commitRepairParts, adjustRepairParts, returnRepairParts, partsDemand } from './repairPartsService.js';
+import {
+  assertPartsAvailable,
+  costRepairParts,
+  commitRepairParts,
+  adjustRepairParts,
+  returnRepairParts,
+  partsDemand,
+} from './repairPartsService.js';
 import { invalidateTree } from './taxonomyService.js';
 import { addLine, categoryAttributes, categoryFilter, getCategory } from './catalogService.js';
 import { TREE_LEVEL_KEYS, levelKeysOf } from '../../../shared/catalog.js';
@@ -1867,6 +1874,10 @@ function shapeAdminInvoice(invoice) {
     displayName: displayNameOf(invoice.user),
     contactName: invoice.user?.contactName ?? null,
     userId: invoice.user?._id?.toString() ?? null,
+    // How to reach the customer, for the detail screen's customer panel. Only
+    // present where the read populated them; a list row does not need them.
+    email: invoice.user?.email ?? null,
+    phone: invoice.user?.phone ?? null,
     amount: invoice.amount,
     amountPaid: invoice.amountPaid,
     balance,
@@ -2096,7 +2107,7 @@ function isItemised(body) {
  *   one. Skipping this would leave a client under their limit on paper while
  *   owing more than it.
  */
-async function createInvoice(body) {
+async function createInvoice(body, scope = null) {
   const user = await db().User.findById(body.user).lean();
   if (!user) throw ApiError.badRequest('Pick a client.', 'USER_NOT_FOUND');
 
@@ -2157,6 +2168,8 @@ async function createInvoice(body) {
       parts: (device.parts ?? []).map(toInvoiceLine),
     })),
   );
+  // A part the shelf does not have is refused before the invoice exists.
+  await assertPartsAvailable(partsNeeded);
 
   const invoice = await db().Invoice.create({
     // A charge raised by hand is money owed, not money received, so it starts
@@ -2167,9 +2180,10 @@ async function createInvoice(body) {
     // No `order`: that is what makes this one standalone, and the field has
     // always been optional so nothing else has to change to allow it.
     user: user._id,
-    // With no order to inherit from, the customer is what knows the business.
-    // Without it the charge never appears on the Invoices screen.
-    business: user.business ?? null,
+    // With no order to inherit from, the business the ERP is working in is
+    // what owns it, then the customer's. Without one the charge never appears
+    // on the Invoices screen, which filters by business exactly.
+    business: scope ?? user.business ?? null,
     amount,
     amountPaid: 0,
     issuedAt,

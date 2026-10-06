@@ -1975,8 +1975,6 @@ const TICKET_STATUSES = [
   'cancelled',
 ];
 
-const TICKET_PRIORITIES = ['low', 'normal', 'high', 'urgent'];
-
 /** Money taken before the invoice exists. Dollars in; the server stores cents. */
 const ticketDepositSchema = z.object({
   amountDollars: z.coerce.number().positive('Enter a deposit amount.').max(1_000_000),
@@ -1997,14 +1995,13 @@ const ticketConvertSchema = z.object({
 const TICKET_SOURCES = ['counter', 'kiosk', 'web', 'phone'];
 
 /**
- * Converting an estimate into the repair ticket that does the work.
+ * Converting a quote into the repair ticket that does the work.
  *
- * Only how the job arrived and how urgent it is: the lines come off the quote,
- * because that is what the customer agreed to. Declared here rather than beside
- * `quoteConvertSchema` because it reads the two ticket constants above it.
+ * Only how the job arrived: the lines come off the quote, because that is what
+ * the customer agreed to. Declared here rather than beside `quoteConvertSchema`
+ * because it reads the ticket constant above it.
  */
 const quoteToTicketSchema = z.object({
-  priority: z.enum(TICKET_PRIORITIES).default('normal'),
   source: z.enum(TICKET_SOURCES).default('counter'),
 });
 
@@ -2022,19 +2019,18 @@ const TICKET_STATUS_LABELS = {
 };
 
 /**
- * Opening a ticket.
+ * One priced line - a service performed or a part fitted. Same shape for both.
  *
- * The customer is a name and a phone, not an account id - a repair is a
- * walk-in, and requiring an approved business first would make the counter
- * unusable. The phone is required because it is how the shop calls someone to
- * say their device is ready; without it the ticket cannot be closed out.
+ * `service` and `product` record which catalogue entry the line was picked
+ * from, so a report can group by what was sold. The ticket, the quote and
+ * the invoice all pick from the same two lists, so they share this shape.
  */
-/** One priced line - a service performed or a part fitted. Same shape for both. */
 const ticketLineSchema = z.object({
   name: z.string().trim().min(1, 'Name the line.').max(160),
   description: z.string().trim().max(300).or(z.literal('')).optional(),
   priceDollars: z.coerce.number().min(0).max(1_000_000).default(0),
   qty: z.coerce.number().int().min(1).max(999).default(1),
+  service: z.string().trim().length(24).optional(),
   product: z.string().trim().length(24).optional(),
 });
 
@@ -2097,20 +2093,21 @@ const ticketDeviceSchema = z.object({
   parts: z.array(ticketLineSchema).max(40).default([]),
 });
 
+/**
+ * Opening a ticket.
+ *
+ * **The customer is an account, picked the way the quote and the invoice
+ * pick one** (client ruling 2026-10-05: one customer section across all three).
+ * The server copies the name, phone and email off the account onto the ticket,
+ * so the list, the search and the printed sheet still read them as text and a
+ * later rename of the account does not rewrite a ticket already handed over.
+ */
 const ticketSchema = z.object({
-  customerName: z.string().trim().min(2, 'Enter the customer name.').max(120),
-  customerPhone: z.string().trim().min(7, 'Enter a contact number.').max(40),
-  customerEmail: z.string().trim().email('Enter a valid email.').or(z.literal('')).optional(),
+  user: z.string().trim().length(24, 'Choose a customer.'),
 
-  /**
-   * The account this ticket belongs to, when it has one.
-   *
-   * Optional because the customer above is free text: a repair walks in off
-   * the street and the counter must be able to open a ticket without creating
-   * an account first. Set when the ticket is raised from a customer profile,
-   * which is what lets that profile count its own open jobs.
-   */
-  user: z.string().trim().length(24).optional(),
+  // The same vocabulary the quote and the invoice use, so a ticket raised
+  // from a quote and the invoice it becomes agree on how the job was done.
+  serviceType: z.enum(INVOICE_SERVICE_TYPES.map((entry) => entry.value)).default('walk_in'),
 
   deviceBrand: z.string().trim().max(60).optional(),
   deviceModel: z.string().trim().max(120).optional(),
@@ -2127,7 +2124,6 @@ const ticketSchema = z.object({
   issue: z.string().trim().max(500).optional(),
 
   status: z.enum(TICKET_STATUSES).default('diagnosis'),
-  priority: z.enum(TICKET_PRIORITIES).default('normal'),
   source: z.enum(TICKET_SOURCES).default('counter'),
 
   // Empty string means "unassigned" - a select cannot emit `undefined`.
@@ -2137,7 +2133,7 @@ const ticketSchema = z.object({
   notes: z.string().trim().max(2000).optional(),
 
   // The richer intake shape. All optional, so the short form that existed
-  // before this - name, phone, one device, one estimate - still validates.
+  // before this - name, phone, one device, one quote - still validates.
   devices: z.array(ticketDeviceSchema).max(10).optional(),
   clientNotes: z.string().trim().max(2000).or(z.literal('')).optional(),
   technicianNotes: z.string().trim().max(2000).or(z.literal('')).optional(),
@@ -3060,7 +3056,12 @@ const invoiceLabelSchema = z
       .min(0, 'Counted from the day it is set, so it cannot be before.')
       .max(365, 'That is more than a year after.')
       .default(0),
-    channel: z.enum(['email', 'sms', 'whatsapp']).default('email'),
+    // Every channel the message goes out on (2026-10-06): one status can email
+    // and text at once.
+    channels: z
+      .array(z.enum(['email', 'sms', 'whatsapp']))
+      .min(1, 'Pick at least one channel.')
+      .default(['email']),
     subject: z.string().trim().max(200).optional().or(z.literal('')),
     message: z.string().trim().max(MESSAGE_BODY_MAX, 'That message is too long.').optional().or(z.literal('')),
     messageActive: z.boolean().default(false),
@@ -3084,6 +3085,13 @@ const invoiceLabelSetSchema = z.object({
   // field here is written; `invoiceLabelService` is what answers 404 for an id
   // that is well-formed but names nothing.
   labelId: z.string().trim().length(24).nullable().or(z.literal('')),
+
+  /**
+   * Which of the status's channels its message may use on this invoice - the
+   * same permission list a ticket status move carries. Empty sets the status
+   * silently; absent allows every channel the status has.
+   */
+  channels: z.array(z.enum(['email', 'sms', 'whatsapp'])).optional(),
 });
 
 
@@ -3637,11 +3645,11 @@ const kioskSettingsSchema = z.object({
 });
 
 /**
- * Repair estimates (Sales § Quote, service businesses).
+ * Repair quotes (Sales § Quote, service businesses).
  *
- * The estimate and the ticket share a device shape on purpose, so the line and
+ * The quote and the ticket share a device shape on purpose, so the line and
  * device schemas are **derived from the ticket's** rather than restated. A
- * field added to a ticket line is then validated on an estimate line too, and
+ * field added to a ticket line is then validated on a quote line too, and
  * the two cannot drift into disagreeing about what a line is.
  */
 const SERVICE_QUOTE_STATUSES = ['draft', 'sent', 'accepted', 'expired', 'converted', 'rejected'];
@@ -3656,13 +3664,11 @@ const SERVICE_QUOTE_STATUS_LABELS = {
   rejected: 'Rejected',
 };
 
-/** A quoted line, plus where it came from in the service catalogue. */
-const serviceQuoteLineSchema = ticketLineSchema.extend({
-  service: z.string().trim().length(24).optional(),
-});
+/** A quoted line. The ticket's own shape, catalogue references included. */
+const serviceQuoteLineSchema = ticketLineSchema;
 
 /**
- * A device on an estimate.
+ * A device on a quote.
  *
  * `condition` is **omitted deliberately**: a component-by-component check is
  * something a counter does with the hardware in front of them, and a grid of
@@ -3677,13 +3683,13 @@ const serviceQuoteDeviceSchema = ticketDeviceSchema
   });
 
 const serviceQuoteSchema = z.object({
-  // Required, unlike a ticket's: an estimate exists to be sent to somebody, and
+  // Required, unlike a ticket's: a quote exists to be sent to somebody, and
   // one addressed to nobody cannot be.
   user: z.string().trim().length(24, 'Choose a customer.'),
 
   source: z.enum(SERVICE_QUOTE_SOURCES).default('counter'),
   // `INVOICE_SERVICE_TYPES` is `{value, label}` pairs for a select, so the enum
-  // is built from its values - the estimate and the invoice must agree about
+  // is built from its values - the quote and the invoice must agree about
   // this vocabulary, and restating it here is how they would stop agreeing.
   serviceType: z.enum(INVOICE_SERVICE_TYPES.map((entry) => entry.value)).default('walk_in'),
 
@@ -3707,8 +3713,8 @@ const serviceQuoteSchema = z.object({
 });
 
 /**
- * Editing. The customer and the source are fixed once the estimate exists -
- * re-pointing a sent document at a different person is a new estimate, not an
+ * Editing. The customer and the source are fixed once the quote exists -
+ * re-pointing a sent document at a different person is a new quote, not an
  * edit to this one.
  */
 const serviceQuoteUpdateSchema = serviceQuoteSchema.omit({ user: true, source: true }).partial();
@@ -3718,9 +3724,10 @@ const serviceQuoteStatusSchema = z.object({
   note: z.string().trim().max(500).or(z.literal('')).optional(),
 });
 
-/** Converting to a ticket. Priority is the one thing the counter adds. */
-const serviceQuoteConvertSchema = z.object({
-  priority: z.enum(TICKET_PRIORITIES).default('normal'),
-});
+/**
+ * Converting to a ticket. Nothing is asked: the devices, lines, notes and
+ * service type all come off the quote the customer accepted.
+ */
+const serviceQuoteConvertSchema = z.object({});
 
-export { quoteToTicketSchema, ticketDepositSchema, ticketConvertSchema, TAX_RATES, TAX_LABELS, provinceTaxOptions, INVOICE_SERVICE_TYPES, SERVICE_INVOICE_TYPES, ORDER_OPEN_STATUSES, ORDER_UNFULFILLED_STATUSES, approveUserSchema, rejectUserSchema, creditSchema, clientSchema, clientFormSchema, clientCreateFormSchema, clientUpdateSchema, CONSENT_CHANNELS, PREFERRED_CONTACT_OPTIONS, CUSTOMER_SOURCE_OPTIONS, contactConsentSchema, MEMBERSHIP_TIERS, tierSchema, internalNoteSchema, storeCreditSchema, refundSchema, userStatusSchema, productSchema, ORDER_STATUS_FLOW, orderStatusSchema, CARRIERS, ADMIN_NAV, ADMIN_LEGACY_REDIRECTS, invoicePaymentSchema, invoiceTipSchema, invoiceVoidSchema, webQuoteStatusSchema, creditPaymentSchema, invoiceUpdateSchema, bulkOrderStatusSchema, supplierSchema, purchaseOrderSchema, purchaseOrderStatusSchema, purchaseReceiveSchema, purchasePaymentSchema, purchaseInviteSchema, purchaseSendSchema, purchaseNegotiateSchema, purchaseConfirmSchema, proformaRevisionSchema, supplierQuoteSchema, supplierDeclineSchema, supplierProformaSchema, supplierDeliverySchema, superAdminLoginSchema, superAdminForgotSchema, superAdminResetSchema, tenantSchema, tenantSlotsSchema, superAdminBusinessSchema, businessAddressSchema, addressRequestSchema, addressRejectSchema, businessAssignSchema, businessFeatureSchema, impersonationSchema, tenantOwnerSchema, supportMessageSchema, planSchema, planFeatureSchema, businessStatusSchema, supplierLoginSchema, supplierForgotSchema, supplierResetSchema, supplierPasswordSchema, expenseSchema, expenseCategorySchema, stockAdjustSchema, productOpsSchema, quoteSchema, quoteStatusSchema, quoteConvertSchema, adminOrderSchema, adminInvoiceSchema, RMA_ITEM_DISPOSITIONS, rmaSchema, TICKET_STATUSES, TICKET_PRIORITIES, TICKET_SOURCES, TICKET_STATUS_LABELS, CONDITION_PARTS, ticketSchema, ticketDeviceSchema, ticketLineSchema, ticketUpdateSchema, ticketStatusSchema, rmaStatusSchema, rmaInspectSchema, rmaResolveSchema, PERMISSION_AREAS, PERMISSION_LEVELS, PERMISSION_LEVEL_LABELS, SETTINGS_SUBAREAS, SUBAREA_LEVELS, SUBAREA_LEVEL_LABELS, settingsAreaKey, BUSINESS_STATUSES, BUSINESS_COLOR_TOKENS, businessSchema, roleSchema, staffUserSchema, staffUserUpdateSchema, MESSAGE_CHANNELS, TEMPLATE_DOCUMENTS, CAMPAIGN_AUDIENCES, CAMPAIGN_AUDIENCE_LABELS, messageSchema, callLogSchema, messageTemplateSchema, campaignSchema, unsubscribeSchema, referralRateSchema, businessInfoSchema, saleSettingsSchema, shippingSettingsSchema, paymentMethodsSettingsSchema, inventorySettingsSchema, agreementTemplateSchema, agreementSignSchema, providerCredentialSchema, taxonomyNodeSchema, taxonomyCreateSchema, taxonomyImportSchema, taxonomyRowSchema, taxonomyRowRemoveSchema, invoiceStatusRuleSchema, LABEL_COLOR_TOKENS, LABEL_COLOR_OPTIONS, invoiceLabelSchema, invoiceLabelSetSchema, invoiceRefundSchema, invoiceRemindSchema, communicationsSettingsSchema, messageLimitSchema, SUPPLIER_RETURN_REASON_VALUES, supplierReturnSchema, supplierReturnStatusSchema, supplierCreditSchema, SUPPLIER_BILLING_CYCLES, supplierServiceSchema, supplierServiceUpdateSchema, supplierChargeSchema, SERVICE_CATEGORIES, SERVICE_CATEGORY_LABELS, serviceCatalogSchema, serviceCatalogUpdateSchema, serviceImportSchema, DEVICE_KINDS, DEVICE_KIND_LABELS, deviceCatalogSchema, deviceCatalogUpdateSchema, kioskCheckInSchema, kioskLookupSchema, ID_TYPES, kioskSellSchema, buybackAcceptSchema, buybackDeclineSchema, kioskUnlockSchema, kioskPinSchema, kioskSettingsSchema, SERVICE_QUOTE_STATUSES, SERVICE_QUOTE_SOURCES, SERVICE_QUOTE_STATUS_LABELS, serviceQuoteLineSchema, serviceQuoteDeviceSchema, serviceQuoteSchema, serviceQuoteUpdateSchema, serviceQuoteStatusSchema, serviceQuoteConvertSchema };
+export { quoteToTicketSchema, ticketDepositSchema, ticketConvertSchema, TAX_RATES, TAX_LABELS, provinceTaxOptions, INVOICE_SERVICE_TYPES, SERVICE_INVOICE_TYPES, ORDER_OPEN_STATUSES, ORDER_UNFULFILLED_STATUSES, approveUserSchema, rejectUserSchema, creditSchema, clientSchema, clientFormSchema, clientCreateFormSchema, clientUpdateSchema, CONSENT_CHANNELS, PREFERRED_CONTACT_OPTIONS, CUSTOMER_SOURCE_OPTIONS, contactConsentSchema, MEMBERSHIP_TIERS, tierSchema, internalNoteSchema, storeCreditSchema, refundSchema, userStatusSchema, productSchema, ORDER_STATUS_FLOW, orderStatusSchema, CARRIERS, ADMIN_NAV, ADMIN_LEGACY_REDIRECTS, invoicePaymentSchema, invoiceTipSchema, invoiceVoidSchema, webQuoteStatusSchema, creditPaymentSchema, invoiceUpdateSchema, bulkOrderStatusSchema, supplierSchema, purchaseOrderSchema, purchaseOrderStatusSchema, purchaseReceiveSchema, purchasePaymentSchema, purchaseInviteSchema, purchaseSendSchema, purchaseNegotiateSchema, purchaseConfirmSchema, proformaRevisionSchema, supplierQuoteSchema, supplierDeclineSchema, supplierProformaSchema, supplierDeliverySchema, superAdminLoginSchema, superAdminForgotSchema, superAdminResetSchema, tenantSchema, tenantSlotsSchema, superAdminBusinessSchema, businessAddressSchema, addressRequestSchema, addressRejectSchema, businessAssignSchema, businessFeatureSchema, impersonationSchema, tenantOwnerSchema, supportMessageSchema, planSchema, planFeatureSchema, businessStatusSchema, supplierLoginSchema, supplierForgotSchema, supplierResetSchema, supplierPasswordSchema, expenseSchema, expenseCategorySchema, stockAdjustSchema, productOpsSchema, quoteSchema, quoteStatusSchema, quoteConvertSchema, adminOrderSchema, adminInvoiceSchema, RMA_ITEM_DISPOSITIONS, rmaSchema, TICKET_STATUSES, TICKET_SOURCES, TICKET_STATUS_LABELS, CONDITION_PARTS, ticketSchema, ticketDeviceSchema, ticketLineSchema, ticketUpdateSchema, ticketStatusSchema, rmaStatusSchema, rmaInspectSchema, rmaResolveSchema, PERMISSION_AREAS, PERMISSION_LEVELS, PERMISSION_LEVEL_LABELS, SETTINGS_SUBAREAS, SUBAREA_LEVELS, SUBAREA_LEVEL_LABELS, settingsAreaKey, BUSINESS_STATUSES, BUSINESS_COLOR_TOKENS, businessSchema, roleSchema, staffUserSchema, staffUserUpdateSchema, MESSAGE_CHANNELS, TEMPLATE_DOCUMENTS, CAMPAIGN_AUDIENCES, CAMPAIGN_AUDIENCE_LABELS, messageSchema, callLogSchema, messageTemplateSchema, campaignSchema, unsubscribeSchema, referralRateSchema, businessInfoSchema, saleSettingsSchema, shippingSettingsSchema, paymentMethodsSettingsSchema, inventorySettingsSchema, agreementTemplateSchema, agreementSignSchema, providerCredentialSchema, taxonomyNodeSchema, taxonomyCreateSchema, taxonomyImportSchema, taxonomyRowSchema, taxonomyRowRemoveSchema, invoiceStatusRuleSchema, LABEL_COLOR_TOKENS, LABEL_COLOR_OPTIONS, invoiceLabelSchema, invoiceLabelSetSchema, invoiceRefundSchema, invoiceRemindSchema, communicationsSettingsSchema, messageLimitSchema, SUPPLIER_RETURN_REASON_VALUES, supplierReturnSchema, supplierReturnStatusSchema, supplierCreditSchema, SUPPLIER_BILLING_CYCLES, supplierServiceSchema, supplierServiceUpdateSchema, supplierChargeSchema, SERVICE_CATEGORIES, SERVICE_CATEGORY_LABELS, serviceCatalogSchema, serviceCatalogUpdateSchema, serviceImportSchema, DEVICE_KINDS, DEVICE_KIND_LABELS, deviceCatalogSchema, deviceCatalogUpdateSchema, kioskCheckInSchema, kioskLookupSchema, ID_TYPES, kioskSellSchema, buybackAcceptSchema, buybackDeclineSchema, kioskUnlockSchema, kioskPinSchema, kioskSettingsSchema, SERVICE_QUOTE_STATUSES, SERVICE_QUOTE_SOURCES, SERVICE_QUOTE_STATUS_LABELS, serviceQuoteLineSchema, serviceQuoteDeviceSchema, serviceQuoteSchema, serviceQuoteUpdateSchema, serviceQuoteStatusSchema, serviceQuoteConvertSchema };

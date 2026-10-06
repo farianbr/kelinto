@@ -4,7 +4,7 @@
  * ## Why a service business has stock at all
  *
  * A repair shop is not a wholesaler, but it buys screens and batteries and it
- * puts them on tickets. `seed:service-business` deliberately seeds only the two
+ * puts them on tickets. `seed:demo -- service-business` deliberately seeds only the two
  * lists a shop looks things up in - the devices it takes across the counter and
  * the services it charges for - and said in its own docstring that parts were
  * somebody else's job. Nobody had that job, so CellShoppe had three suppliers,

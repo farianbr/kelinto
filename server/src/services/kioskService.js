@@ -28,7 +28,7 @@ const CONSENT_CHANNELS = ['sms', 'whatsapp', 'email', 'call'];
  * ## What it is allowed to write
  *
  * A **customer profile** and a **partial ticket**, and nothing else. It never
- * prices, never assigns a technician, never sets a priority and never grades
+ * prices, never assigns a technician and never grades
  * the device's condition. A customer standing at an iPad cannot answer any of
  * those, and a form that asked them to guess would produce a record that looks
  * like evidence and is not - which is the same reason `ServiceQuote` has no
@@ -515,7 +515,6 @@ async function checkIn(intake = {}, businessId = null) {
     business: businessId ?? null,
 
     status: 'diagnosis',
-    priority: 'normal',
     source: 'kiosk',
 
     // The legacy single-device columns the list and search read.

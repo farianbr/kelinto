@@ -25,6 +25,8 @@ import { displayNameOf } from '../utils/displayName.js';
 function shape(row) {
   return {
     id: row._id.toString(),
+    // WQ-2026-00012: the web quote number (services/webQuoteNumbers.js).
+    number: row.number ?? null,
     name: row.name,
     business: row.business ?? null,
     email: row.email,
@@ -55,7 +57,7 @@ async function listWebQuotes({ status, q, user } = {}) {
 
   if (q) {
     const rx = likeRegex(q);
-    query.$or = [{ name: rx }, { email: rx }, { phone: rx }, { message: rx }];
+    query.$or = [{ number: rx }, { name: rx }, { email: rx }, { phone: rx }, { message: rx }];
   }
 
   const [rows, counts] = await Promise.all([

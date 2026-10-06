@@ -983,12 +983,13 @@ router.get('/admin/membership-plans', ...admin, requirePermission('purchase', 'v
 router.patch('/admin/membership-plans', ...admin, requirePermission('purchase', 'full'), validate(membershipSettingsSchema), settingsController.updateMembership);
 router.patch('/admin/settings/kiosk', ...admin, requireFeature('sales.kiosk'), requirePermission('settings.financial', 'full'), validate(kioskSettingsSchema), settingsController.updateKiosk);
 // Repair estimates - the service side of Sales § Quote. Gated on the SAME
-// 'sales.quotes' flag as the wholesale quote list: they are one section in the
+// 'sales.quotes' flag as the web quote list: they are one section in the
 // nav, and a business sees whichever kind its own records are. Under
 // database-per-business the two can never appear in one list.
 router.get('/admin/service-quotes', ...admin, requireFeature('sales.quotes'), requirePermission('sales', 'view'), serviceQuoteController.listQuotes);
 router.post('/admin/service-quotes', ...admin, requireFeature('sales.quotes'), requirePermission('sales', 'full'), validate(serviceQuoteSchema), serviceQuoteController.createQuote);
 router.get('/admin/service-quotes/:id', ...admin, requireFeature('sales.quotes'), requirePermission('sales', 'view'), serviceQuoteController.getQuote);
+router.get('/admin/service-quotes/:id/document', ...admin, requireFeature('sales.quotes'), requirePermission('sales', 'view'), serviceQuoteController.quoteDocument);
 router.patch('/admin/service-quotes/:id', ...admin, requireFeature('sales.quotes'), requirePermission('sales', 'full'), validate(serviceQuoteUpdateSchema), serviceQuoteController.updateQuote);
 router.patch('/admin/service-quotes/:id/status', ...admin, requireFeature('sales.quotes'), requirePermission('sales', 'full'), validate(serviceQuoteStatusSchema), serviceQuoteController.setQuoteStatus);
 router.delete('/admin/service-quotes/:id', ...admin, requireFeature('sales.quotes'), requirePermission('sales', 'full'), serviceQuoteController.deleteQuote);

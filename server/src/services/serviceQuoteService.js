@@ -11,42 +11,45 @@ import '../models/User.js';
 import ApiError from '../utils/ApiError.js';
 import { likeRegex } from '../utils/regex.js';
 import { displayNameOf } from '../utils/displayName.js';
+import { renderRepairDocumentHtml, resolveInvoiceBrand } from './invoiceDocument.js';
+import { takeTicketParts, assertPartsAvailable, partsDemand } from './repairPartsService.js';
 
 /**
- * Repair estimates (Sales § Quote, service businesses).
+ * Repair quotes (Sales § Quote, service businesses).
  *
- * An estimate exists for exactly one case: **the shop has not been handed the
+ * A quote exists for exactly one case: **the shop has not been handed the
  * device.** Somebody rings up asking what a screen costs, or fills in the web
  * form. A walk-in who puts a handset on the counter skips this entirely and
- * goes straight to a `Ticket` - an estimate for a device already on the bench
+ * goes straight to a `Ticket` - a quote for a device already on the bench
  * records nothing the ticket does not.
  *
  * Three rules live here:
  *
  * **Totals are the server's.** The client sends lines and a tax rate; every
  * figure stored is recomputed from them (invariant 8). The `*Cents` fields on
- * the document are a cache of that computation so the estimate can restate what
+ * the document are a cache of that computation so the quote can restate what
  * it promised, never an input.
  *
- * **Accepted before converted.** Starting work on an estimate the customer has
+ * **Accepted before converted.** Starting work on a quote the customer has
  * not agreed to is how a shop ends up eating the cost of it - the same rule
  * `quoteService` holds for orders.
  *
- * **Converting copies the devices whole.** The estimate and the ticket use the
+ * **Converting copies the devices whole.** The quote and the ticket use the
  * same device shape precisely so this is a copy rather than a mapping; a
  * mapping is where a passcode or a per-device problem quietly stops travelling.
  */
 
 /**
- * `EST-2026-00001`.
+ * `QT-2026-00001`.
  *
- * A separate series from `QT-`: the two live in different databases under
- * database-per-business and could never actually collide, but a number that
- * says which kind of document it is saves a staff member opening it to find out.
+ * The quote takes `QT-` and the web quote (`Quote`) takes `WQ-` (client
+ * ruling 2026-10-06): a number that says which kind of document it is saves a
+ * staff member opening it to find out. It replaced `EST-`, a word the client
+ * does not use; `backfill -- quote-numbers` renumbered the existing ones.
  */
 async function nextQuoteNumber() {
   const year = new Date().getFullYear();
-  const prefix = `EST-${year}-`;
+  const prefix = `QT-${year}-`;
   const last = await db()
     .ServiceQuote.findOne({ quoteNumber: new RegExp(`^${prefix}`) })
     .sort({ quoteNumber: -1 })
@@ -89,7 +92,7 @@ function isExpired(quote) {
 }
 
 /**
- * Every figure on the estimate, recomputed from its lines.
+ * Every figure on the quote, recomputed from its lines.
  *
  * The extended service area fee is a **real charge and lands in the subtotal**,
  * so it is taxed like any other line - it is work done at the customer's
@@ -312,12 +315,12 @@ async function getQuote(id) {
     .populate('convertedTicket', 'ticketNumber')
     .lean();
 
-  if (!quote) throw ApiError.notFound('Estimate not found.', 'SERVICE_QUOTE_NOT_FOUND');
+  if (!quote) throw ApiError.notFound('Quote not found.', 'SERVICE_QUOTE_NOT_FOUND');
   return { quote: shapeQuote(quote) };
 }
 
 /**
- * Apply the figures the estimate promised, recomputed from its own lines.
+ * Apply the figures the quote promised, recomputed from its own lines.
  *
  * Called on create and on every edit, so the cached totals can never drift from
  * the lines they came from.
@@ -337,7 +340,7 @@ function applyTotals(doc) {
 
 async function createQuote(body = {}, actor, business = null) {
   if (!isObjectId(body.user)) {
-    throw ApiError.badRequest('Choose a customer for this estimate.', 'SERVICE_QUOTE_NO_CUSTOMER');
+    throw ApiError.badRequest('Choose a customer for this quote.', 'SERVICE_QUOTE_NO_CUSTOMER');
   }
 
   const customer = await db()
@@ -350,7 +353,7 @@ async function createQuote(body = {}, actor, business = null) {
 
   const devices = shapeDevicesIn(body.devices ?? []);
   if (!devices.length) {
-    throw ApiError.badRequest('Add a device to this estimate.', 'SERVICE_QUOTE_NO_DEVICE');
+    throw ApiError.badRequest('Add a device to this quote.', 'SERVICE_QUOTE_NO_DEVICE');
   }
 
   const quote = new (db().ServiceQuote)({
@@ -382,7 +385,7 @@ async function createQuote(body = {}, actor, business = null) {
     taxRate: Number(body.taxRate) || 0,
     province: body.province || customer.address?.region || undefined,
 
-    timeline: [{ status: 'draft', at: new Date(), note: 'Estimate created.', by: actor ?? null }],
+    timeline: [{ status: 'draft', at: new Date(), note: 'Quote created.', by: actor ?? null }],
     createdBy: actor ?? null,
   });
 
@@ -395,26 +398,26 @@ async function createQuote(body = {}, actor, business = null) {
 async function updateQuote(id, body = {}) {
   const query = isObjectId(id) ? { _id: id } : { quoteNumber: String(id) };
   const quote = await db().ServiceQuote.findOne(query);
-  if (!quote) throw ApiError.notFound('Estimate not found.', 'SERVICE_QUOTE_NOT_FOUND');
+  if (!quote) throw ApiError.notFound('Quote not found.', 'SERVICE_QUOTE_NOT_FOUND');
 
   /**
-   * **An estimate is editable at every status, converted included** (ruled
+   * **A quote is editable at every status, converted included** (ruled
    * 2026-09-21).
    *
    * This refused once a ticket existed, on the grounds that the two records
    * would then disagree about what was promised. That is a real risk and it is
    * now the shop's to take: the common case is a typo or a price the counter
    * corrected while the customer was standing there, and refusing meant the
-   * estimate stayed wrong for ever while the ticket carried the truth.
+   * quote stayed wrong for ever while the ticket carried the truth.
    *
    * The ticket is NOT rewritten to match - it is a separate record of separate
-   * work, and editing an estimate has never reached forward into it. The
+   * work, and editing a quote has never reached forward into it. The
    * timeline on both still shows when each was changed.
    */
   if (body.devices !== undefined) {
     const devices = shapeDevicesIn(body.devices);
     if (!devices.length) {
-      throw ApiError.badRequest('An estimate needs at least one device.', 'SERVICE_QUOTE_NO_DEVICE');
+      throw ApiError.badRequest('A quote needs at least one device.', 'SERVICE_QUOTE_NO_DEVICE');
     }
     quote.devices = devices;
   }
@@ -449,7 +452,7 @@ async function updateQuote(id, body = {}) {
 }
 
 /**
- * Move an estimate along.
+ * Move a quote along.
  *
  * Unlike a ticket's status, this one IS a ladder in one respect: nothing moves
  * off `converted`, because the ticket downstream exists and a status saying
@@ -457,12 +460,12 @@ async function updateQuote(id, body = {}) {
  */
 async function setQuoteStatus(id, { status, note } = {}, actor) {
   if (!SERVICE_QUOTE_STATUSES.includes(status)) {
-    throw ApiError.badRequest('That is not an estimate status.', 'SERVICE_QUOTE_STATUS_INVALID');
+    throw ApiError.badRequest('That is not a quote status.', 'SERVICE_QUOTE_STATUS_INVALID');
   }
 
   const query = isObjectId(id) ? { _id: id } : { quoteNumber: String(id) };
   const quote = await db().ServiceQuote.findOne(query);
-  if (!quote) throw ApiError.notFound('Estimate not found.', 'SERVICE_QUOTE_NOT_FOUND');
+  if (!quote) throw ApiError.notFound('Quote not found.', 'SERVICE_QUOTE_NOT_FOUND');
 
   if (quote.status === 'converted') {
     throw ApiError.badRequest(
@@ -481,22 +484,22 @@ async function setQuoteStatus(id, { status, note } = {}, actor) {
 async function deleteQuote(id) {
   const query = isObjectId(id) ? { _id: id } : { quoteNumber: String(id) };
   const quote = await db().ServiceQuote.findOne(query).lean();
-  if (!quote) throw ApiError.notFound('Estimate not found.', 'SERVICE_QUOTE_NOT_FOUND');
+  if (!quote) throw ApiError.notFound('Quote not found.', 'SERVICE_QUOTE_NOT_FOUND');
 
   /**
    * **Deletable at every status, converted included** (ruled 2026-09-21).
    *
-   * This refused once a ticket referenced the estimate. The reference is the
+   * This refused once a ticket referenced the quote. The reference is the
    * reason it has to be CLEANED rather than the reason to refuse: a ticket
    * pointing at a quote that no longer exists draws a lineage strip with a
    * dead station on it, which is a worse record than one that simply starts at
    * the ticket.
    *
    * So the pointer is cleared first and the ticket survives untouched - it is
-   * the record of the work, and the work still happened. The estimate is the
+   * the record of the work, and the work still happened. The quote is the
    * document that goes.
    */
-  // `serviceQuote`, not `quote` - the latter is the WHOLESALE quote reference
+  // `serviceQuote`, not `quote` - the latter is the WEB quote (`Quote`) reference
   // and is deliberately null on a repair ticket. Clearing the wrong one would
   // have left the dead pointer exactly where it was.
   if (quote.convertedTicket) {
@@ -519,10 +522,10 @@ async function deleteQuote(id) {
  * would put one job on the bench twice, and the counter would have no way to
  * tell which record the customer is asking about.
  */
-async function convertToTicket(id, { priority = 'normal' } = {}, actor) {
+async function convertToTicket(id, _body = {}, actor) {
   const query = isObjectId(id) ? { _id: id } : { quoteNumber: String(id) };
   const quote = await db().ServiceQuote.findOne(query).populate('user');
-  if (!quote) throw ApiError.notFound('Estimate not found.', 'SERVICE_QUOTE_NOT_FOUND');
+  if (!quote) throw ApiError.notFound('Quote not found.', 'SERVICE_QUOTE_NOT_FOUND');
 
   if (quote.convertedTicket) {
     throw ApiError.badRequest(
@@ -537,7 +540,7 @@ async function convertToTicket(id, { priority = 'normal' } = {}, actor) {
     );
   }
   if (!quote.devices?.length) {
-    throw ApiError.badRequest('This estimate has no devices.', 'SERVICE_QUOTE_NO_DEVICE');
+    throw ApiError.badRequest('This quote has no devices.', 'SERVICE_QUOTE_NO_DEVICE');
   }
 
   const devices = quote.devices.map((device) => ({
@@ -551,12 +554,13 @@ async function convertToTicket(id, { priority = 'normal' } = {}, actor) {
     solution: device.solution,
     notes: device.notes,
     // `condition` is deliberately absent: the counter grades the hardware when
-    // it actually arrives, and an estimate never had it to give.
+    // it actually arrives, and a quote never had it to give.
     services: (device.services ?? []).map((line) => ({
       name: line.name,
       description: line.description,
       priceCents: line.priceCents,
       qty: line.qty,
+      service: line.service ?? undefined,
       product: line.product ?? undefined,
     })),
     parts: (device.parts ?? []).map((line) => ({
@@ -575,12 +579,15 @@ async function convertToTicket(id, { priority = 'normal' } = {}, actor) {
     feeCents: quote.extendedServiceFee ? (quote.extendedServiceFeeCents ?? 0) : 0,
   });
 
+  // The ticket will hold these parts, so the shelf has to have them now.
+  await assertPartsAvailable(partsDemand(devices));
+
   const ticketNumber = await nextTicketNumber();
 
   const ticket = await db().Ticket.create({
     ticketNumber,
     // Both ends of the edge, set together - a ticket that could not name its
-    // own estimate leaves the lineage strip guessing at the half of the chain
+    // own quote leaves the lineage strip guessing at the half of the chain
     // behind it.
     quote: null,
     serviceQuote: quote._id,
@@ -592,8 +599,8 @@ async function convertToTicket(id, { priority = 'normal' } = {}, actor) {
     business: quote.business ?? null,
 
     status: 'diagnosis',
-    priority,
-    // Where the job came from, which is the estimate's own origin - a repair
+    serviceType: quote.serviceType ?? 'walk_in',
+    // Where the job came from, which is the quote's own origin - a repair
     // quoted over the phone is a phone job even though the conversion happened
     // at the counter.
     source: quote.source === 'web' ? 'web' : quote.source === 'phone' ? 'phone' : 'counter',
@@ -621,12 +628,16 @@ async function convertToTicket(id, { priority = 'normal' } = {}, actor) {
       {
         status: 'diagnosis',
         at: new Date(),
-        note: `Converted from estimate ${quote.quoteNumber}.`,
+        note: `Converted from quote ${quote.quoteNumber}.`,
         by: actor ?? null,
       },
     ],
     createdBy: actor ?? null,
   });
+
+  // The ticket holds its parts from now on (`repairPartsService`, 2026-10-06).
+  await takeTicketParts(ticket, { createdBy: actor ?? undefined });
+  await ticket.save();
 
   quote.convertedTicket = ticket._id;
   quote.status = 'converted';
@@ -645,10 +656,33 @@ async function convertToTicket(id, { priority = 'normal' } = {}, actor) {
 }
 
 /**
+ * The quote as a printable page - the customer's copy.
+ *
+ * Drawn by the invoice's own renderer, so the quote, the ticket and the
+ * invoice of one job are the same piece of paper (2026-10-06), in the
+ * business's own name, colour and logo. The internal note is never printed.
+ */
+async function quoteDocumentHtml(id, { nonce, businessId } = {}) {
+  const query = isObjectId(id) ? { _id: id } : { quoteNumber: String(id) };
+  const quote = await db().ServiceQuote.findOne(query).lean();
+  if (!quote) throw ApiError.notFound('Quote not found.', 'SERVICE_QUOTE_NOT_FOUND');
+
+  const brand = await resolveInvoiceBrand(businessId);
+  return renderRepairDocumentHtml({
+    kind: 'quote',
+    record: quote,
+    nonce,
+    shop: brand.shop,
+    brandColor: brand.brandColor,
+    logo: brand.logo ?? null,
+  });
+}
+
+/**
  * The ticket series, duplicated from `ticketService` rather than imported.
  *
  * Importing it would make these two modules circular: `ticketService` will read
- * estimates once the lineage strip draws the full chain. Six lines of sequence
+ * quotes once the lineage strip draws the full chain. Six lines of sequence
  * generation is the cheaper of the two problems, and the format is fixed by the
  * documents already printed.
  */
@@ -675,6 +709,7 @@ export {
   setQuoteStatus,
   deleteQuote,
   convertToTicket,
+  quoteDocumentHtml,
 };
 export default {
   listQuotes,
@@ -684,4 +719,5 @@ export default {
   setQuoteStatus,
   deleteQuote,
   convertToTicket,
+  quoteDocumentHtml,
 };

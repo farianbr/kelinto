@@ -8,11 +8,9 @@ import {
   CheckCircle2,
   Clock,
   FileSignature,
-  PencilLine,
   Send,
   TrendingDown,
   Wallet,
-  XCircle,
 } from 'lucide-react';
 import cn from '@/lib/cn';
 import { money, date, dateTime, count as formatCount } from '@/lib/format';
@@ -24,7 +22,6 @@ import Badge from '@/components/ui/Badge';
 import PageHeader from '@/components/admin/PageHeader';
 import { useTableClasses, CountLine } from '@/components/admin/DataTable';
 import KpiRow from '@/components/admin/KpiRow';
-import ProcessStrip from '@/components/admin/ProcessStrip';
 import WorkflowLineage from '@/components/admin/WorkflowLineage';
 import { useSetRecordLabel } from '@/components/admin/shell/recordLabel';
 import { useAdminQuote, useAdminMutations } from '@/hooks/useAdmin';
@@ -148,102 +145,6 @@ function DriftTable({ drift, compact = false }) {
   );
 }
 
-/**
- * Where a quote sits on its ladder.
- *
- * **The steps are the real states, not a simplified three.** `draft → sent →
- * accepted → converted` is what `quoteService.ALLOWED_TRANSITIONS` enforces, so
- * a strip that skipped `draft` would show a quote as further along than it is
- * and the buttons in the header, which follow the same ladder, would offer a
- * step the strip never drew.
- *
- * **Rejected and expired are exits, not steps.** They are terminal and they can
- * happen from more than one rung, so laying them out in a row would imply a
- * quote passes *through* them on the way to being converted. They replace the
- * strip with a line saying where the quote stopped and which rung it reached
- * `storedStatus` still carries that, which is exactly why the serializer keeps
- * it alongside the derived status.
- *
- * `ProcessStrip` rather than `StepIndicator`, deliberately: this is a status
- * display of a record's position, not a wizard somebody advances through. The
- * Instructions forbid forking `StepIndicator`, and this does not touch it.
- */
-const QUOTE_LIFECYCLE = [
-  { key: 'draft', label: 'Draft', icon: PencilLine },
-  { key: 'sent', label: 'Sent', icon: Send },
-  { key: 'accepted', label: 'Accepted', icon: CheckCircle2 },
-  { key: 'converted', label: 'Converted', icon: ArrowRight },
-];
-
-function QuoteLifecycle({ quote, className }) {
-  const stopped = ['rejected', 'expired'].includes(quote.status);
-
-  if (stopped) {
-    const rejected = quote.status === 'rejected';
-    // How far it got before it stopped. `storedStatus` is the rung actually
-    // reached - an expired quote is stored as `sent`, and saying "expired" with
-    // no other context loses the fact that it was sent and never answered.
-    const reached =
-      QUOTE_LIFECYCLE.find((step) => step.key === quote.storedStatus)?.label ?? 'Draft';
-
-    /**
-     * A stopped quote shows the rail it did **not** finish.
-     *
-     * The rungs it reached stay filled and the rest stay empty, with the stage
-     * it died at marked in the exit's own tone - so "rejected" is placed on the
-     * ladder rather than replacing it with a sentence. A bare banner threw away
-     * the one thing worth knowing: how close it got.
-     */
-    return (
-      <section aria-label="Quote life cycle" className={cn('space-y-2.5', className)}>
-        <ProcessStrip
-          title="Life cycle of a quote"
-      successOnLast
-          steps={QUOTE_LIFECYCLE}
-          current={quote.storedStatus}
-          stoppedTone={rejected ? 'danger' : 'warn'}
-          caption={null}
-        />
-
-        <p
-          className={cn(
-            'flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md px-3 py-2 text-sm',
-            rejected ? 'bg-danger-50 text-danger' : 'bg-warn-50 text-warn',
-          )}
-        >
-          {rejected ? (
-            <XCircle className="size-3.5 shrink-0" strokeWidth={2.25} aria-hidden="true" />
-          ) : (
-            <Clock className="size-3.5 shrink-0" strokeWidth={2.25} aria-hidden="true" />
-          )}
-          <span className="font-semibold">
-            {rejected ? 'Rejected' : 'Expired'} at the {reached} stage.
-          </span>
-          <span className="opacity-80">
-            {rejected
-              ? 'It goes no further - raise a new quote to price this again.'
-              : 'Extend its expiry to carry on, or raise a new quote at current prices.'}
-          </span>
-        </p>
-      </section>
-    );
-  }
-
-  return (
-    <ProcessStrip
-      title="Life cycle of a quote"
-      successOnLast
-      steps={QUOTE_LIFECYCLE}
-      current={quote.status}
-      caption={
-        quote.status === 'converted'
-          ? 'This quote became an order - its price is now the order’s.'
-          : 'A quote can be rejected at any stage, and lapses on its expiry date.'
-      }
-      className={className}
-    />
-  );
-}
 
 export const QUOTE_STATUS_CONFIRM = {
   sent: {
@@ -668,14 +569,6 @@ function AdminQuoteDetailPage() {
           </Panel>
         </div>
       </div>
-
-      {/* ---- life cycle -----------------------------------------------------
-          At the foot of the page, matching the invoice and the purchase order:
-          it summarises where the record ended up after everything above it, so
-          it reads as a conclusion rather than a heading. Where this quote sits
-          on the ladder `quoteService.ALLOWED_TRANSITIONS` enforces, so the strip
-          and the action buttons can never disagree about what comes next. */}
-      <QuoteLifecycle quote={quote} className="mt-4" />
 
       <Modal
         open={converting}

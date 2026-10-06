@@ -1,25 +1,20 @@
 /**
- * Stock photography for a part, chosen by brand + component type.
+ * CellShoppe's part photography, by brand + component type.
  *
- * Cellvix has not shot the catalogue (PROGRESS.md open question #6). What it
+ * The client has not shot the catalogue (PROGRESS.md open question #6). What it
  * has is one representative photo per brand-and-component-type pair - an iPhone
  * screen, a Pixel charging port - which stands in for every model of that pair.
  *
- * This map is SHARED rather than client-only because the catalogue hides
- * products that have no picture, and that decision is made server-side so the
- * result count and the pagination match what the grid actually renders. The
- * client resolves the same map to draw the image. One copy, so the two can
- * never disagree about which products are visible.
- *
- * The files live in client/public/product-photos/parts (moved from
- * stock-photos on 2026-10-02, beside the phones' photos), so they are served
- * from our own origin and there is no CDN in the path. Their names carry the
- * mapping - "iPhone Screen.webp" is the screen photo for every iPhone - so
- * adding a photo is dropping a file in that folder and adding one line to
- * PHOTOS below.
+ * **Seed data, not a render-time lookup** (2026-10-06). The files belong to the
+ * business and live in its photo library in R2,
+ * `businesses/<code>/library/parts/` (`server/src/utils/photoLibrary.js`). The
+ * seed and `backfill -- stock-media` write that key onto each product's
+ * `image`; nothing derives a picture from brand and type on the way out any
+ * more, because doing so showed one business's photos on every business.
+ * Their names carry the mapping - "iPhone Screen.webp" is the screen photo for
+ * every iPhone - so adding one is uploading a file to that folder, adding a
+ * line to PHOTOS below and re-running the backfill.
  */
-
-const DIR = '/product-photos/parts';
 
 /**
  * `${brand key} ${part key}` -> filename.
@@ -77,25 +72,6 @@ function photoFile(brandSlug, partType) {
 }
 
 /**
- * The stock photo path for a product, or null when there is none.
- *
- * Returns an encoded path - the filenames contain spaces, and an unencoded
- * space in a `src` is a broken image in some browsers.
- */
-function partPhoto(product) {
-  if (!product) return null;
-
-  const file = photoFile(product.brandSlug, product.partType);
-  if (!file) return null;
-
-  // Encode each path SEGMENT, so spaces become %20 but the separators survive.
-  return `${DIR}/${file}`
-    .split('/')
-    .map((segment) => encodeURIComponent(segment))
-    .join('/');
-}
-
-/**
  * Every `{ brandSlug, partType }` pair that HAS a stock photo.
  *
  * The server turns this into the `$or` that keeps pictureless products out of
@@ -124,16 +100,13 @@ function photographedPairs() {
  * Lives here rather than in productService because the taxonomy service needs
  * the identical rule - a component-type list counted without it would offer a
  * type whose every product the grid then hides. Importing productService from
- * taxonomyService would close a require cycle; the map both of them already
- * depend on is the honest place for it.
+ * taxonomyService would close a require cycle.
  *
- * Built once: the pair list is static.
+ * A product's own `image` only (2026-10-06). It used to accept any product
+ * whose brand and type had a photo above, which is what let every business
+ * list products on CellShoppe's pictures; the photo is written onto the record
+ * now, in the business's own library.
  */
-const HAS_PICTURE = {
-  $or: [
-    { image: { $nin: [null, ''] } },
-    ...photographedPairs().map(({ brandSlug, partType }) => ({ brandSlug, partType })),
-  ],
-};
+const HAS_PICTURE = { image: { $nin: [null, ''] } };
 
-export { DIR, PHOTOS, BRAND_KEY, photoFile, partPhoto, photographedPairs, HAS_PICTURE };
+export { PHOTOS, BRAND_KEY, photoFile, photographedPairs, HAS_PICTURE };

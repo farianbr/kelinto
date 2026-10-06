@@ -1,21 +1,10 @@
-import { useFieldArray, useWatch, Controller } from 'react-hook-form';
+import { useFieldArray } from 'react-hook-form';
 import useAdminForm from '@/hooks/useAdminForm';
 import deviceFormResolver from '@/lib/deviceFormResolver';
-import {
-  AlertCircle,
-  ClipboardCheck,
-  Info,
-  Lock,
-  Plus,
-  Smartphone,
-  StickyNote,
-  Trash2,
-  Wrench,
-} from 'lucide-react';
+import { AlertCircle, ClipboardCheck, Lock, Plus, StickyNote, Wrench } from 'lucide-react';
 import {
   TICKET_STATUSES,
   TICKET_STATUS_LABELS,
-  TICKET_PRIORITIES,
   TICKET_SOURCES,
   ticketSchema,
   TAX_RATES,
@@ -23,68 +12,63 @@ import {
 } from '@shared/schemas/admin';
 import { CONDITION_PARTS } from '@shared/deviceCondition';
 
-import cn from '@/lib/cn';
 import { money, titleize } from '@/lib/format';
 import Input from '@/components/ui/Input';
-import PhoneField from '@/components/ui/PhoneField';
 import Textarea from '@/components/ui/Textarea';
 import Button from '@/components/ui/Button';
 import SelectField from '@/components/ui/SelectField';
 import MissingFields from '@/components/admin/MissingFields';
-import { pressable } from '@/lib/motion';
-import {
-  emptyLine,
-  Section,
-  LineEditor,
-  DeviceBlock,
-  useTicketTotal,
-} from '@/components/admin/DeviceLines';
+import SalesCustomerSection from '@/components/admin/SalesCustomerSection';
+import { Section, DeviceBlock, useTicketTotal } from '@/components/admin/DeviceLines';
 
 /**
  * Taking a repair in at the counter.
  *
  * **The form is the intake sheet**, not a thin wrapper over the ticket record.
- * A shop takes in a device by writing down what came in, what state it was in,
- * what the customer says is wrong, and what the job is expected to cost - and
- * every one of those is evidence later. So the form is sectioned the way that
- * conversation actually goes: who, what devices, what notes, what it costs.
+ * A shop takes in a device by writing down who it belongs to, what came in,
+ * what state it was in, what the customer says is wrong, and what the job is
+ * expected to cost - and every one of those is evidence later. So the form is
+ * sectioned the way that conversation actually goes: who, what devices, what
+ * notes, what it costs.
  *
  * ## The parts that are not obvious
+ *
+ * **Who is the quote's section, not a second version of it.** The customer
+ * is an account picked from a list, the same block the quote and the
+ * service invoice open with (`SalesCustomerSection`, client ruling 2026-10-05).
  *
  * **Condition is graded before work starts.** It is the shop's protection: a
  * customer who says the back camera worked when they handed the phone over is
  * answered by the row they were shown at drop-off, not by anybody's memory.
- * `untested` is a real answer and is deliberately distinct from `not present`.
+ * Every part is required (2026-10-02).
+ *
+ * **Lines are picked, not typed.** Services come from the shop's own price
+ * book and parts are found by name, SKU or barcode, the same pickers the
+ * quote uses, so one job is described the same way on all three documents.
  *
  * **The total is a preview.** Every figure below the lines is computed here for
  * the staff member to see, and computed *again* on the server from the same lines
- * (§5.3). Nothing this form calculates is trusted - a client that could set the
- * price of the work would be setting the price of the work.
- *
- * **Short intake still works.** Every field except the customer is optional, so
- * a walk-in can be booked in under a minute and priced properly later. That is
- * the case this form exists to serve; the long version is for when the counter
- * already knows the job.
+ * (§5.5). A client that could set the price of the work would be setting the
+ * price of the work.
  */
 
 const PROVINCE_OPTIONS = provinceTaxOptions();
+
+/** Every new document starts in Alberta (client ruling 2026-10-05). */
+const DEFAULT_PROVINCE = 'AB';
 
 const STATUS_OPTIONS = TICKET_STATUSES.map((value) => ({
   value,
   label: TICKET_STATUS_LABELS[value],
 }));
-const PRIORITY_OPTIONS = TICKET_PRIORITIES.map((value) => ({ value, label: titleize(value) }));
 const SOURCE_OPTIONS = TICKET_SOURCES.map((value) => ({ value, label: titleize(value) }));
 
 /**
  * Built once at module scope: a resolver rebuilt on every render is a new
  * function identity each time, which RHF has to re-read the form against.
+ * The technician picker emits '' for "unassigned" - see `deviceFormResolver`.
  */
-const TICKET_RESOLVER = deviceFormResolver(ticketSchema, {
-  // A walk-in has no account and no technician yet, and both pickers emit ''
-  // rather than nothing - see `deviceFormResolver`.
-  optionalIds: ['user', 'technician'],
-});
+const TICKET_RESOLVER = deviceFormResolver(ticketSchema, { optionalIds: ['technician'] });
 
 /**
  * What the summary beside the submit calls each field.
@@ -94,9 +78,8 @@ const TICKET_RESOLVER = deviceFormResolver(ticketSchema, {
  * open, and the scroll has already put the offending one on screen.
  */
 const TICKET_FIELD_LABELS = {
-  customerName: 'Customer name',
-  customerPhone: 'Phone',
-  customerEmail: 'Email',
+  user: 'Customer',
+  dueDate: 'Est. completion',
   'devices.*.model': 'Device model',
   // A half-filled priced line. Named as a thing rather than left to fall back
   // to the schema's "Name the line.", which is an instruction sitting in a
@@ -106,10 +89,12 @@ const TICKET_FIELD_LABELS = {
   'devices.*.services.*.priceDollars': 'Service line price',
   'devices.*.parts.*.priceDollars': 'Part line price',
   // Every part of the drop-off condition is required (2026-10-02).
-  ...Object.fromEntries(CONDITION_PARTS.map((part) => [`devices.*.condition.${part.key}`, `${part.label} condition`])),
+  ...Object.fromEntries(
+    CONDITION_PARTS.map((part) => [`devices.*.condition.${part.key}`, `${part.label} condition`]),
+  ),
 };
 
-/** One blank device. Only the model is required, so the rest starts empty. */
+/** One blank device, its lists empty until something is added. */
 const emptyDevice = () => ({
   category: '',
   brand: '',
@@ -121,16 +106,29 @@ const emptyDevice = () => ({
   solution: '',
   notes: '',
   condition: {},
+  // No blank row: the add bar under the list is where a line starts.
   services: [],
   parts: [],
 });
 
+/** A stored line, in dollars and with its catalogue references as strings. */
+function lineIn(line) {
+  return {
+    name: line.name ?? '',
+    description: line.description ?? '',
+    priceDollars: String((line.priceCents ?? 0) / 100),
+    qty: line.qty ?? 1,
+    service: line.service ?? '',
+    product: line.product ?? '',
+  };
+}
 
 export function TicketForm({
   ticket,
   seed,
   technicians = [],
   clients = [],
+  services = [],
   onSubmit,
   onCancel,
   isPending,
@@ -138,18 +136,9 @@ export function TicketForm({
 }) {
   const editing = Boolean(ticket);
 
-  // `useAdminForm`, not raw `useForm`: this form was the one that missed the
-  // submit-only validation and the scroll-to-first-error, so intake alone still
-  // marked untouched fields red and refused a submit without moving the page.
-  //
-  // The resolver is the ticket's own wire schema rather than a second set of
-  // rules written for the browser. Validating against anything else is how a
-  // form ends up accepting what the server rejects: the person gets a green
-  // submit and a red toast, with nothing on the page saying which field.
-  //
-  // Wrapped, because the blank priced line every device block seeds is a row
-  // this form drops on submit and `ticketLineSchema` would otherwise reject -
-  // see `deviceFormResolver`.
+  // `useAdminForm`, not raw `useForm`: submit-only validation and the scroll to
+  // the first error. The resolver is the ticket's own wire schema, so the form
+  // refuses exactly what the server would.
   const {
     register,
     handleSubmit,
@@ -159,27 +148,17 @@ export function TicketForm({
   } = useAdminForm({
     resolver: TICKET_RESOLVER,
     defaultValues: {
-      customerName: ticket?.customer.name ?? seed?.name ?? '',
-      customerPhone: ticket?.customer.phone ?? seed?.phone ?? '',
-      customerEmail: ticket?.customer.email ?? seed?.email ?? '',
-      // The linked account, when there is one. Blank for a walk-in, which is
-      // the common case - see the picker above the contact fields.
-      // `customer.userId` is where the serializer puts it, not `ticket.user`.
+      // `customer.userId` is where the serializer puts the account.
       user: ticket?.customer?.userId ?? seed?.client ?? '',
+      serviceType: ticket?.serviceType ?? 'walk_in',
 
       devices: ticket?.devices?.length
         ? ticket.devices.map((device) => ({
             ...emptyDevice(),
             ...device,
             condition: device.condition ?? {},
-            services: (device.services ?? []).map((line) => ({
-              ...line,
-              priceDollars: String((line.priceCents ?? 0) / 100),
-            })),
-            parts: (device.parts ?? []).map((line) => ({
-              ...line,
-              priceDollars: String((line.priceCents ?? 0) / 100),
-            })),
+            services: (device.services ?? []).map(lineIn),
+            parts: (device.parts ?? []).map(lineIn),
           }))
         : [
             {
@@ -194,7 +173,6 @@ export function TicketForm({
           ],
 
       status: ticket?.status ?? 'diagnosis',
-      priority: ticket?.priority ?? 'normal',
       source: ticket?.source ?? 'counter',
       technician: ticket?.technician?.id ?? '',
       dueDate: ticket?.dueDate ? new Date(ticket.dueDate).toISOString().slice(0, 10) : '',
@@ -205,8 +183,8 @@ export function TicketForm({
 
       discountDollars: ticket ? String((ticket.discountCents ?? 0) / 100) : '',
       discountCode: ticket?.discountCode ?? '',
-      province: ticket?.province ?? '',
-      taxRate: ticket?.taxRate ?? 5,
+      province: ticket ? (ticket.province ?? '') : DEFAULT_PROVINCE,
+      taxRate: ticket ? (ticket.taxRate ?? 0) : TAX_RATES[DEFAULT_PROVINCE],
     },
   });
 
@@ -220,19 +198,7 @@ export function TicketForm({
 
   return (
     <form
-      onSubmit={handleSubmit((values) =>
-        onSubmit({
-          ...values,
-          // A blank grade means "not recorded", which is not the same fact as
-          // `untested` - so empty keys are dropped rather than sent as ''.
-          devices: values.devices.map((device) => ({
-            ...device,
-            condition: Object.fromEntries(
-              Object.entries(device.condition ?? {}).filter(([, grade]) => grade),
-            ),
-          })),
-        }),
-      )}
+      onSubmit={handleSubmit(onSubmit)}
       className="space-y-4"
       /*
         The browser's own validation is off, so ours is the only one.
@@ -253,122 +219,36 @@ export function TicketForm({
         </p>
       )}
 
-      <Section icon={Info} title="Basic information">
-        {/* Three contact fields on one row, not two and a full-width third.
-
-            Email used to sit outside this grid, so it ran the entire width of
-            the page while the name and phone above it were half of it - a
-            22-character address in a 900px box, ragged against the two fields
-            it belongs with. A field's width is a hint about its content, and
-            an address is not four times a phone number. */}
-        {/* Pick an existing customer, or just type one.
-
-            A ticket stores its customer as free TEXT - a walk-in with no
-            account is the normal case at a repair counter, and a picker that
-            insisted on an account would block the fastest intake there is. So
-            the name stays a text field and the picker sits above it as a
-            shortcut: choosing somebody fills the name, phone and email in one
-            action and links the ticket to their account, and typing over any
-            of it afterwards still works.
-
-            `user` is a hidden field rather than state so it travels with the
-            form on submit, the same way the seeded `client` already did. */}
-        {clients.length > 0 && (
-          <div className="mb-2">
-            <SelectField
-              control={control}
-              name="user"
-              label="Existing customer"
-              hint="Optional - fills the three fields below, or leave it and type a walk-in."
-              searchable
-              searchPlaceholder="Name, business or email…"
-              options={[
-                { value: '', label: '– Walk-in / type below –' },
-                ...clients.map((client) => ({
-                  value: client.id,
-                  label: `${client.displayName}${client.email ? ` · ${client.email}` : ''}`,
-                })),
-              ]}
-              onValueChange={(value) => {
-                const picked = clients.find((client) => client.id === value);
-                if (!picked) return;
-                setValue('customerName', picked.displayName ?? '', { shouldDirty: true });
-                setValue('customerPhone', picked.phone ?? '', { shouldDirty: true });
-                setValue('customerEmail', picked.email ?? '', { shouldDirty: true });
-              }}
-              // Typing the name onto the ticket, NOT navigating to the customer
-              // form: intake is half-filled by this point and leaving the page
-              // would lose it. A walk-in does not need an account, and one can
-              // be opened later from the ticket - so the useful answer here is
-              // "use what I typed", which is exactly what the free-text name
-              // below already supports.
-              onCreate={(typed) => {
-                setValue('customerName', typed, { shouldDirty: true });
-                setValue('user', '', { shouldDirty: true });
-              }}
-              createLabel={'Use "{q}" as a walk-in'}
-              createLabelEmpty="Type a name to use it as a walk-in"
-            />
-          </div>
-        )}
-
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          <Input
-            label="Customer name"
-            required
-            placeholder="Who is dropping the device off"
-            error={errors.customerName?.message}
-            {...register('customerName')}
-          />
-          <Controller
-            name="customerPhone"
-            control={control}
-            render={({ field, fieldState }) => (
-              <PhoneField
-                label="Phone"
-                required
-                value={field.value}
-                onChange={field.onChange}
-                onBlur={field.onBlur}
-                error={fieldState.error?.message}
-              />
-            )}
-          />
-          <Input
-            label="Email"
-            type="email"
-            // Every other field on this row shows the shape of its answer; this
-            // one was the only empty box, which reads as a field that wants
-            // something different from what it wants.
-            placeholder="name@example.com"
-            hint="Optional - used only if the shop emails a receipt."
-            error={errors.customerEmail?.message}
-            {...register('customerEmail')}
-          />
-        </div>
-
-        <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      <SalesCustomerSection
+        control={control}
+        register={register}
+        errors={errors}
+        clients={clients}
+        dateField={{ name: 'dueDate', label: 'Est. completion' }}
+        addHint="a ticket is opened for somebody"
+      >
+        {/* What only a ticket has: where the job starts, who holds it and how it
+            arrived. Under the shared row, so that row reads the same as the
+            quote's and the invoice's. */}
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {!editing && (
-            <SelectField control={control} name="status" label="Repair Status" options={STATUS_OPTIONS} />
+            <SelectField control={control} name="status" label="Repair status" options={STATUS_OPTIONS} />
           )}
-          <SelectField control={control} name="priority" label="Priority" options={PRIORITY_OPTIONS} />
-          <Input label="Est. completion" type="date" {...register('dueDate')} />
           <SelectField
             control={control}
             name="technician"
             label="Assign technician"
-            // Staff grows; status and priority do not. That is the line for
-            // `searchable` - whether the list tracks the business, not what it
-            // happens to hold today.
+            // Staff grows; the status list does not. That is the line for
+            // `searchable` - whether the list tracks the business.
             searchable
             searchPlaceholder="Technician name…"
             options={technicianOptions}
           />
           <SelectField control={control} name="source" label="Source" options={SOURCE_OPTIONS} />
         </div>
-      </Section>
+      </SalesCustomerSection>
 
-      <Section icon={Wrench} title="Devices & services">
+      <Section icon={Wrench} title="Devices and services">
         <div className="space-y-3">
           {fields.map((field, index) => (
             <DeviceBlock
@@ -379,6 +259,7 @@ export function TicketForm({
               index={index}
               canRemove={fields.length > 1}
               onRemove={() => remove(index)}
+              services={services}
             />
           ))}
         </div>
@@ -420,9 +301,7 @@ export function TicketForm({
               <span className="flex items-center gap-1.5">
                 <Lock className="size-3.5 text-warn" strokeWidth={2.25} aria-hidden="true" />
                 Internal notes
-                <span className="text-2xs font-normal text-warn">
-                  confidential - never printed
-                </span>
+                <span className="text-2xs font-normal text-warn">confidential - never printed</span>
               </span>
             }
             rows={2}
@@ -438,6 +317,7 @@ export function TicketForm({
             label="Discount (CAD)"
             inputMode="decimal"
             hint="Applied before tax."
+            placeholder="0.00"
             {...register('discountDollars')}
           />
           <Input label="Discount code" placeholder="e.g. SUMMER10" {...register('discountCode')} />
@@ -449,18 +329,11 @@ export function TicketForm({
             name="province"
             label="Province"
             // Each option names its tax and rate, and picking one fills the
-            // field beside it. Neither happened before: the list was bare
-            // province names and the rate never moved, so a ticket priced in
-            // Ontario kept whatever rate was already in the box.
+            // field beside it.
             options={PROVINCE_OPTIONS}
             onValueChange={(value) => setValue('taxRate', TAX_RATES[value] ?? 0)}
           />
-          <Input
-            label="Tax rate (%)"
-            inputMode="decimal"
-            hint="0 = tax exempt."
-            {...register('taxRate')}
-          />
+          <Input label="Tax rate (%)" inputMode="decimal" hint="0 = tax exempt." {...register('taxRate')} />
         </div>
 
         {/* A preview. The server recomputes all of this from the lines - see
@@ -482,15 +355,13 @@ export function TicketForm({
           </div>
           <div className="flex justify-between gap-3 border-t border-line pt-2">
             <dt className="font-display font-bold text-ink-900">Total</dt>
-            <dd className="tnum font-display text-lg font-bold text-ink-900">
-              {money(totals.total)}
-            </dd>
+            <dd className="tnum font-display text-lg font-bold text-ink-900">{money(totals.total)}</dd>
           </div>
         </dl>
 
         <p className="mt-2 text-xs leading-relaxed text-ink-400">
-          A quote, not an invoice. Nothing here moves a balance - billing a finished repair is
-          a separate step.
+          A quote, not an invoice. Nothing here moves a balance - billing a finished repair is a
+          separate step.
         </p>
       </Section>
 

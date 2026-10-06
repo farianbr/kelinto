@@ -237,7 +237,7 @@ const adminRoutes = (
     <Route path="quotes" element={<AdminQuotesPage />} />
     {/* Enquiries from the storefront contact form, before anybody prices them. */}
     <Route path="web-quotes" element={<AdminWebQuotesPage />} />
-    {/* The estimate builder. Declared BEFORE "quotes/:id" so "create"
+    {/* The quote builder. Declared BEFORE "quotes/:id" so "create"
         is matched as a literal rather than swallowed as an id. */}
     <Route path="quotes/create" element={<AdminServiceQuoteFormPage />} />
     <Route path="quotes/:id/edit" element={<AdminServiceQuoteFormPage />} />

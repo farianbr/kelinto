@@ -306,7 +306,6 @@ function portalTicket(row) {
   return {
     number: row.ticketNumber,
     status: row.status,
-    priority: row.priority,
     device: [row.deviceBrand, row.deviceModel].filter(Boolean).join(' ') || null,
     // The customer's own description of the fault. `technicianNotes` is
     // deliberately absent: it is where a technician writes "customer is

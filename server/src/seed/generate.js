@@ -1,5 +1,6 @@
 import { TAXONOMY, PART_TYPES, GRADE_MULTIPLIER } from './taxonomy.data.js';
-import { photographedPairs } from '../../../shared/partPhotos.js';
+import { photoFile, photographedPairs } from '../../../shared/partPhotos.js';
+import { libraryKey } from '../utils/photoLibrary.js';
 
 /**
  * Deterministic pseudo-random generator.
@@ -151,7 +152,11 @@ function buildCompetitors(price, seed) {
  * interesting empty states. The generator picks a deterministic subset so facet
  * counts vary the way a real catalogue does, and so "no results" is reachable.
  */
-function buildProducts({ targetCount = 420 } = {}) {
+function buildProducts({ targetCount = 420, businessCode } = {}) {
+  // Every part's picture is a key into its own business's photo library in R2
+  // (utils/photoLibrary.js), written here, never derived when it is shown.
+  if (!businessCode) throw new Error('buildProducts needs the business code its photos live under.');
+
   const random = mulberry32(20260819);
   const products = [];
   const models = [];
@@ -272,6 +277,7 @@ function buildProducts({ targetCount = 420 } = {}) {
           } Ships from our Canadian warehouse.`,
           partType: part.slug,
           partTypeLabel: part.label,
+          image: libraryKey(businessCode, 'parts', photoFile(model.brandSlug, part.slug)),
           grade,
           price,
           compareAtPrice: random() < 0.22 ? Math.round((price * 1.18) / 5) * 5 : undefined,

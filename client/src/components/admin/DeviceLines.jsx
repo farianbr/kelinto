@@ -6,6 +6,7 @@ import DeviceFinder from '@/components/admin/DeviceFinder';
 import Textarea from '@/components/ui/Textarea';
 import Button from '@/components/ui/Button';
 import SelectField from '@/components/ui/SelectField';
+import PricedLines from '@/components/admin/PricedLines';
 import { pressable } from '@/lib/motion';
 import { CONDITION_PARTS } from '@shared/deviceCondition';
 
@@ -30,7 +31,7 @@ const emptyLine = () => ({ name: '', description: '', priceDollars: '', qty: 1 }
 /** A titled slab. The form is long, and unbroken it reads as one wall of inputs. */
 function Section({ icon: Icon, title, hint, children, className }) {
   return (
-    <section className={cn('rounded-lg border border-line bg-surface p-4', className)}>
+    <section className={cn('rounded-lg border border-line bg-surface p-3 sm:p-4', className)}>
       <h3 className="mb-3 flex items-center gap-2 border-b border-line pb-2.5 font-display text-md font-bold text-ink-900">
         <Icon className="size-4 shrink-0 text-brand" strokeWidth={2} aria-hidden="true" />
         {title}
@@ -133,7 +134,22 @@ function LineEditor({ control, register, name, label, addLabel }) {
  * keeps, and a condition grid records the state at drop-off, which an invoice
  * issued afterwards is not describing.
  */
-function DeviceBlock({ control, register, setValue, index, canRemove, onRemove, variant = 'ticket' }) {
+function DeviceBlock({
+  control,
+  register,
+  setValue,
+  index,
+  canRemove,
+  onRemove,
+  variant = 'ticket',
+  /**
+   * The service price book. Given, the lines are picked the way the quote
+   * and the service invoice pick them (`PricedLines`): services from a
+   * searchable list of what the shop sells, parts by name, SKU or barcode.
+   * Absent - the wholesaler's invoice modal - they stay free text.
+   */
+  services,
+}) {
   const isIntake = variant === 'ticket';
 
   // The model's error, if a submit was refused for it. The finder is a set of
@@ -143,7 +159,7 @@ function DeviceBlock({ control, register, setValue, index, canRemove, onRemove, 
   const modelError = at(errors, `devices.${index}.model`)?.message;
 
   return (
-    <div className="rounded-md border border-line bg-surface-2/50 p-3.5">
+    <div className="rounded-md border border-line bg-surface-2/50 p-2.5 sm:p-3.5">
       <div className="mb-3 flex items-center justify-between gap-2">
         <p className="flex items-center gap-1.5 font-display text-sm font-bold text-ink-900">
           <Smartphone className="size-3.5 text-brand" strokeWidth={2.25} aria-hidden="true" />
@@ -235,20 +251,48 @@ function DeviceBlock({ control, register, setValue, index, canRemove, onRemove, 
       </div>
       )}
 
-      <LineEditor
-        control={control}
-        register={register}
-        name={`devices.${index}.services`}
-        label="Services for this device"
-        addLabel="Add service"
-      />
-      <LineEditor
-        control={control}
-        register={register}
-        name={`devices.${index}.parts`}
-        label="Parts required for this device"
-        addLabel="Add part"
-      />
+      {services ? (
+        <>
+          <PricedLines
+            control={control}
+            register={register}
+            setValue={setValue}
+            name={`devices.${index}.services`}
+            label="Services"
+            placeholder="Search services to add…"
+            catalogue={services}
+            refField="service"
+          />
+          <PricedLines
+            control={control}
+            register={register}
+            setValue={setValue}
+            name={`devices.${index}.parts`}
+            label="Parts"
+            placeholder="Scan or search parts to add…"
+            emptyHint="Parts come off the shelf when the ticket is saved."
+            refField="product"
+            requireStock
+          />
+        </>
+      ) : (
+        <>
+          <LineEditor
+            control={control}
+            register={register}
+            name={`devices.${index}.services`}
+            label="Services for this device"
+            addLabel="Add service"
+          />
+          <LineEditor
+            control={control}
+            register={register}
+            name={`devices.${index}.parts`}
+            label="Parts required for this device"
+            addLabel="Add part"
+          />
+        </>
+      )}
     </div>
   );
 }

@@ -5,7 +5,6 @@ import '../models/Order.js';
 import '../models/Product.js';
 import '../models/PreownedDevice.js';
 import '../models/Service.js';
-import { servicePhotoFor } from '../../../shared/catalog.js';
 import ApiError from '../utils/ApiError.js';
 import { DEFAULT_SHIPPING_METHODS } from '../models/Settings.js';
 import { offerStatus } from './offerService.js';
@@ -520,7 +519,7 @@ async function expandServices(cart) {
         sku: `SVC-${String(service._id).slice(-6).toUpperCase()}`,
         name: service.name,
         scopeLabel: service.scopeLabel ?? '',
-        photo: servicePhotoFor(service.name),
+        photo: urlOf(service.image) || null,
         durationMinutes: service.durationMinutes ?? 0,
         warrantyDays: service.warrantyDays ?? 0,
         qty: ref.qty,

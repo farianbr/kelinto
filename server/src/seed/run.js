@@ -32,6 +32,7 @@ import '../models/Settings.js';
 import '../models/Quote.js';
 import '../models/Rma.js';
 import { buildQuotes, buildRmas, buildWebQuotes } from './sales.data.js';
+import { numberEnquiries } from '../services/webQuoteNumbers.js';
 import '../models/Ticket.js';
 import '../models/ContactMessage.js';
 import '../models/Cart.js';
@@ -40,7 +41,6 @@ import { AuditLog } from '../models/AuditLog.js';
 import '../models/SupplierReturn.js';
 import '../models/SupplierService.js';
 import '../models/Appointment.js';
-import { buildRepairs } from './repairs.data.js';
 import {
   SHOPPE_APPOINTMENTS,
   SHOPPE_CUSTOMERS,
@@ -459,7 +459,7 @@ async function seedDatabase({ quiet = false } = {}) {
   // Above what the generator produces, so the trim below it never runs: it
   // strides through a flat list and would take single grades out of the middle
   // of a ladder. See the note in generate.js.
-  const products = buildProducts({ targetCount: 2000 });
+  const products = buildProducts({ targetCount: 2000, businessCode: business.code });
   const insertedProducts = await db().Product.insertMany(products);
   log(`  products: ${insertedProducts.length}`);
 
@@ -1062,35 +1062,15 @@ async function seedDatabase({ quiet = false } = {}) {
   log(`  quotes: ${quotes.length}`);
 
   /**
-   * Repairs, as whole chains rather than as loose records.
+   * Repair quotes, tickets and invoices are NOT seeded here (2026-10-06).
    *
-   * A repair is up to three linked records, and the lineage strip on all three
-   * screens reads the links. Seeding tickets on their own left every one an
-   * orphan: nothing in the demo database exercised quote → ticket → invoice,
-   * so the one thing those screens are built around could only be seen by
-   * clicking a conversion through by hand.
-   *
-   * Built first and inserted in dependency order, because each row has to
-   * carry the *ids* of its neighbours and only the database can issue those.
-   * The builder returns them matched by number; the linking below is what
-   * turns that into references.
+   * They used to be written as raw records by `repairs.data.js`, and raw
+   * records drift from the forms the moment a form changes - they had: typed
+   * customers, a retired priority, no service references, no condition grid.
+   * `npm run seed:demo -- sales` (part of `seed:demo`) builds them through the same
+   * services the create forms call, once the service catalogue and the device
+   * list exist.
    */
-  /**
-   * The repair pipeline's inputs. The parts come from the catalogue above and
-   * repair quotes continue the `QT-` series the goods quotes just used, since
-   * both live in the one `quotes` collection under a unique number. The people
-   * are supplied further down, once the repair customers and technicians exist.
-   */
-  const repairSeed = {
-    products: insertedProducts,
-    taxRate: Math.round(db().Settings.rateFor(settings, 'ON') * 100),
-    quoteSeq: quotes.length + 1,
-  };
-
-  // Declared outside the block so the summary below can read them.
-  let repairTicketCount = 0;
-  let repairQuoteCount = 0;
-  let repairInvoiceCount = 0;
 
   /**
    * **The repair side of the business**: walk-in customers, technicians, its
@@ -1247,91 +1227,6 @@ async function seedDatabase({ quiet = false } = {}) {
     `  CellShoppe front desk: ${shoppeAppointments.length} appointments, ${shoppeWebQuotes.length} web quotes`,
   );
 
-  /**
-   * The repair pipeline, built with the repair counter's customers and
-   * technicians rather than the wholesale buyers: a walk-in repair belongs to a
-   * walk-in customer.
-   */
-  const repairs = buildRepairs({
-    ...repairSeed,
-    users: shoppeCustomers,
-    staff: shoppeStaff,
-    taxRate: Math.round(db().Settings.rateFor(shoppeSettings, 'BC') * 100),
-  });
-
-  /**
-   * **No admin here.** The administrator is the *tenant's*, seeded with the
-   * users above into the control plane - one login reaching every business the
-   * tenant owns (SAAS_PLATFORM §1).
-   */
-
-  // Tickets first: a quote points at the ticket it became, and an invoice
-  // points back at the ticket it bills, so the ticket is the one both ends
-  // need an id for.
-  const insertedRepairTickets = await db().Ticket.insertMany(
-    repairs.tickets.map(({ quoteNumber, invoiceNumber, ...ticket }) => ({
-      ...ticket,
-      business: business._id,
-    })),
-  );
-  const ticketIdByNumber = new Map(
-    insertedRepairTickets.map((ticket) => [ticket.ticketNumber, ticket._id]),
-  );
-
-  // Repair quotes, each already converted, carrying the id of its ticket.
-  const repairQuotes = await db().Quote.insertMany(
-    repairs.quotes.map(({ convertedTicketNumber, ...quote }) => ({
-      ...quote,
-      source: 'admin',
-      business: business._id,
-      convertedTicket: ticketIdByNumber.get(convertedTicketNumber) ?? null,
-    })),
-  );
-
-  // Repair invoices, each carrying the id of the ticket it bills.
-  const repairInvoices = await db().Invoice.insertMany(
-    repairs.invoices.map(({ ticketNumber, ...invoice }) => ({
-      ...invoice,
-      business: business._id,
-      ticket: ticketIdByNumber.get(ticketNumber) ?? null,
-    })),
-  );
-
-  // The back-references, now that every id exists: `db().Ticket.quote` and
-  // `db().Ticket.invoice` are the halves the lineage strip reads, and writing them
-  // here is the same pair of edges `convertQuoteToTicket` and
-  // `convertToInvoice` write at runtime.
-  const quoteIdByTicket = new Map(
-    repairQuotes.map((quote) => [String(quote.convertedTicket), quote._id]),
-  );
-  const invoiceIdByTicket = new Map(
-    repairInvoices.map((invoice) => [String(invoice.ticket), invoice._id]),
-  );
-
-  const links = insertedRepairTickets
-    .map((ticket) => {
-      const set = {};
-      const quoteId = quoteIdByTicket.get(String(ticket._id));
-      const invoiceId = invoiceIdByTicket.get(String(ticket._id));
-      if (quoteId) set.quote = quoteId;
-      if (invoiceId) set.invoice = invoiceId;
-
-      return Object.keys(set).length
-        ? { updateOne: { filter: { _id: ticket._id }, update: { $set: set } } }
-        : null;
-    })
-    .filter(Boolean);
-
-  if (links.length) await db().Ticket.bulkWrite(links);
-
-  log(
-    `  repairs: ${insertedRepairTickets.length} tickets` +
-      ` (${repairQuotes.length} from a quote, ${repairInvoices.length} invoiced)`,
-  );
-
-  repairTicketCount = insertedRepairTickets.length;
-  repairQuoteCount = repairQuotes.length;
-  repairInvoiceCount = repairInvoices.length;
   }
   // End of the repair side.
 
@@ -1344,41 +1239,16 @@ async function seedDatabase({ quiet = false } = {}) {
    * hand while testing.
    */
   const webQuotes = await db().ContactMessage.insertMany(buildWebQuotes({ users }));
+  // Every web quote carries its WQ- number, oldest first, after the quotes
+  // above took theirs from the same counter.
+  await numberEnquiries();
   log(`  web quotes: ${webQuotes.length}`);
 
   /**
-   * Workshop tickets on the wholesale side, and the pickup calendar.
-   *
-   * The wholesale side builds and tests returned stock before it goes back on
-   * the shelf, and books collections with its wholesale accounts. Deliberately
-   * small: these are internal jobs, not the repair counter's queue. Numbered
-   * after the repair tickets, since both share the unique `TKT-` series.
+   * The pickup calendar for the wholesale accounts. (The workshop tickets that
+   * used to be seeded beside it were raw records too; tickets now come from
+   * `seed:demo -- sales`.)
    */
-  const cellvixTickets = await db().Ticket.insertMany(
-    [
-      { customer: 0, issue: 'Test returned OLED batch before restock', status: 'processing', priority: 'normal' },
-      { customer: 1, issue: 'Verify charging ports flagged on inbound QC', status: 'diagnosis', priority: 'high' },
-      { customer: 2, issue: 'Reseat connectors on customer-reported dead units', status: 'ready_to_repair', priority: 'normal' },
-      { customer: 0, issue: 'Confirm battery health on returned stock', status: 'ready_to_pickup', priority: 'low' },
-    ].map((row, index) => {
-      const account = approvedBuyers[row.customer % approvedBuyers.length];
-      return {
-        ticketNumber: `TKT-${new Date().getFullYear()}-${String(repairTicketCount + index + 1).padStart(5, '0')}`,
-        customerName: account.contactName || account.businessName || account.email,
-        customerEmail: account.email,
-        customerPhone: account.phone ?? '+1 (416) 555-0100',
-        user: account._id,
-        issue: row.issue,
-        status: row.status,
-        priority: row.priority,
-        // An internal workshop job is raised at the counter by our own staff.
-        source: 'counter',
-        business: business._id,
-        createdAt: new Date(Date.now() - (index + 2) * 86_400_000),
-      };
-    }),
-  );
-
   const cellvixAppointments = await db().Appointment.insertMany(
     [
       { title: 'Northline pickup - pallet of screens', inDays: 0, hour: 9 },
@@ -1402,7 +1272,7 @@ async function seedDatabase({ quiet = false } = {}) {
     }),
   );
   log(
-    `  workshop tickets: ${cellvixTickets.length} · pickups booked: ${cellvixAppointments.length}`,
+    `  pickups booked: ${cellvixAppointments.length}`,
   );
 
   const rmas = await db().Rma.insertMany(buildRmas({ orders: insertedOrders }));
@@ -1470,9 +1340,7 @@ async function seedDatabase({ quiet = false } = {}) {
     supplierReturns: supplierReturns.length,
     supplierServices: supplierServices.length,
     bidPurchaseOrders: bidResult.orders,
-    quotes: quotes.length + repairQuoteCount,
-    tickets: repairTicketCount,
-    repairInvoices: repairInvoiceCount,
+    quotes: quotes.length,
     webQuotes: webQuotes.length,
     returns: rmas.length,
   };

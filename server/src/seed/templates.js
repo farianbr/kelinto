@@ -85,7 +85,7 @@ const TEMPLATES = [
     document: 'quote',
     status: 'sent',
     name: 'Quote · Sent',
-    body: 'Hi {{contactName}}, we have sent over your repair estimate. Reply here if you would like us to go ahead. - {{shopName}}',
+    body: 'Hi {{contactName}}, we have sent over your repair quote. Reply here if you would like us to go ahead. - {{shopName}}',
   },
 
   // ---- Email: the ones that carry a subject line -------------------------
@@ -151,7 +151,7 @@ async function seedTemplates({ quiet = false } = {}) {
   return { added: missing.length, existing: have.size };
 }
 
-// CLI entry: `npm run seed:templates`
+// CLI entry: `npm run seed:demo -- templates`
 if (process.argv[1] && process.argv[1].endsWith('templates.js')) {
   (async () => {
     console.log('\n  Seeding notification messages…\n');

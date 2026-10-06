@@ -1,12 +1,12 @@
 import mongoose from 'mongoose';
 
 /**
- * A repair estimate, given before the shop has the device.
+ * A repair quote, given before the shop has the device.
  *
  * ## Why this is not `Quote`
  *
  * `Quote` is a wholesale parts quote: SKU lines, quantities, a shipping charge,
- * and it converts into an `Order`. This is an estimate for work on a device the
+ * and it converts into an `Order`. This is a quote for work on a device the
  * shop has not been handed yet - somebody rings up asking what a screen costs,
  * or fills in the web form - and it converts into a `Ticket`.
  *
@@ -23,7 +23,7 @@ import mongoose from 'mongoose';
  * ## When one exists at all
  *
  * Only when the customer does **not** leave the device. A walk-in who hands
- * over a handset goes straight to a `Ticket` - an estimate for a device already
+ * over a handset goes straight to a `Ticket` - a quote for a device already
  * on the bench is a step that records nothing the ticket does not.
  *
  * ## The price is a promise, and the ticket re-prices anyway
@@ -38,14 +38,14 @@ import mongoose from 'mongoose';
 /** Mirrors `Quote`'s ladder, minus the states that only make sense for goods. */
 const SERVICE_QUOTE_STATUSES = ['draft', 'sent', 'accepted', 'expired', 'converted', 'rejected'];
 
-/** Where the estimate came from. `web` is the Web Quote form. */
+/** Where the quote came from. `web` is the Web Quote form. */
 const SERVICE_QUOTE_SOURCES = ['counter', 'phone', 'web', 'kiosk'];
 
 /**
- * Walk-in or door-step, as the estimate form asks it.
+ * Walk-in or door-step, as the quote form asks it.
  *
  * The same vocabulary `Invoice.serviceType` already uses, so the answer given
- * at estimate time survives all the way to the document without translation.
+ * at quote time survives all the way to the document without translation.
  */
 const SERVICE_TYPES = ['walk_in', 'pickup', 'onsite', 'mail_in'];
 
@@ -55,7 +55,7 @@ const SERVICE_TYPES = ['walk_in', 'pickup', 'onsite', 'mail_in'];
  * **Deliberately the same shape as `Ticket`'s line**, so converting is a copy
  * rather than a mapping. The `service` and `product` refs record where the line
  * came from; the name and price are snapshotted beside them, because a price
- * list that moves must not silently rewrite an estimate already sent.
+ * list that moves must not silently rewrite a quote already sent.
  */
 const serviceQuoteLineSchema = new mongoose.Schema(
   {
@@ -74,7 +74,7 @@ const serviceQuoteLineSchema = new mongoose.Schema(
 );
 
 /**
- * One device on the estimate.
+ * One device on the quote.
  *
  * Mirrors `ticketDeviceSchema` field for field, with **one deliberate
  * omission**: there is no `condition` map. A component-by-component check is
@@ -104,16 +104,15 @@ const serviceQuoteDeviceSchema = new mongoose.Schema(
 
 const serviceQuoteSchema = new mongoose.Schema(
   {
-    // `EST-` rather than `QT-`: the two series must not collide, and the screen
-    // calls it an estimate.
-    quoteNumber: { type: String, required: true, unique: true, index: true }, // EST-2026-00001
+    // `QT-`; the web quote (`Quote`) is `WQ-`, so a number says which it is.
+    quoteNumber: { type: String, required: true, unique: true, index: true }, // QT-2026-00001
 
     /**
      * The customer.
      *
      * **Required, unlike a `Ticket`'s.** A ticket exists because a device is
      * physically on the bench and the counter can chase the name later; an
-     * estimate exists to be sent to somebody, and one addressed to nobody
+     * quote exists to be sent to somebody, and one addressed to nobody
      * cannot be. The denormalised contact fields beside it are what the list
      * searches and what a document prints, held the way `Ticket` holds them so
      * an account renamed later does not rewrite what was sent.
@@ -123,7 +122,7 @@ const serviceQuoteSchema = new mongoose.Schema(
     customerPhone: { type: String, trim: true, maxlength: 40, index: true },
     customerEmail: { type: String, trim: true, lowercase: true, maxlength: 160 },
 
-    /** The shop that quoted. An accepted estimate passes this to its ticket. */
+    /** The shop that quoted. An accepted quote passes this to its ticket. */
     business: { type: mongoose.Schema.Types.ObjectId, ref: 'Business', default: null, index: true },
 
     source: { type: String, enum: SERVICE_QUOTE_SOURCES, default: 'counter' },
@@ -132,7 +131,7 @@ const serviceQuoteSchema = new mongoose.Schema(
     serviceType: { type: String, enum: SERVICE_TYPES, default: 'walk_in' },
 
     /**
-     * The date the estimate is dated, which is not `createdAt`.
+     * The date the quote is dated, which is not `createdAt`.
      *
      * A staff member writing up yesterday's phone call dates it yesterday, and the
      * document has to say so.
@@ -141,7 +140,7 @@ const serviceQuoteSchema = new mongoose.Schema(
 
     /**
      * Expiry is honoured, not enforced by a job - the same rule `Quote` states:
-     * an estimate is expired because the date has passed, so no nightly task
+     * a quote is expired because the date has passed, so no nightly task
      * exists whose only purpose is keeping a column honest.
      */
     validUntil: Date,
@@ -157,7 +156,7 @@ const serviceQuoteSchema = new mongoose.Schema(
 
     // --- money --------------------------------------------------------------
     // Every figure integer cents, every one recomputed server-side from the
-    // lines above. Stored so the estimate can restate what it promised.
+    // lines above. Stored so the quote can restate what it promised.
     discountCents: { type: Number, default: 0, min: 0 },
     discountCode: { type: String, trim: true, maxlength: 40 },
 
@@ -173,7 +172,7 @@ const serviceQuoteSchema = new mongoose.Schema(
 
     /**
      * The rate quoted at, as a percentage, stored rather than read from
-     * settings at render time: an estimate quoted at 5% must still say 5% after
+     * settings at render time: a quote priced at 5% must still say 5% after
      * the shop changes its default.
      */
     taxRate: { type: Number, default: 0, min: 0, max: 100 },
@@ -183,7 +182,7 @@ const serviceQuoteSchema = new mongoose.Schema(
     subtotalCents: { type: Number, default: 0 },
     totalCents: { type: Number, default: 0 },
 
-    /** The ticket this estimate became, once the customer brought the device in. */
+    /** The ticket this quote became, once the customer brought the device in. */
     convertedTicket: { type: mongoose.Schema.Types.ObjectId, ref: 'Ticket', default: null },
 
     timeline: [

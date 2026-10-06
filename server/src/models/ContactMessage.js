@@ -10,6 +10,13 @@ import mongoose from 'mongoose';
  */
 const contactMessageSchema = new mongoose.Schema(
   {
+    /**
+     * The web quote number, `WQ-2026-00012` (2026-10-06). An enquiry from the
+     * website IS the web quote, so it is numbered the day it arrives, from the
+     * counter it shares with the product `Quote` (`services/webQuoteNumbers.js`).
+     * Sparse so rows from before numbering can be filled in by the backfill.
+     */
+    number: { type: String, trim: true, unique: true, sparse: true },
     name: { type: String, required: true },
     business: String,
     email: { type: String, required: true, lowercase: true, index: true },

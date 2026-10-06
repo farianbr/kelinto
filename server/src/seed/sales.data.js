@@ -44,10 +44,10 @@ const QUOTE_PLANS = [
  * one the running code would produce.
  */
 /**
- * `startSequence` lets a second batch of quotes continue this one's numbering.
- * Repair quotes are built separately (`repairs.data.js`) and land in the same
- * `QT-` series, and `quoteNumber` is uniquely indexed - two builders both
- * starting at 1 would collide on insert.
+ * `startSequence` lets a second batch of quotes continue this one's numbering:
+ * `quoteNumber` is uniquely indexed, so two batches both starting at 1 would
+ * collide on insert. Repair quotes are a separate model (`ServiceQuote`) and
+ * are seeded by `seed:demo -- sales`.
  */
 function buildQuotes({
   products,
@@ -100,7 +100,7 @@ function buildQuotes({
     }
 
     return {
-      quoteNumber: `QT-${year}-${String(sequence++).padStart(5, '0')}`,
+      quoteNumber: `WQ-${year}-${String(sequence++).padStart(5, '0')}`,
       user: user._id,
       source: 'admin',
       status: plan.status,

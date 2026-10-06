@@ -1,20 +1,20 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import mongoose from 'mongoose';
 import { connectDb, disconnectDb } from '../config/db.js';
 import { db, dbFor } from '../db/models.js';
-import { runInBusiness } from '../db/context.js';
+import { currentContext, runInBusiness } from '../db/context.js';
 import '../models/Business.js';
 import '../models/Product.js';
 import { getCategory, invalidateCatalog } from '../services/catalogService.js';
 import { phoneProductFor } from '../services/phoneStockService.js';
 import { applyStockMovement } from '../services/purchaseService.js';
+import { listKeys } from '../services/storageService.js';
+import { libraryKey, libraryPrefix } from '../utils/photoLibrary.js';
 
 /**
  * Pre-owned phones from the client's photographs (2026-10-02).
  *
- * The client supplied one photo per handset in `client/public/product-photos/phones`,
+ * The client supplied one photo per handset, kept in the business's photo
+ * library in R2 (`businesses/<code>/library/phones/`, `utils/photoLibrary.js`),
  * and the file name says everything about it: "(Good) Apple iPhone 15 Pro Max
  * 256GB – Black Titanium.webp" is a Good-condition iPhone 15 Pro Max, 256 GB, in
  * Black Titanium. Each file becomes one product in the Phones type with one in
@@ -38,13 +38,9 @@ import { applyStockMovement } from '../services/purchaseService.js';
  * Cost is what a buyback at roughly 70% of the selling price would have paid.
  *
  * ADDITIVE and idempotent: a photo already on a phone is skipped, so re-running
- * adds only files dropped into the folder since. Never wipes. Seeds every
+ * adds only files uploaded to that folder since. Never wipes. Seeds every
  * business, each in its own database.
  */
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const PHOTO_DIR = path.resolve(here, '../../../client/public/product-photos/phones');
-const SITE_DIR = '/product-photos/phones';
 
 /** "(Good) Apple iPhone 15 Pro Max 256GB – Black Titanium.webp", the en dash optional. */
 const NAME_PATTERN = /^\((Excellent|Good|Fair)\)\s+(Apple)\s+(iPhone\s+(\d+)e?(?:\s+(?:Plus|Pro Max|Pro))?)\s+(\d+(?:GB|TB))\s+(?:–\s+)?(.+)\.(?:jpe?g|png|webp)$/i;
@@ -81,9 +77,15 @@ const DESCRIPTIONS = {
 /** Dollars to whole cents, ending in 9 the way a shelf price does. */
 const shelfCents = (dollars) => (Math.round(dollars / 10) * 10 - 1) * 100;
 
-/** Every photo in the folder, read from its name. Unreadable names are reported, not guessed. */
-function readPhotos() {
-  const files = fs.readdirSync(PHOTO_DIR).filter((file) => /\.(jpe?g|png|webp)$/i.test(file));
+/**
+ * Every photo in one business's phones folder, read from its name. Unreadable
+ * names are reported, not guessed.
+ */
+async function readPhotos(code) {
+  const prefix = libraryPrefix(code, 'phones');
+  const files = (await listKeys(prefix))
+    .map((key) => key.slice(prefix.length))
+    .filter((file) => /\.(jpe?g|png|webp)$/i.test(file));
   const phones = [];
   const unread = [];
   for (const file of files) {
@@ -134,7 +136,13 @@ function readPhotos() {
  */
 async function seedPhones({ quiet = false } = {}) {
   const log = quiet ? () => {} : (...args) => console.log(...args);
-  const { phones, unread } = readPhotos();
+  const code = currentContext()?.code;
+  if (!code) throw new Error('seedPhones runs inside a business.');
+  const { phones, unread } = await readPhotos(code);
+  if (!phones.length && !unread.length) {
+    log(`  no photos found in R2 under ${libraryPrefix(code, 'phones')}, nothing to add`);
+    return { added: 0, skipped: 0, unread: 0 };
+  }
   for (const file of unread) log(`  could not read "${file}", skipped`);
 
   // Reading the type makes sure Phones is a product type with its grades and features.
@@ -146,9 +154,10 @@ async function seedPhones({ quiet = false } = {}) {
   const placed = new Map();
 
   for (const phone of phones) {
-    const photo = `${SITE_DIR}/${encodeURIComponent(phone.file)}`;
+    // The R2 key, as every stored picture is; the server adds the address.
+    const photo = libraryKey(code, 'phones', phone.file);
     const base = phone.file.replace(/\.(jpe?g|png|webp)$/i, '');
-    const samePhoto = ['jpg', 'jpeg', 'png', 'webp'].map((ext) => `${SITE_DIR}/${encodeURIComponent(`${base}.${ext}`)}`);
+    const samePhoto = ['jpg', 'jpeg', 'png', 'webp'].map((ext) => libraryKey(code, 'phones', `${base}.${ext}`));
 
     const existing = await db().Product.findOne({ image: { $in: samePhoto } }).select('image').lean();
     if (existing) {
@@ -193,7 +202,7 @@ async function seedPhones({ quiet = false } = {}) {
   return { added, skipped, unread: unread.length };
 }
 
-/** CLI entry: `npm run seed:phones`. */
+/** CLI entry: `npm run seed:demo -- phones`. */
 if (process.argv[1] && process.argv[1].endsWith('phones.js')) {
   (async () => {
     console.log('\n  Phone products from their photos…\n');

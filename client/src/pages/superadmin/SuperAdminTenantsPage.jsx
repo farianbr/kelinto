@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { Building2, Plus, Search } from 'lucide-react';
+import { Building2, Plus, Search, X } from 'lucide-react';
 
 import cn from '@/lib/cn';
 import { pressable } from '@/lib/motion';
@@ -143,8 +143,19 @@ export function SuperAdminTenantsPage() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Name, contact or business"
-            className="h-9 w-full rounded-lg border border-plat-line bg-plat-surface pl-9 pr-3 text-lg text-plat-text outline-none placeholder:text-plat-dim focus:border-plat-accent focus:ring-2 focus:ring-plat-accent/25 sm:text-sm"
+            className="h-9 w-full rounded-lg border border-plat-line bg-plat-surface pl-9 pr-9 text-lg text-plat-text outline-none placeholder:text-plat-dim focus:border-plat-accent focus:ring-2 focus:ring-plat-accent/25 sm:text-sm"
           />
+          {/* Our own clear button: the browser's native one is hidden app-wide. */}
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              aria-label="Clear search"
+              className={cn(pressable, 'absolute right-1.5 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-plat-dim hover:text-plat-text')}
+            >
+              <X className="size-3.5" strokeWidth={2.25} aria-hidden="true" />
+            </button>
+          )}
         </label>
         <div className="flex gap-1" role="group" aria-label="Filter tenants">
           {FILTERS.map((option) => (

@@ -12,6 +12,11 @@ import { backfillLoginDirectory } from '../services/loginDirectory.js';
 import { backfillSupplierLogins } from '../services/supplierPortalService.js';
 import { backfillKelintoNaming } from './backfill-kelinto-naming.js';
 import { backfillPhonesToProducts } from './backfill-phones-to-products.js';
+import { backfillTicketPriority } from './backfill-ticket-priority.js';
+import { backfillLabelChannels } from './backfill-label-channels.js';
+import { backfillQuoteNumbers } from './backfill-quote-numbers.js';
+import { backfillStockMedia } from './backfill-stock-media.js';
+import { backfillEnquiryNumbers } from './backfill-enquiry-numbers.js';
 
 /**
  * One door onto the seven one-off migrations.
@@ -94,6 +99,31 @@ const TASKS = [
     name: 'phones-to-products',
     run: backfillPhonesToProducts,
     summary: 'Move every unsold pre-owned phone onto a product with stock in the Phones type.',
+  },
+  {
+    name: 'ticket-priority',
+    run: backfillTicketPriority,
+    summary: 'Remove the retired priority field and its index from every ticket.',
+  },
+  {
+    name: 'label-channels',
+    run: backfillLabelChannels,
+    summary: 'Turn each invoice status’s single message channel into a channel list.',
+  },
+  {
+    name: 'quote-numbers',
+    run: backfillQuoteNumbers,
+    summary: 'Renumber quotes EST- to QT- and web quotes QT- to WQ-, notes included.',
+  },
+  {
+    name: 'stock-media',
+    run: backfillStockMedia,
+    summary: 'Copy the seeded photos into each business’s own R2 library and point its records there (--dry-run to look first).',
+  },
+  {
+    name: 'enquiry-numbers',
+    run: backfillEnquiryNumbers,
+    summary: 'Give every web quote (website enquiry) its WQ- number, oldest first.',
   },
 ];
 

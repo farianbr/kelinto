@@ -5,7 +5,6 @@ import ApiError from '../utils/ApiError.js';
 import { likeRegex } from '../utils/regex.js';
 import { parseCsv, rowsWithoutHeader } from '../utils/csv.js';
 import { canSeePricing } from '../middleware/auth.js';
-import { servicePhotoFor } from '../../../shared/catalog.js';
 import { addLine, categoryFacet, deviceTypeNameOf, invalidateCatalog, serviceApplies } from './catalogService.js';
 import storage, { urlOf } from './storageService.js';
 import { currentContext } from '../db/context.js';
@@ -70,9 +69,13 @@ function assertOwnImage(url) {
   }
 }
 
-/** The website's picture for a service: its own upload, else the stock photo by name. */
+/**
+ * The website's picture for a service: its own image, or none. The seeded
+ * photos are on the record as keys into the business's own library; nothing is
+ * matched by name any more, which put one business's photos on every business.
+ */
 function pictureOf(row) {
-  return urlOf(row.image) || servicePhotoFor(row.name) || '';
+  return urlOf(row.image) || '';
 }
 
 /**

@@ -255,7 +255,7 @@ const PAGE_FAQS = {
   ],
   contact: [
     ['How quickly will you reply?', 'We answer messages during store hours, usually the same day.'],
-    ['Can I get a quote without bringing the device in?', 'For common repairs, yes. Send the make, model and what happened, ideally with a photo, and we will give you an estimate.'],
+    ['Can I get a quote without bringing the device in?', 'For common repairs, yes. Send the make, model and what happened, ideally with a photo, and we will send you a quote.'],
     ['Can I message you on WhatsApp?', 'Yes. The WhatsApp button next to our address opens a chat with the store.'],
   ],
   blog: [
@@ -431,7 +431,7 @@ async function seedWebsiteSections({ businessName = '', quiet = false } = {}) {
   return { written, kept };
 }
 
-// CLI entry: `npm run seed:website`
+// CLI entry: `npm run seed:demo -- website`
 if (process.argv[1] && process.argv[1].endsWith('website-sections.js')) {
   (async () => {
     console.log('\n  Seeding website page sections…\n');

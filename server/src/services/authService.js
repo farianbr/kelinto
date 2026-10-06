@@ -699,12 +699,17 @@ async function claimWebsiteHandoff(token, res, { businessId }) {
     return null;
   }
 
-  if (await isRevoked({ parent: payload.parent })) return null;
+  // The three reads are independent, so they go to the database together
+  // rather than one after another (2026-10-06: the Website button was slow,
+  // and each sequential trip to Atlas sat between the click and the page).
+  const [revoked, admin, member] = await Promise.all([
+    isRevoked({ parent: payload.parent }),
+    controlModels().User.findOne({ _id: payload.sub, role: 'admin' }),
+    db().User.findOne({ _id: payload.sub, role: { $in: ['admin', 'staff'] } }),
+  ]);
+  if (revoked) return null;
 
-  const admin = await controlModels().User.findOne({ _id: payload.sub, role: 'admin' });
-  const user = admin && (await adminMaySignInHere(admin, businessId))
-    ? admin
-    : await db().User.findOne({ _id: payload.sub, role: { $in: ['admin', 'staff'] } });
+  const user = admin && (await adminMaySignInHere(admin, businessId)) ? admin : member;
   if (!user || user.lockedAt) return null;
 
   issueSession(res, user, false, user === admin ? null : businessId, {

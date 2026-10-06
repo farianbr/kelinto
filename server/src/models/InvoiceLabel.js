@@ -1,7 +1,9 @@
 import mongoose from 'mongoose';
 
-import { MESSAGE_CHANNELS } from './MessageLog.js';
 import { MESSAGE_BODY_MAX } from '../../../shared/messageHtml.js';
+
+/** The channels a status message can go out on. A call is a task for staff, not a message. */
+const LABEL_CHANNELS = ['email', 'sms', 'whatsapp'];
 
 /**
  * The manual status an admin sets on an invoice (Sales § Invoice).
@@ -88,7 +90,17 @@ const invoiceLabelSchema = new mongoose.Schema(
      * should still hear from us - and ships off, like every message here.
      */
     delayDays: { type: Number, default: 0, min: 0, max: 365 },
-    channel: { type: String, enum: MESSAGE_CHANNELS, default: 'email' },
+    /**
+     * Every channel the message goes out on (client ruling 2026-10-06:
+     * "template statuses should allow multiple channel selection, i.e. Thanks
+     * for Support"). A list, so one status can email the warranty details and
+     * text a short thank-you; the staff member setting the status can still
+     * untick any of them for that one invoice (`Invoice.labelChannels`).
+     */
+    channels: {
+      type: [{ type: String, enum: LABEL_CHANNELS }],
+      default: ['email'],
+    },
     subject: { type: String, trim: true, maxlength: 200, default: '' },
     message: { type: String, trim: true, maxlength: MESSAGE_BODY_MAX, default: '' },
     messageActive: { type: Boolean, default: false },
@@ -111,5 +123,5 @@ invoiceLabelSchema.index({ isActive: 1, order: 1, name: 1 });
 
 const InvoiceLabel = mongoose.model('InvoiceLabel', invoiceLabelSchema);
 
-export { InvoiceLabel };
+export { InvoiceLabel, LABEL_CHANNELS };
 export default InvoiceLabel;

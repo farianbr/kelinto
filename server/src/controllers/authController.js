@@ -207,13 +207,15 @@ const claimWebsiteHandoff = asyncHandler(async (req, res) => {
       ? await authService.claimWebsiteHandoff(req.query.t, res, { businessId: req.businessScope })
       : null;
   if (claimed) {
-    await auditService.recordSecurity({
+    // Not awaited: the browser is waiting on this redirect, and the audit row
+    // is written all the same (recordSecurity catches its own failure).
+    auditService.recordSecurity({
       req,
       action: 'auth.website_view',
       entity: { kind: 'session', id: '', label: 'website' },
       description: `${claimed.user.email} opened the website from the ERP.`,
       subject: claimed.user,
-    });
+    }).catch((error) => console.error(`  Website-view audit not written - ${error.message}`));
   }
   res.redirect(302, claimed?.to ?? '/');
 });

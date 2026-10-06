@@ -16,7 +16,6 @@ import {
   Smartphone,
   RotateCcw,
   StickyNote,
-  Tag,
   Trash2,
   Wallet,
 } from 'lucide-react';
@@ -25,6 +24,7 @@ import { apiUrl } from '@/lib/api';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
 import Modal from '@/components/ui/Modal';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import InvoiceStatusDialog from '@/components/admin/InvoiceStatusDialog';
 import Input from '@/components/ui/Input';
 import Textarea from '@/components/ui/Textarea';
 import SelectField from '@/components/ui/SelectField';
@@ -1179,68 +1179,10 @@ export function AdminInvoicesPage() {
         )}
       </Modal>
 
-      {/* Confirms, like a ticket status change and for the same reason: a
-          status can carry a message to the customer, and a picker in a table
-          row is clicked on the wrong line eventually.
-
-          `tone="info"` - it is reversible and moves no money. Red on an ordinary
-          move teaches staff to click through reds. */}
-      <ConfirmDialog
-        open={Boolean(statusMove)}
-        onClose={() => setStatusMove(null)}
-        tone="info"
-        heading="Change after sales status?"
-        title={
-          statusMove ? (
-            <>
-              {statusMove.label ? (
-                <>
-                  Set <strong className="font-semibold text-ink-900">{statusMove.invoice.number}</strong>{' '}
-                  to{' '}
-                  <strong className="font-semibold text-ink-900">{statusMove.label.name}</strong>?
-                </>
-              ) : (
-                <>
-                  Clear the status on{' '}
-                  <strong className="font-semibold text-ink-900">{statusMove.invoice.number}</strong>?
-                </>
-              )}
-            </>
-          ) : (
-            ''
-          )
-        }
-        body={
-          statusMove?.label?.messageActive && statusMove.label.message?.trim() ? (
-            <p className="flex items-start gap-2 rounded-md bg-warn-50 px-3 py-2.5 text-sm text-warn">
-              <Mail className="mt-0.5 size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
-              <span>
-                {statusMove.label.name} sends the customer its message{' '}
-                {statusMove.label.delayDays
-                  ? `${statusMove.label.delayDays} ${statusMove.label.delayDays === 1 ? 'day' : 'days'} after it is set`
-                  : 'once it is set'}
-                , with the next run of the scheduled messages. It moves no money.
-              </span>
-            </p>
-          ) : (
-            'This is where the invoice has got to with the customer. It moves no money and changes no balance.'
-          )
-        }
-        confirmLabel="Confirm change"
-        loading={setInvoiceLabel.isPending}
-        error={setInvoiceLabel.error?.message}
-        onConfirm={() =>
-          setInvoiceLabel.mutate(
-            {
-              number: statusMove.invoice.number,
-              labelId: statusMove.label?.id ?? null,
-            },
-            {
-              onSuccess: () => setStatusMove(null),
-            },
-          )
-        }
-      />
+      {/* Confirms, like a ticket status change and with the same dialog shape:
+          a status can carry a message to the customer, so its channels are
+          offered to untick. See `InvoiceStatusDialog`. */}
+      <InvoiceStatusDialog move={statusMove} labels={labels} onClose={() => setStatusMove(null)} />
       {/*
         Deleting, and saying exactly what goes with it.
 

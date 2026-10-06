@@ -57,7 +57,22 @@ export function deviceFormResolver(schema, { billable = false, optionalIds = [] 
   const validate = zodResolver(schema);
 
   return async (values, context, options) => {
-    const result = await validate(normalise(values, optionalIds), context, options);
+    const validated = await validate(normalise(values, optionalIds), context, options);
+
+    /*
+      The placeholders come back OUT before anything is submitted.
+
+      react-hook-form hands `onSubmit` the values this resolver returns, not the
+      ones the form holds - so a blank row replaced by its placeholder below was
+      posted as a real line called "x" at $0. Every form's own filter keeps a
+      row with a name, and "x" has one. The placeholder only exists to get past
+      zod; once zod has passed, the rows nobody touched are dropped here, by
+      the same rule that made them placeholders.
+    */
+    const result = Object.keys(validated.errors ?? {}).length
+      ? validated
+      : { ...validated, values: dropBlankLines(validated.values, values) };
+
     if (!billable) return result;
 
     const errors = { ...result.errors };
@@ -176,6 +191,29 @@ function normalise(values, optionalIds = []) {
  * or absent, so the empty string has to go rather than be sent as a malformed
  * id.
  */
+/**
+ * The parsed values minus every row that was blank in the form.
+ *
+ * Index-aligned with the form's own rows, which is why the placeholders were
+ * replaced in place rather than removed: row `j` of the parsed result is row
+ * `j` of what the person saw.
+ */
+function dropBlankLines(parsed, original) {
+  if (!parsed || !Array.isArray(parsed.devices)) return parsed;
+
+  return {
+    ...parsed,
+    devices: parsed.devices.map((device, index) => {
+      const source = original?.devices?.[index] ?? {};
+      return {
+        ...device,
+        services: (device.services ?? []).filter((_, j) => isStarted(source.services?.[j])),
+        parts: (device.parts ?? []).filter((_, j) => isStarted(source.parts?.[j])),
+      };
+    }),
+  };
+}
+
 function line(entry) {
   const cleaned = { ...entry };
 

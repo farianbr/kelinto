@@ -16,7 +16,6 @@ import {
   History,
   Link2,
   Mail,
-  MessageCircle,
   Package,
   Pencil,
   Phone,
@@ -686,10 +685,22 @@ const WEB_QUOTE_TONES = { new: 'brand', read: 'info', closed: 'neutral' };
 
 const WEB_QUOTE_COLUMNS = [
   {
+    key: 'number',
+    header: 'Web quote',
+    priority: 1,
+    width: '18%',
+    render: (row) =>
+      row.number ? (
+        <span className="block whitespace-nowrap font-mono text-sm font-medium text-ink-900">{row.number}</span>
+      ) : (
+        <span className="text-xs text-ink-300">–</span>
+      ),
+  },
+  {
     key: 'createdAt',
     header: 'Received',
     priority: 1,
-    width: '20%',
+    width: '16%',
     sortValue: (row) => new Date(row.createdAt).getTime(),
     render: (row) => (
       <span className="tnum whitespace-nowrap text-sm text-ink-500">
@@ -712,7 +723,7 @@ const WEB_QUOTE_COLUMNS = [
     key: 'message',
     header: 'Enquiry',
     priority: 2,
-    width: '40%',
+    width: '26%',
     render: (row) => (
       <span className="block truncate text-sm text-ink-700">{row.message}</span>
     ),
@@ -1084,13 +1095,12 @@ export function AdminClientProfilePage() {
     setSearchParams(params, { replace: true });
   }
 
-  /** Query string that pre-fills the ticket form's free-text customer. */
-  const ticketSeed = new URLSearchParams({
-    client: id,
-    name: user.displayName ?? '',
-    phone: user.phone ?? '',
-    email: user.email ?? '',
-  }).toString();
+  /**
+   * Query string that picks this account on the ticket form. The ticket copies
+   * the name, phone and email off the account itself, the way the estimate and
+   * the invoice do, so only the id travels.
+   */
+  const ticketSeed = new URLSearchParams({ client: id }).toString();
 
   /**
    * The header strip's figures.
@@ -1332,10 +1342,6 @@ export function AdminClientProfilePage() {
               seeded with this account - never a second form of its own, which
               is how two create paths end up disagreeing (§7.2). */}
           <div className="flex flex-wrap items-center gap-2">
-            {/* A ticket stores its customer as free text, so the name, phone
-                and email travel with the link rather than an id the tickets
-                page would have to look up. `client` links it back to the
-                account so this profile can count its own open jobs. */}
             <Link to={`/admin/tickets?new=1&${ticketSeed}`}>
               <Button size="sm" icon={Wrench}>
                 New ticket

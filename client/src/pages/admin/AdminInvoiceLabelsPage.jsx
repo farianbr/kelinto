@@ -1,8 +1,7 @@
 import { useState } from 'react';
-import { Link } from 'react-router';
 import { zodResolver } from '@hookform/resolvers/zod';
 import useAdminForm from '@/hooks/useAdminForm';
-import { AlertCircle, FileText, Mail, Pencil, Plus, Power, Tag, Trash2 } from 'lucide-react';
+import { AlertCircle, Mail, Pencil, Plus, Power, Tag, Trash2 } from 'lucide-react';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
 import Modal from '@/components/ui/Modal';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
@@ -19,7 +18,6 @@ import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { LABEL_COLOR_OPTIONS, invoiceLabelSchema } from '@shared/schemas/admin.js';
 import { useAdminInvoiceLabels, useAdminInvoiceRules, useAdminMutations } from '@/hooks/useAdmin';
 import ActiveSwitch from '@/components/admin/ActiveSwitch';
-import { pressable } from '@/lib/motion';
 import cn from '@/lib/cn';
 import TabRow from '@/components/ui/TabRow';
 import { InvoiceMessagesBody, MessageFields } from '@/pages/admin/AdminInvoiceStatusPage';
@@ -121,7 +119,7 @@ function LabelForm({ label, onSubmit, onCancel, isPending, error, tokens, channe
       isActive: label?.isActive ?? true,
       order: label?.order ?? 0,
       delayDays: label?.delayDays ?? 0,
-      channel: label?.channel ?? 'email',
+      channels: label?.channels?.length ? label.channels : ['email'],
       subject: label?.subject ?? '',
       message: label?.message ?? '',
       // Off until somebody switches it on, like every message here.
@@ -138,7 +136,7 @@ function LabelForm({ label, onSubmit, onCancel, isPending, error, tokens, channe
 
   // `MessageFields` speaks a plain object and a patch function, the shape the
   // scheduled-message card uses, so it is bridged onto the form here.
-  const messageForm = { channel: watch('channel'), subject: watch('subject'), message: watch('message') };
+  const messageForm = { channels: watch('channels'), subject: watch('subject'), message: watch('message') };
   const setMessage = (patch) =>
     Object.entries(patch).forEach(([key, value]) =>
       setValue(key, value, { shouldDirty: true, shouldValidate: key === 'message' && Boolean(errors.message) }),
@@ -209,6 +207,8 @@ function LabelForm({ label, onSubmit, onCancel, isPending, error, tokens, channe
         tokens={tokens}
         channels={channels}
         messageError={errors.message?.message}
+        // A status can send on several channels at once (2026-10-06).
+        multiple
       />
 
       <ActiveSwitch
@@ -253,7 +253,7 @@ function InvoiceLabelsBody({ creating = false, onCreatingChange }) {
       isActive: Boolean(values.isActive),
       order: Number(values.order) || 0,
       delayDays: Math.max(Number(values.delayDays) || 0, 0),
-      channel: values.channel || 'email',
+      channels: values.channels?.length ? values.channels : ['email'],
       subject: values.subject ?? '',
       message: values.message ?? '',
       messageActive: Boolean(values.messageActive),
@@ -290,13 +290,17 @@ function InvoiceLabelsBody({ creating = false, onCreatingChange }) {
     },
     {
       key: 'channel',
-      header: 'Channel',
+      header: 'Channels',
       priority: 2,
       render: (label) =>
         hasMessage(label) ? (
-          <Badge tone={label.channel === 'email' ? 'info' : 'warn'} size="sm">
-            {CHANNEL_LABELS[label.channel] ?? label.channel}
-          </Badge>
+          <span className="flex flex-wrap gap-1">
+            {(label.channels ?? []).map((channel) => (
+              <Badge key={channel} tone={channel === 'email' ? 'info' : 'warn'} size="sm">
+                {CHANNEL_LABELS[channel] ?? channel}
+              </Badge>
+            ))}
+          </span>
         ) : (
           <span className="text-xs text-ink-400">–</span>
         ),

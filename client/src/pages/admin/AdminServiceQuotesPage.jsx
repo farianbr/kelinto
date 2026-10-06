@@ -69,7 +69,7 @@ function deviceSummary(quote) {
  * Repair quotes (Sales § Quote, service businesses).
  *
  * **The service half of one nav row.** `AdminQuotesPage` renders this instead
- * of the wholesale quote list when the business sells services. They are
+ * of the web quote list when the business sells services. They are
  * separate models and separate screens, but one section: under
  * database-per-business a shop only ever has one kind, so a business never sees
  * a list that mixes them and never needs two menu items to find its own.
@@ -87,7 +87,7 @@ export function AdminServiceQuotesPage() {
   useCreateRedirect('/admin/quotes/create');
   const [query, setQuery] = useState('');
   const [converting, setConverting] = useState(null);
-  // The estimate awaiting a typed number before it is destroyed.
+  // The quote awaiting a typed number before it is destroyed.
   const [deleting, setDeleting] = useState(null);
   const [selected, setSelected] = useState([]);
   // The bulk action waiting on its confirmation, and whether it is running.
@@ -271,7 +271,7 @@ export function AdminServiceQuotesPage() {
     },
     {
       key: 'convert',
-      label: 'Customer brought the device in',
+      label: 'Convert to ticket',
       icon: Smartphone,
       disabled: (quote) => quote.storedStatus !== 'accepted' || Boolean(quote.convertedTicket),
       onSelect: setConverting,
@@ -280,7 +280,7 @@ export function AdminServiceQuotesPage() {
       /**
        * Deleting, at any status (ruled 2026-09-21).
        *
-       * The estimate had no delete at all before this - a draft typed against
+       * The quote had no delete at all before this - a draft typed against
        * the wrong customer stayed in the list for ever. A converted one takes
        * its ticket's back-reference with it rather than leaving the ticket
        * pointing at a record that is gone; the ticket itself is untouched,
@@ -468,7 +468,7 @@ export function AdminServiceQuotesPage() {
       <ConfirmDialog
         open={Boolean(converting)}
         onClose={() => setConverting(null)}
-        title="Start work on this quote?"
+        title={`Convert ${converting?.quoteNumber ?? 'this quote'} to a ticket?`}
         body={
           converting
             ? `${converting.quoteNumber} for ${converting.customerName} becomes a repair ticket. ` +
@@ -494,10 +494,10 @@ export function AdminServiceQuotesPage() {
       />
 
       {/*
-        Deleting the estimate.
+        Deleting the quote.
 
         `critical` and a typed quote number, because the document is destroyed
-        rather than closed - and because a converted estimate is the paper the
+        rather than closed - and because a converted quote is the paper the
         customer agreed to, which is worth one deliberate act to remove. The
         body says what happens to the ticket, since that is the question a
         staff member will have at exactly this moment.

@@ -8,7 +8,6 @@ import {
   ArrowLeft,
   CheckCircle2,
   FileSignature,
-  Info,
   Lock,
   MapPin,
   Plus,
@@ -19,7 +18,6 @@ import {
 } from 'lucide-react';
 
 import {
-  INVOICE_SERVICE_TYPES,
   TAX_RATES,
   provinceTaxOptions,
   serviceQuoteSchema,
@@ -35,21 +33,22 @@ import Panel from '@/components/ui/Panel';
 import PageHeader from '@/components/admin/PageHeader';
 import MissingFields from '@/components/admin/MissingFields';
 import { Section } from '@/components/admin/DeviceLines';
+import SalesCustomerSection from '@/components/admin/SalesCustomerSection';
 import DeviceFinder from '@/components/admin/DeviceFinder';
-import PricedLines, { emptyLine } from '@/components/admin/PricedLines';
+import PricedLines from '@/components/admin/PricedLines';
 import { pressable } from '@/lib/motion';
 import {
   useAdminUsers,
   useAdminServices,
-  useAdminInventory,
   useAdminServiceQuote,
   useAdminMutations,
 } from '@/hooks/useAdmin';
 
-const SERVICE_TYPE_OPTIONS = INVOICE_SERVICE_TYPES;
-
 // Each option carries its tax name and rate - see `provinceTaxOptions`.
 const PROVINCE_OPTIONS = provinceTaxOptions();
+
+/** Every new document starts in Alberta (client ruling 2026-10-05). */
+const DEFAULT_PROVINCE = 'AB';
 
 /**
  * Both resolvers, built once at module scope rather than per render.
@@ -90,7 +89,8 @@ const emptyDevice = () => ({
   problem: '',
   solution: '',
   notes: '',
-  services: [emptyLine()],
+  // No blank row: the add bar under the list is where a line starts.
+  services: [],
   parts: [],
 });
 
@@ -110,7 +110,7 @@ function today() {
  * grid of "untested" rows filled in over the phone is a record that looks like
  * evidence and is not.
  */
-function DeviceBlock({ control, register, setValue, index, onRemove, canRemove, services, parts }) {
+function DeviceBlock({ control, register, setValue, index, onRemove, canRemove, services }) {
   return (
     <div className="rounded-lg border border-line bg-surface-2 p-3">
       <div className="mb-3 flex items-center justify-between gap-2 border-b border-line pb-2">
@@ -165,10 +165,8 @@ function DeviceBlock({ control, register, setValue, index, onRemove, canRemove, 
         register={register}
         setValue={setValue}
         name={`devices.${index}.services`}
-        label="Services for this device"
-        addLabel="Add service"
-        placeholder="Search a service…"
-        emptyHint="No services yet."
+        label="Services"
+        placeholder="Search services to add…"
         catalogue={services}
         refField="service"
       />
@@ -178,11 +176,8 @@ function DeviceBlock({ control, register, setValue, index, onRemove, canRemove, 
         register={register}
         setValue={setValue}
         name={`devices.${index}.parts`}
-        label="Parts required for this device"
-        addLabel="Add part"
-        placeholder="Search inventory…"
-        emptyHint="No parts yet."
-        catalogue={parts}
+        label="Parts"
+        placeholder="Scan or search parts to add…"
         refField="product"
       />
     </div>
@@ -224,37 +219,23 @@ export function AdminServiceQuoteFormPage() {
   const { data: existing, isLoading: loadingQuote } = useAdminServiceQuote(id);
   const { data: clientData } = useAdminUsers({ status: 'approved', limit: 500 });
   const { data: serviceData } = useAdminServices({ status: 'active', limit: 200 });
-  const { data: inventoryData } = useAdminInventory({ limit: 500 });
 
   const { createServiceQuote, updateServiceQuote } = useAdminMutations();
 
   const clients = clientData?.users ?? [];
   const services = serviceData?.services ?? [];
 
-  // Inventory lines carry a price in cents; the picker works in dollars, like
-  // every other amount a staff member types.
-  const parts = useMemo(
-    () =>
-      (inventoryData?.products ?? []).map((product) => ({
-        id: product.id,
-        name: product.name,
-        price: (product.price ?? 0) / 100,
-        description: product.sku ?? '',
-      })),
-    [inventoryData],
-  );
-
   const quote = existing?.quote;
 
   /**
-   * The estimate's own wire schema, so the form refuses exactly what the
+   * The quote's own wire schema, so the form refuses exactly what the
    * server would refuse. `zodResolver` was imported here from the start and
    * never passed, which left this page with no validation at all: a quote
    * addressed to nobody submitted cleanly and came back a 400.
    *
    * The customer is dropped on an edit because the server drops it too -
    * `serviceQuoteUpdateSchema` omits `user`, since re-pointing a sent document
-   * at a different person is a new estimate rather than a change to this one.
+   * at a different person is a new quote rather than a change to this one.
    * Validating a field the payload does not carry would block the save on a
    * value nobody can supply.
    */
@@ -309,8 +290,8 @@ export function AdminServiceQuoteFormPage() {
       extendedServiceFeeDollars: 0,
       discountDollars: 0,
       discountCode: '',
-      province: '',
-      taxRate: 5,
+      province: DEFAULT_PROVINCE,
+      taxRate: TAX_RATES[DEFAULT_PROVINCE],
     },
   });
 
@@ -434,7 +415,7 @@ export function AdminServiceQuoteFormPage() {
       {!editing && (
         <p className="mb-4 flex items-center gap-2 rounded-md bg-ok-50 px-3 py-2.5 text-sm text-ok">
           <CheckCircle2 className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
-          The quote number is assigned on save, as <strong>EST-{new Date().getFullYear()}-…</strong>
+          The quote number is assigned on save, as <strong>QT-{new Date().getFullYear()}-…</strong>
         </p>
       )}
 
@@ -449,62 +430,18 @@ export function AdminServiceQuoteFormPage() {
           before react-hook-form runs, one field at a time and unstyled, so the
           summary beside the button would never appear. See `TicketForm`. */}
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 pb-24" noValidate>
-        <Section icon={Info} title="Basic information">
-          <div className="grid gap-3 lg:grid-cols-3">
-            <SelectField
-              control={control}
-              name="user"
-              label="Customer"
-              // Required, and marked as such: an estimate exists to be sent to
-              // somebody, so `serviceQuoteSchema` refuses one addressed to
-              // nobody. On an edit it is fixed rather than optional - the
-              // server will not re-point a sent document - so the star goes
-              // with the field that can still be answered.
-              required={!editing}
-              // Searchable explicitly, not by row count: this list is every
-              // approved account and it grows with the business, so it has to
-              // be typeable at 500 rows as well as at five.
-              searchable
-              searchPlaceholder="Name, business or email…"
-              options={[
-                { value: '', label: '– Choose a customer –' },
-                ...clients.map((client) => ({
-                  value: client.id,
-                  label: `${client.displayName}${client.email ? ` · ${client.email}` : ''}`,
-                })),
-              ]}
-              // A customer is a record with a dozen fields, so this hands off
-              // to the form that owns it rather than inventing a second one -
-              // and carries the typed name so it is not retyped there.
-              onCreate={(typed) =>
-                navigate(
-                  `/admin/clients?new=1${typed ? `&name=${encodeURIComponent(typed)}` : ''}`,
-                )
-              }
-              createLabelEmpty="Add a customer"
-            />
-            <Input
-              label="Quote date"
-              type="date"
-              error={errors.quoteDate?.message}
-              {...register('quoteDate')}
-            />
-            <SelectField
-              control={control}
-              name="serviceType"
-              label="Service type"
-              options={SERVICE_TYPE_OPTIONS}
-            />
-          </div>
-
-          <p className="mt-2 text-xs text-ink-400">
-            No account yet?{' '}
-            <Link to="/admin/clients?new=1" className="font-medium text-brand underline">
-              Add a customer
-            </Link>{' '}
-            first - a quote is addressed to somebody.
-          </p>
-        </Section>
+        <SalesCustomerSection
+          control={control}
+          register={register}
+          errors={errors}
+          clients={clients}
+          dateField={{ name: 'quoteDate', label: 'Quote date' }}
+          // The server will not re-point a sent document at somebody else
+          // (`serviceQuoteUpdateSchema` omits `user`), so on an edit the
+          // customer is shown and fixed rather than offered.
+          lockCustomer={editing}
+          addHint="a quote is addressed to somebody"
+        />
 
         <Section icon={Smartphone} title="Devices and services">
           <div className="space-y-3">
@@ -518,7 +455,6 @@ export function AdminServiceQuoteFormPage() {
                 canRemove={deviceFields.length > 1}
                 onRemove={() => removeDevice(index)}
                 services={services}
-                parts={parts}
               />
             ))}
           </div>

@@ -377,6 +377,16 @@
     scroll-behavior: smooth;
   }
 
+  /* A search field's own clear button and magnifier, drawn by Chrome, Edge and
+     Safari, are off everywhere. Our search fields draw their own (a Search icon
+     inside, an X button that appears with text), and the native one put a
+     second X beside ours in a different colour and size (2026-10-06). */
+  input[type='search']::-webkit-search-cancel-button,
+  input[type='search']::-webkit-search-decoration {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
   body {
     background-color: var(--color-surface-2);
     color: var(--color-ink-700);

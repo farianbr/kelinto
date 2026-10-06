@@ -12,7 +12,7 @@ import '../models/Offer.js';
  *
  * ADDITIVE. It never wipes a collection, so it is safe on a database carrying
  * real accounts and order history - unlike `npm run seed`, and unlike
- * `seed:content`, which replaces every offer. Re-running it updates the same
+ * `seed:demo -- content`, which replaces every offer. Re-running it updates the same
  * records rather than making a second set: clearance is set by SKU and the
  * exclusive offer is upserted by slug.
  *
@@ -257,7 +257,7 @@ async function seedStorefrontPages({ quiet = false } = {}) {
 }
 
 /**
- * CLI entry: `npm run seed:storefront`.
+ * CLI entry: `npm run seed:demo -- storefront`.
  *
  * Every business gets its own pass, each against its own database. A standalone
  * seed has to open that context itself - there is no request middleware here to

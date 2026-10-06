@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 import { asyncHandler } from '../utils/ApiError.js';
 import * as serviceQuoteService from '../services/serviceQuoteService.js';
 import auditService from '../services/auditService.js';
@@ -5,10 +7,10 @@ import '../models/ServiceQuote.js';
 import '../models/Ticket.js';
 
 /**
- * Repair estimates (Sales § Quote, service businesses).
+ * Repair quotes (Sales § Quote, service businesses).
  *
  * Thin, like every controller here. The rules worth not routing around live in
- * the service: totals are recomputed server-side from the lines, an estimate is
+ * the service: totals are recomputed server-side from the lines, a quote is
  * accepted before it can become a ticket, and converting copies the devices
  * whole rather than summarising them.
  */
@@ -38,7 +40,7 @@ const setQuoteStatus = asyncHandler(async (req, res) => {
 });
 
 /**
- * Deleting an estimate destroys what was quoted to a customer, and a converted
+ * Deleting a quote destroys what was quoted to a customer, and a converted
  * one cannot be deleted at all - so the number is recorded, because after this
  * call it is the only trace of what was removed.
  */
@@ -82,7 +84,43 @@ const convertToTicket = asyncHandler(async (req, res) => {
   res.status(201).json(result);
 });
 
-export { listQuotes, getQuote, createQuote, updateQuote, setQuoteStatus, deleteQuote, convertToTicket };
+/**
+ * The quote as a printable page.
+ *
+ * The same per-response CSP the ticket and invoice documents send: nothing
+ * loads, and the one nonced script (the print button) may run.
+ */
+const quoteDocument = asyncHandler(async (req, res) => {
+  const nonce = randomBytes(16).toString('base64');
+  const html = await serviceQuoteService.quoteDocumentHtml(req.params.id, {
+    nonce,
+    businessId: req.businessScope,
+  });
+
+  res.setHeader(
+    'Content-Security-Policy',
+    [
+      "default-src 'none'",
+      "style-src 'unsafe-inline'",
+      'img-src data:',
+      `script-src 'nonce-${nonce}'`,
+      "base-uri 'none'",
+      "form-action 'none'",
+    ].join('; '),
+  );
+  res.type('html').send(html);
+});
+
+export {
+  listQuotes,
+  getQuote,
+  createQuote,
+  updateQuote,
+  setQuoteStatus,
+  deleteQuote,
+  convertToTicket,
+  quoteDocument,
+};
 export default {
   listQuotes,
   getQuote,
@@ -91,4 +129,5 @@ export default {
   setQuoteStatus,
   deleteQuote,
   convertToTicket,
+  quoteDocument,
 };

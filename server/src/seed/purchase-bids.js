@@ -17,7 +17,7 @@ import { SUPPLIER_COMPONENT_TYPES, buildBidOrders } from './purchase-bids.data.j
  * Was `seed:rfqs` until 2026-09-11, when requests for quote folded into the
  * purchase order.
  *
- * **Additive, like `seed:quotes` and `seed:content` - it never wipes.**
+ * **Additive, like `seed:demo -- web-quotes` and `seed:demo -- content` - it never wipes.**
  * `npm run seed` rebuilds the whole database, which is the wrong tool for
  * "give me some orders to look at" on an instance that already holds suppliers
  * and purchase orders somebody is using. This tags what is there and adds rows.
@@ -113,7 +113,7 @@ async function seedPurchaseBids({ quiet = false } = {}) {
   const suppliersByCode = new Map(fresh.filter((s) => s.code).map((s) => [s.code, s]));
 
   // Continue the sequence rather than restarting it, so a second run does not
-  // collide on `poNumber`'s unique index - the rule `seed:quotes` follows.
+  // collide on `poNumber`'s unique index - the rule `seed:demo -- web-quotes` follows.
   const year = new Date().getFullYear();
   const prefix = `PO-${year}-`;
   const last = await db().PurchaseOrder.findOne({ poNumber: new RegExp(`^${prefix}`) })

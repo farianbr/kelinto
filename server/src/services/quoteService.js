@@ -3,6 +3,7 @@ import { displayNameOf } from '../utils/displayName.js';
 
 import '../models/Ticket.js';
 import { nextTicketNumber, priceTicket } from './ticketService.js';
+import { takeTicketParts, assertPartsAvailable, partsDemand } from './repairPartsService.js';
 import { db } from '../db/models.js';
 import ApiError from '../utils/ApiError.js';
 import { sendQuoteCreatedEmail } from './transactionalMail.js';
@@ -10,6 +11,7 @@ import { likeRegex } from '../utils/regex.js';
 import notificationService from './notificationService.js';
 import orderBuilder from './orderBuilder.js';
 import { formatDate } from '../../../shared/dates.js';
+import { nextWebQuoteNumber } from './webQuoteNumbers.js';
 
 /**
  * Quotes (ERP rework §6.6, phase 7).
@@ -35,17 +37,12 @@ import { formatDate } from '../../../shared/dates.js';
 
 // ---- helpers ----------------------------------------------------------------
 
-async function nextQuoteNumber() {
-  const year = new Date().getFullYear();
-  const prefix = `QT-${year}-`;
-  const last = await db().Quote.findOne({ quoteNumber: new RegExp(`^${prefix}`) })
-    .sort({ quoteNumber: -1 })
-    .select('quoteNumber')
-    .lean();
-
-  const sequence = last ? Number(last.quoteNumber.slice(prefix.length)) + 1 : 1;
-  return `${prefix}${String(sequence).padStart(5, '0')}`;
-}
+/**
+ * `WQ-2026-00001`. The counter is shared with the website's enquiries, which
+ * are the web quotes proper (`webQuoteNumbers.js`), so a number names one
+ * record. `QT-` is the service quote's series.
+ */
+const nextQuoteNumber = () => nextWebQuoteNumber();
 
 function isObjectId(value) {
   return mongoose.Types.ObjectId.isValid(String(value ?? ''));
@@ -658,10 +655,10 @@ async function deleteQuote(id) {
 }
 
 /**
- * Turn an accepted estimate into the repair ticket that does the work.
+ * Turn an accepted quote into the repair ticket that does the work.
  *
  * **A quote has two honest destinations.** A parts quote becomes an ORDER
- * goods ship and money is owed immediately. A repair estimate becomes a TICKET:
+ * goods ship and money is owed immediately. A repair quote becomes a TICKET:
  * the device comes in, the work happens over days, and the invoice is raised
  * off the ticket at the end. `convertQuote` does the first; this does the
  * second, and a quote records which way it went.
@@ -669,14 +666,14 @@ async function deleteQuote(id) {
  * The quoted lines land on the ticket as **parts on one device**, which is what
  * a quote's items actually are - a SKU, a quantity and a price. The technician
  * adds labour as services once they have seen the device; a quote cannot know
- * that in advance, which is why the estimate and the final bill are allowed to
+ * that in advance, which is why the quote and the final bill are allowed to
  * differ and why the ticket, not the quote, is what gets invoiced.
  *
  * Accepted-only, for the same reason converting to an order is: starting work
- * on an estimate the customer has not agreed to is how a shop ends up eating
+ * on a quote the customer has not agreed to is how a shop ends up eating
  * the cost of it.
  */
-async function convertQuoteToTicket(id, { priority = 'normal', source = 'counter' } = {}, actor) {
+async function convertQuoteToTicket(id, { source = 'counter' } = {}, actor) {
   const query = isObjectId(id) ? { _id: id } : { quoteNumber: String(id) };
   const quote = await db().Quote.findOne(query).populate('user');
   if (!quote) throw ApiError.notFound('Quote not found.', 'QUOTE_NOT_FOUND');
@@ -708,6 +705,9 @@ async function convertQuoteToTicket(id, { priority = 'normal', source = 'counter
     product: item.product || undefined,
   }));
 
+  // The ticket will hold these parts, so the shelf has to have them now.
+  await assertPartsAvailable(partsDemand([{ parts }]));
+
   // The rate, derived from the quote's tax amount: a quote stores tax as cents
   // against a subtotal, a ticket stores a rate and recomputes from its own
   // lines - which change as the technician works.
@@ -730,7 +730,6 @@ async function convertQuoteToTicket(id, { priority = 'normal', source = 'counter
     business: quote.business ?? null,
 
     status: 'diagnosis',
-    priority,
     source,
 
     // Required on the model, and it is what the counter reads first: the
@@ -775,6 +774,10 @@ async function convertQuoteToTicket(id, { priority = 'normal', source = 'counter
 
     createdBy: actor?._id ?? null,
   });
+
+  // The ticket holds its parts from now on (`repairPartsService`, 2026-10-06).
+  await takeTicketParts(ticket, { createdBy: actor?._id });
+  await ticket.save();
 
   quote.convertedTicket = ticket._id;
   quote.status = 'converted';

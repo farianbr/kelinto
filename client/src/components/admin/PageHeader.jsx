@@ -53,7 +53,11 @@ export function PageHeader({
         </div>
       </div>
 
-      {action && <div className="flex shrink-0 flex-wrap items-center gap-2">{action}</div>}
+      {/* `max-w-full` is what lets the row wrap: as a non-shrinking flex item
+          it is otherwise as wide as all its buttons in a line, so on a phone a
+          record's four or five actions ran off the right edge instead of
+          dropping onto a second row. */}
+      {action && <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">{action}</div>}
     </header>
   );
 }

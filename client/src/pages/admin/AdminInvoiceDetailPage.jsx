@@ -7,11 +7,6 @@ import useAuth from '@/hooks/useAuth';
 import { invoiceTipSchema, invoicePaymentSchema } from '@shared/schemas/admin';
 import {
   AlertCircle,
-  ArrowLeft,
-  BadgeCheck,
-  Check,
-  CircleDollarSign,
-  FileText,
   History,
   Mail,
   HandCoins,
@@ -38,8 +33,18 @@ import Checkbox from '@/components/ui/Checkbox';
 import Textarea from '@/components/ui/Textarea';
 import SelectMenu from '@/components/ui/SelectMenu';
 import ActionMenu from '@/components/ui/ActionMenu';
-import ProcessStrip from '@/components/admin/ProcessStrip';
 import WorkflowLineage from '@/components/admin/WorkflowLineage';
+import InvoiceStatusDialog from '@/components/admin/InvoiceStatusDialog';
+import {
+  DocumentLayout,
+  DocumentDevices,
+  DocumentNotes,
+  DocumentSummary,
+  DocumentCustomer,
+  DocumentFacts,
+  DocumentHistory,
+  serviceTypeLabel,
+} from '@/components/admin/SalesDocument';
 import { useTableClasses, CountLine } from '@/components/admin/DataTable';
 import { toast } from '@/store/toastStore';
 import PageHeader from '@/components/admin/PageHeader';
@@ -98,23 +103,6 @@ const PAYMENT_METHODS = [
   { value: 'cash', label: 'Cash' },
   { value: 'cheque', label: 'Cheque' },
   { value: 'credit', label: 'Store credit' },
-];
-
-/**
- * The stages an invoice moves through.
- *
- * Rendered by the shared `ProcessStrip`, **not a local component**: quotes and
- * purchase orders already show their pipeline that way, and an invoice drawing
- * its own row of pills meant the same idea looked different on three screens.
- * One rail, one vocabulary, one place at the foot of the page.
- *
- * `overdue` is not a fourth stage - it is an unpaid invoice past its date, so
- * it sits at `unpaid` on the track and the header badge carries the lateness.
- */
-const INVOICE_LIFECYCLE = [
-  { key: 'unpaid', label: 'Unpaid', icon: FileText },
-  { key: 'partial', label: 'Partially paid', icon: CircleDollarSign },
-  { key: 'paid', label: 'Paid', icon: BadgeCheck },
 ];
 
 export function AdminInvoiceDetailPage() {
@@ -181,13 +169,10 @@ export function AdminInvoiceDetailPage() {
   const [reminding, setReminding] = useState(false);
 
   /**
-   * The status change waiting to be confirmed.
-   *
-   * `statusMove` is the chosen label, or null for "no status" - which is why the
-   * open flag is separate: null is a legitimate destination, so it cannot double
-   * as "nothing pending".
+   * The status change waiting to be confirmed: `{ invoice, label, pickable }`,
+   * or null when nothing is pending. `label` null is a real destination - "no
+   * status" - which is why it lives inside the object. See `InvoiceStatusDialog`.
    */
-  const [pickingStatus, setPickingStatus] = useState(false);
   const [statusMove, setStatusMove] = useState(null);
   const [refunding, setRefunding] = useState(() => searchParams.get('refund') === '1');
 
@@ -232,16 +217,19 @@ export function AdminInvoiceDetailPage() {
   const entries = auditData?.entries ?? auditData?.rows ?? [];
 
   const documentUrl = apiUrl(`/admin/invoices/${invoice.number}/document`);
+  const devices = invoice.devices ?? [];
+  const serviceType = serviceTypeLabel(invoice.serviceType);
 
   return (
-    // Header inside the measure, so it is not wider than the record it
-    // titles. Modals stay in here harmlessly: Overlay portals to the body, so
-    // a dialog is never constrained by this wrapper.
+    // Laid out the way the ticket and the estimate are (`SalesDocument`, client
+    // ruling 2026-10-05): this record's own working panel - the payments -
+    // leads the wide column, then the work it bills, the notes and the history;
+    // what it comes to, whose it is and when sit beside them.
     <div className="record-page">
       <PageHeader
         icon={ADMIN_PAGE.icon}
         title={invoice.number}
-        description={`Issued ${date(invoice.issuedAt)} to ${account}.`}
+        description={[account, serviceType].filter(Boolean).join(' · ')}
         // Two badges plus a picker, so they go under the title rather than
         // trailing off the end of it.
         badgesBelow
@@ -292,8 +280,7 @@ export function AdminInvoiceDetailPage() {
                 onChange={(next) => {
                   const current = invoice.label?.id ?? '';
                   if (next === current) return;
-                  setStatusMove(labels.find((entry) => entry.id === next) ?? null);
-                  setPickingStatus(true);
+                  setStatusMove({ invoice, label: labels.find((entry) => entry.id === next) ?? null });
                 }}
               />
             )}
@@ -301,13 +288,19 @@ export function AdminInvoiceDetailPage() {
         }
         action={
           <div className="flex flex-wrap items-center gap-2">
-            <Link
-              to="/admin/invoices"
-              className={cn(pressable, 'inline-flex h-9 items-center gap-1.5 rounded-md border border-line bg-surface px-3 text-sm font-medium text-ink-600 hover:border-ink-300 hover:bg-surface-2')}
+            {/* Print first, as on the ticket and the estimate: it is the one
+                action every document shares, and the place somebody looks for
+                it should not move between the three. There is no PDF generator
+                behind it - the route renders the invoice as a page, and the
+                browser's print dialog is where "save as PDF" lives. */}
+            <Button
+              size="sm"
+              variant="outline"
+              icon={Printer}
+              onClick={() => window.open(documentUrl, '_blank', 'noopener')}
             >
-              <ArrowLeft className="size-3.5" strokeWidth={2.25} aria-hidden="true" />
-              All invoices
-            </Link>
+              Print or PDF
+            </Button>
 
             {/* The full form on a service business, the clerical dialog on a
                 wholesaler - see `isService` above. */}
@@ -332,9 +325,7 @@ export function AdminInvoiceDetailPage() {
               Email
             </Button>
 
-            {/* Everything past the two a staff member reaches for daily. Print and
-                PDF are the same rendered document - one goes to a printer, the
-                other to a file. */}
+            {/* Everything past the ones a staff member reaches for daily. */}
             <ActionMenu
               label="More invoice actions"
               trigger={
@@ -351,29 +342,26 @@ export function AdminInvoiceDetailPage() {
                   onSelect: () => setPaying(true),
                 },
                 {
-                  /**
-                   * Where the invoice has got to with the customer.
-                   *
-                   * In the menu as well as on the badge row, because that is
-                   * where somebody goes looking for "what can I do to this
-                   * invoice" - a pill under the title reads as a label to be
-                   * read, not a control to be used, and a staff member who has
-                   * not been shown it will not try clicking it.
-                   */
+                  // In the menu as well as on the badge row, because that is
+                  // where somebody goes looking for "what can I do to this
+                  // invoice".
                   key: 'status',
                   label: 'Set after sales status',
                   icon: Tag,
                   // Nothing to pick from until the shop has made a list.
                   disabled: labels.length === 0,
-                  onSelect: () => setPickingStatus(true),
+                  onSelect: () =>
+                    setStatusMove({
+                      invoice,
+                      label: labels.find((entry) => entry.id === invoice.label?.id) ?? null,
+                      pickable: true,
+                    }),
                 },
                 {
                   key: 'remind',
                   label: 'Send reminder',
                   icon: BellRing,
-                  // Nothing owed, nothing to chase. The server refuses it too;
-                  // disabling here means the staff member is not offered a button
-                  // that asks a paid-up customer for money.
+                  // Nothing owed, nothing to chase.
                   disabled: settled,
                   onSelect: () => setReminding(true),
                 },
@@ -382,35 +370,15 @@ export function AdminInvoiceDetailPage() {
                   label: 'Refund',
                   icon: RotateCcw,
                   // Nothing received means nothing to give back. Disabled rather
-                  // than hidden, so the action stays where a staff member expects
-                  // to find it and the greyed row says why it cannot be used.
+                  // than hidden, so the greyed row says why it cannot be used.
                   disabled: (invoice.refundableCents ?? 0) <= 0,
                   onSelect: () => setRefunding(true),
-                },
-                {
-                  /**
-                   * One item, not a separate "Print" and "Download PDF".
-                   *
-                   * There is no PDF generator behind this: the route renders
-                   * the invoice as a document with its own print button, and
-                   * the browser's print dialog is where "save as PDF" lives.
-                   * Two entries would promise two different files and produce
-                   * the same page twice.
-                   */
-                  key: 'print',
-                  label: 'Print or save as PDF',
-                  icon: Printer,
-                  onSelect: () => window.open(documentUrl, '_blank', 'noopener'),
                 },
                 {
                   key: 'delete',
                   label: 'Delete',
                   icon: Trash2,
                   tone: 'danger',
-                  // Never disabled any more. It used to be refused once money
-                  // had touched the invoice, with voiding offered instead;
-                  // voiding is gone and deleting takes the payments with it,
-                  // which the confirm states before anything happens.
                   onSelect: () => setDeleting(true),
                 },
               ]}
@@ -419,391 +387,321 @@ export function AdminInvoiceDetailPage() {
         }
       />
 
-
-      <div className="space-y-4">
-        {/* The chain this invoice ends, when it ends one. An invoice raised
-            from a repair is the last of three records for one job, and until
-            now it said so only through a `reference` string reading "Repair
-            TK-…" - a sentence, not something a staff member could follow. An
-            invoice behind an *order* has no such chain and draws nothing. */}
-        {invoice.ticket && (
-          <WorkflowLineage
-            current="invoice"
-            quote={invoice.ticket.quote}
-            ticket={invoice.ticket}
-            invoice={invoice}
-          />
-        )}
-
-        {/**
-         * Payment information, leading the page.
-         *
-         * The two figures a staff member opens an invoice to check are what it is
-         * for and what has arrived - so they are the first thing on the screen,
-         * at a size that can be read across a desk, with the history that
-         * produced them directly underneath.
-         */}
-        {/* Two columns, not one stack.
-
-            The page capped itself at 900px and stacked its panels vertically,
-            so a third of a 1440px screen sat empty while the change history was
-            pushed below the fold. The blocks are related but not equal: the
-            payments are what a staff member opened the invoice to see, and the
-            details and the audit trail are reference. Giving the first the wide
-            column says which is which and puts the record on one screen. */}
-        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
-        <div className="space-y-4">
-        <Panel
-          title="Payment information"
-          description="The paid total and the status are recomputed from the rows below."
-          action={
-            settled ? (
-              <Badge tone="ok" size="sm">
-                Fully paid
-              </Badge>
-            ) : (
-              <Button size="xs" icon={Plus} onClick={() => setPaying(true)}>
-                Record payment
-              </Button>
-            )
-          }
-        >
-          <div className="grid gap-2.5 sm:grid-cols-3">
-            <div className="rounded-lg border border-line bg-surface px-4 py-3">
-              <p className="eyebrow text-ink-400">Invoice total</p>
-              <p className="tnum mt-1.5 font-display text-2xl font-bold leading-none text-ink-900">
-                {money(invoice.amount)}
-              </p>
-            </div>
-            {/* Plain tiles, like the one beside them.
-
-                These carried a tinted border AND a tinted ground AND a coloured
-                value - three signals for one fact, on a row of three tiles where
-                two were shouting and one was not. A figure does not need a
-                coloured box to be found when it is already set at 22px in a row
-                of three.
-
-                Balance keeps its colour, and only when there IS one: an unpaid
-                balance is the number a staff member is chasing, and it is the one
-                thing on this row that can require action. Total paid goes back to
-                ink, because money already received is a fact rather than a
-                prompt. */}
-            <div className="rounded-lg border border-line bg-surface px-4 py-3">
-              <p className="eyebrow text-ink-400">Total paid</p>
-              <p className="tnum mt-1.5 font-display text-2xl font-bold leading-none text-ink-900">
-                {money(invoice.amountPaid)}
-              </p>
-            </div>
-            <div className="rounded-lg border border-line bg-surface px-4 py-3">
-              <p className="eyebrow text-ink-400">Balance</p>
-              <p
-                className={cn(
-                  'tnum mt-1.5 font-display text-2xl font-bold leading-none',
-                  settled ? 'text-ink-900' : 'text-danger',
-                )}
-              >
-                {money(invoice.balance)}
-              </p>
-            </div>
-          </div>
-
-          {/*
-            The tip sits UNDER the three tiles, not as a fourth one.
-
-            The row above is one question asked three ways: what was owed, what
-            came in against it, what is left. A tip answers none of them - it is
-            money received that was never due, and it moves no figure above it.
-            Giving it a matching tile would put it in that conversation and
-            invite the reader to add it to the total, which is exactly the
-            arithmetic the schema keeps them apart to prevent.
-
-            It lives HERE rather than in the three-dot menu, where it was: a tip
-            is money received, so the place somebody looks for it is the block
-            that already shows what was received. Buried in an overflow menu it
-            was a payment fact filed under actions.
-          */}
-          <div className="mt-3 flex items-center justify-between gap-3 rounded-md bg-surface-2 px-4 py-2.5 text-sm">
-            <span className="text-ink-500">
-              Tip{' '}
-              <span className="text-ink-400">· not part of the invoice total</span>
-            </span>
-
-            <span className="flex items-center gap-3">
-              {invoice.tipCents > 0 && (
-                <span className="tnum font-semibold text-ink-900">
-                  {money(invoice.tipCents)}
-                </span>
-              )}
-              <Button size="xs" variant="ghost" icon={HandCoins} onClick={() => setTipping(true)}>
-                {invoice.tipCents > 0 ? 'Edit' : 'Record a tip'}
-              </Button>
-            </span>
-          </div>
-
-          <div className="mt-4">
-            <p className="eyebrow mb-2 flex items-center gap-1.5 text-ink-400">
-              <History className="size-3.5 text-brand" strokeWidth={2.25} aria-hidden="true" />
-              Payment history
-            </p>
-
-            {invoice.payments.length === 0 ? (
-              <p className="rounded-md bg-surface-2 px-3 py-2.5 text-sm text-ink-500">
-                Nothing recorded against this invoice yet.
-              </p>
-            ) : (
-              /* A table, not a list of lines. Payments are a ledger - the same
-                 four facts on every row - and a ledger is read down its columns.
-                 The list forced the eye to re-find the amount on each line. */
-              <div className="overflow-x-auto rounded-md border border-line">
-                {/* Carries the density toggle - these rows follow the same
-                    density as every list table. */}
-                <div className="border-b border-line px-3 py-2">
-                  <CountLine
-                    total={invoice.payments.length}
-                    noun={invoice.payments.length === 1 ? 'payment' : 'payments'}
-                  />
-                </div>
-
-                <table className="w-full table-fixed text-left">
-                  <thead>
-                    {/* Header type comes from the shared helpers, so this reads
-                        as the same component as every other admin table. The
-                        column widths stay - the table is `table-fixed` and the
-                        proportions are deliberate. */}
-                    <tr className={t.headRow}>
-                      <th scope="col" className={cn(t.headCell(), 'w-[26%]')}>
-                        Date
-                      </th>
-                      <th scope="col" className={cn(t.headCell('right'), 'w-[18%]')}>
-                        Amount
-                      </th>
-                      <th scope="col" className={cn(t.headCell(), 'w-[18%]')}>
-                        Method
-                      </th>
-                      <th scope="col" className={cn(t.headCell(), 'w-[28%]')}>
-                        Reference
-                      </th>
-                      {/* `relative` contains the `sr-only` label, which is
-                          absolutely positioned and would otherwise anchor to
-                          the document and stretch the page. */}
-                      <th scope="col" className={cn(t.headCell('right'), 'relative w-[10%]')}>
-                        <span className="sr-only">Reverse</span>
-                      </th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {invoice.payments.map((payment, index) => {
-                      const negative = payment.amount < 0;
-                      const reversed = Boolean(payment.reversedAt);
-                      const forgiven = payment.method === 'void';
-                      /**
-                       * A refund is not a reversal, and the row has to say so.
-                       *
-                       * A reversal undoes a payment recorded in error; a refund
-                       * returns money that really did arrive. Both are negative
-                       * rows, so reading the sign alone would file every refund
-                       * as a correction the shop made - which is a different
-                       * story to tell a customer asking what happened.
-                       */
-                      const isReversal = negative && payment.method === 'reversal';
-                      const refund = negative && !isReversal && !forgiven;
-
-                      return (
-                        <tr
-                          key={`${payment.at}-${index}`}
-                          className={cn(t.row, reversed && 'bg-surface-2/60')}
-                        >
-                          <td className={cn(t.cell(), 'tnum text-ink-500')}>
-                            {dateTime(payment.at)}
-                          </td>
-
-                          <td
-                            className={cn(
-                              'tnum px-3 py-2.5 text-right font-display text-md font-bold',
-                              // Four facts, three weights: money in is plain,
-                              // money out is red whether it went back as a refund
-                              // or came off as a reversal, and a void is grey
-                              // because it was never money at all - it is
-                              // forgiveness.
-                              negative ? 'text-danger' : forgiven ? 'text-ink-400' : 'text-ink-900',
-                              reversed && 'line-through opacity-60',
-                            )}
-                          >
-                            {money(payment.amount)}
-                          </td>
-
-                          <td className={t.cell()}>
-                            {payment.method && (
-                              <Badge
-                                tone={negative ? 'danger' : forgiven ? 'neutral' : 'info'}
-                                size="sm"
-                              >
-                                {refund ? `refund · ${payment.method}` : payment.method}
-                              </Badge>
-                            )}
-                          </td>
-
-                          <td className={cn(t.cell(), 'truncate font-mono text-xs text-ink-400')}>
-                            {payment.reference || '-'}
-                          </td>
-
-                          <td className={t.cell('right')}>
-                            {/* Only a real, un-reversed payment can be reversed.
-                                A void and a reversal are already corrections
-                                offering to undo them would be a second way to
-                                reach the same state. */}
-                            {!negative && !reversed && !forgiven && (
-                              <button
-                                type="button"
-                                onClick={() => setReversing(index)}
-                                aria-label={`Reverse the ${money(payment.amount)} payment`}
-                                className={cn(pressable, '-m-1 rounded-sm p-1 text-ink-300 hover:text-danger')}
-                              >
-                                <Trash2 className="size-3.5" strokeWidth={2.25} aria-hidden="true" />
-                              </button>
-                            )}
-                            {reversed && (
-                              <span className="text-2xs font-medium text-ink-400">Reversed</span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </Panel>
-
-        </div>
-
-        <div className="space-y-4">
-        <Panel title="Details">
-          {/* One column. This panel now sits in the narrower of the two page
-              columns, and two label/value pairs side by side in ~380px left the
-              business name truncated to "Northline Device …" with empty space in
-              the column beside it. A single column gives every value the full
-              width and the list still reads as a compact block. */}
-          <dl className="grid gap-y-2.5 text-sm">
-            <div className="flex justify-between gap-3">
-              <dt className="text-ink-500">Account</dt>
-              <dd className="min-w-0 truncate">
-                {invoice.userId ? (
-                  <Link
-                    to={`/admin/clients/${invoice.userId}`}
-                    className="font-medium text-brand hover:underline"
-                  >
-                    {account}
-                  </Link>
-                ) : (
-                  <span className="text-ink-900">{account}</span>
-                )}
-              </dd>
-            </div>
-
-            {/* The company, where it exists, is a detail about the account
-                rather than its name (§0) - so it is a row here, not the title. */}
-            {invoice.businessName && invoice.businessName !== account && (
-              <div className="flex justify-between gap-3">
-                <dt className="text-ink-500">Business</dt>
-                <dd className="min-w-0 truncate text-ink-900">{invoice.businessName}</dd>
-              </div>
-            )}
-
-            <div className="flex justify-between gap-3">
-              <dt className="text-ink-500">Order</dt>
-              <dd>
-                {invoice.orderNumber ? (
-                  <Link
-                    to={`/admin/orders/${invoice.orderNumber}`}
-                    className="font-medium text-brand hover:underline"
-                  >
-                    {invoice.orderNumber}
-                  </Link>
-                ) : (
-                  <span className="text-ink-400">-</span>
-                )}
-              </dd>
-            </div>
-
-            <div className="flex justify-between gap-3">
-              <dt className="text-ink-500">Terms</dt>
-              <dd className="uppercase text-ink-900">{invoice.terms}</dd>
-            </div>
-
-            <div className="flex justify-between gap-3">
-              <dt className="text-ink-500">Issued</dt>
-              <dd className="tnum text-ink-900">{date(invoice.issuedAt)}</dd>
-            </div>
-
-            <div className="flex justify-between gap-3">
-              <dt className="text-ink-500">Due</dt>
-              <dd className="tnum text-ink-900">
-                {invoice.dueDate ? date(invoice.dueDate) : '-'}
-              </dd>
-            </div>
-          </dl>
-        </Panel>
-
-        <Panel
-          title="Change history"
-          description="Every recorded action on this invoice, newest first."
-        >
-          {entries.length === 0 ? (
-            <p className="text-sm text-ink-500">
-              Nothing recorded since this invoice was raised.
-            </p>
-          ) : (
-            <ul className="space-y-2.5">
-              {entries.map((entry) => (
-                <li key={entry.id ?? `${entry.at}-${entry.action}`} className="flex gap-2.5">
-                  <span
-                    className="mt-1.5 size-1.5 shrink-0 rounded-full bg-brand"
-                    aria-hidden="true"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm text-ink-900">
-                      {entry.description ?? entry.action}
-                    </p>
-                    <p className="mt-0.5 text-xs text-ink-400">
-                      {[entry.actor?.name ?? entry.actorName, dateTime(entry.at ?? entry.createdAt)]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </p>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Panel>
-
-        </div>
-        </div>
-
-        {/**
-         * The life cycle, last on the page.
-         *
-         * It is a summary of everything above it - where the record ended up
-         * after the payments, edits and voids the rest of the screen details
-         * so it reads as a conclusion rather than a heading. Quote and purchase
-         * order do the same, which is the whole point: one placement, one
-         * component, one thing to learn.
-         */}
-        <ProcessStrip
-          title="Life cycle of an invoice"
-          successOnLast
-          steps={INVOICE_LIFECYCLE}
-          current={invoice.status === 'overdue' ? 'unpaid' : invoice.status}
-          stoppedTone={invoice.status === 'void' ? 'warn' : undefined}
-          caption={
-            invoice.status === 'void'
-              ? 'Voided - the balance was forgiven and the invoice goes no further.'
-              : 'Payment status follows the payments recorded above; there is nothing to set by hand.'
-          }
+      {/* The chain this invoice ends, when it ends one. An invoice behind an
+          *order* has no such chain and draws nothing. */}
+      {invoice.ticket && (
+        <WorkflowLineage
+          current="invoice"
+          quote={invoice.ticket.quote}
+          ticket={invoice.ticket}
+          invoice={invoice}
+          className="mb-4"
         />
-      </div>
+      )}
+
+      <DocumentLayout
+        main={
+          <>
+            {/**
+             * Payment information, leading the wide column.
+             *
+             * The two figures a staff member opens an invoice to check are what
+             * it is for and what has arrived, at a size that can be read across
+             * a desk, with the history that produced them directly underneath.
+             */}
+            <Panel
+              icon={Wallet}
+              title="Payment information"
+              description="The paid total and the status are recomputed from the rows below."
+              action={
+                settled ? (
+                  <Badge tone="ok" size="sm">
+                    Fully paid
+                  </Badge>
+                ) : (
+                  <Button size="xs" icon={Plus} onClick={() => setPaying(true)}>
+                    Record payment
+                  </Button>
+                )
+              }
+            >
+              <div className="grid gap-2.5 sm:grid-cols-3">
+                <div className="rounded-lg border border-line bg-surface px-4 py-3">
+                  <p className="eyebrow text-ink-400">Invoice total</p>
+                  <p className="tnum mt-1.5 font-display text-2xl font-bold leading-none text-ink-900">
+                    {money(invoice.amount)}
+                  </p>
+                </div>
+                {/* Plain tiles. Balance keeps its colour, and only when there IS
+                    one: an unpaid balance is the one thing on this row that can
+                    require action. */}
+                <div className="rounded-lg border border-line bg-surface px-4 py-3">
+                  <p className="eyebrow text-ink-400">Total paid</p>
+                  <p className="tnum mt-1.5 font-display text-2xl font-bold leading-none text-ink-900">
+                    {money(invoice.amountPaid)}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-line bg-surface px-4 py-3">
+                  <p className="eyebrow text-ink-400">Balance</p>
+                  <p
+                    className={cn(
+                      'tnum mt-1.5 font-display text-2xl font-bold leading-none',
+                      settled ? 'text-ink-900' : 'text-danger',
+                    )}
+                  >
+                    {money(invoice.balance)}
+                  </p>
+                </div>
+              </div>
+
+              {/* The tip sits UNDER the three tiles, not as a fourth one: it is
+                  money received that was never due, and it moves no figure
+                  above it. */}
+              <div className="mt-3 flex items-center justify-between gap-3 rounded-md bg-surface-2 px-4 py-2.5 text-sm">
+                <span className="text-ink-500">
+                  Tip <span className="text-ink-400">· not part of the invoice total</span>
+                </span>
+
+                <span className="flex items-center gap-3">
+                  {invoice.tipCents > 0 && (
+                    <span className="tnum font-semibold text-ink-900">{money(invoice.tipCents)}</span>
+                  )}
+                  <Button size="xs" variant="ghost" icon={HandCoins} onClick={() => setTipping(true)}>
+                    {invoice.tipCents > 0 ? 'Edit' : 'Record a tip'}
+                  </Button>
+                </span>
+              </div>
+
+              <div className="mt-4">
+                <p className="eyebrow mb-2 flex items-center gap-1.5 text-ink-400">
+                  <History className="size-3.5 text-brand" strokeWidth={2.25} aria-hidden="true" />
+                  Payment history
+                </p>
+
+                {invoice.payments.length === 0 ? (
+                  <p className="rounded-md bg-surface-2 px-3 py-2.5 text-sm text-ink-500">
+                    Nothing recorded against this invoice yet.
+                  </p>
+                ) : (
+                  /* A table, not a list of lines. Payments are a ledger - the
+                     same four facts on every row - and a ledger is read down
+                     its columns. */
+                  <div className="overflow-x-auto rounded-md border border-line">
+                    <div className="border-b border-line px-3 py-2">
+                      <CountLine
+                        total={invoice.payments.length}
+                        noun={invoice.payments.length === 1 ? 'payment' : 'payments'}
+                      />
+                    </div>
+
+                    <table className="w-full table-fixed text-left">
+                      <thead>
+                        <tr className={t.headRow}>
+                          <th scope="col" className={cn(t.headCell(), 'w-[26%]')}>
+                            Date
+                          </th>
+                          <th scope="col" className={cn(t.headCell('right'), 'w-[18%]')}>
+                            Amount
+                          </th>
+                          <th scope="col" className={cn(t.headCell(), 'w-[18%]')}>
+                            Method
+                          </th>
+                          <th scope="col" className={cn(t.headCell(), 'w-[28%]')}>
+                            Reference
+                          </th>
+                          {/* `relative` contains the `sr-only` label, which is
+                              absolutely positioned and would otherwise anchor
+                              to the document and stretch the page. */}
+                          <th scope="col" className={cn(t.headCell('right'), 'relative w-[10%]')}>
+                            <span className="sr-only">Reverse</span>
+                          </th>
+                        </tr>
+                      </thead>
+
+                      <tbody>
+                        {invoice.payments.map((payment, index) => {
+                          const negative = payment.amount < 0;
+                          const reversed = Boolean(payment.reversedAt);
+                          const forgiven = payment.method === 'void';
+                          // A refund is not a reversal, and the row has to say
+                          // so: both are negative, but one undoes an error and
+                          // the other returns money that really arrived.
+                          const isReversal = negative && payment.method === 'reversal';
+                          const refund = negative && !isReversal && !forgiven;
+
+                          return (
+                            <tr
+                              key={`${payment.at}-${index}`}
+                              className={cn(t.row, reversed && 'bg-surface-2/60')}
+                            >
+                              <td className={cn(t.cell(), 'tnum text-ink-500')}>{dateTime(payment.at)}</td>
+
+                              <td
+                                className={cn(
+                                  'tnum px-3 py-2.5 text-right font-display text-md font-bold',
+                                  negative ? 'text-danger' : forgiven ? 'text-ink-400' : 'text-ink-900',
+                                  reversed && 'line-through opacity-60',
+                                )}
+                              >
+                                {money(payment.amount)}
+                              </td>
+
+                              <td className={t.cell()}>
+                                {payment.method && (
+                                  <Badge
+                                    tone={negative ? 'danger' : forgiven ? 'neutral' : 'info'}
+                                    size="sm"
+                                  >
+                                    {refund ? `refund · ${payment.method}` : payment.method}
+                                  </Badge>
+                                )}
+                              </td>
+
+                              <td className={cn(t.cell(), 'truncate font-mono text-xs text-ink-400')}>
+                                {payment.reference || '-'}
+                              </td>
+
+                              <td className={t.cell('right')}>
+                                {/* Only a real, un-reversed payment can be
+                                    reversed. A void and a reversal are already
+                                    corrections. */}
+                                {!negative && !reversed && !forgiven && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setReversing(index)}
+                                    aria-label={`Reverse the ${money(payment.amount)} payment`}
+                                    className={cn(pressable, '-m-1 rounded-sm p-1 text-ink-300 hover:text-danger')}
+                                  >
+                                    <Trash2 className="size-3.5" strokeWidth={2.25} aria-hidden="true" />
+                                  </button>
+                                )}
+                                {reversed && (
+                                  <span className="text-2xs font-medium text-ink-400">Reversed</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </Panel>
+
+            {/* What was billed. An invoice raised by an order or as a flat
+                charge has no devices, and the order or the reference says what
+                it is for - so the panel is drawn only when there is work. */}
+            {devices.length > 0 && <DocumentDevices devices={devices} />}
+
+            <DocumentNotes
+              clientNotes={invoice.customerNotes}
+              technicianNotes={invoice.technicianNotes}
+              internalNotes={invoice.internalNotes}
+            />
+
+            {/* Every edit this invoice has taken, from the audit log rather than
+                a second history collection. */}
+            <DocumentHistory
+              description="Every recorded action on this invoice, newest first."
+              empty="Nothing recorded since this invoice was raised."
+              entries={entries.map((entry) => ({
+                key: entry.id ?? `${entry.at}-${entry.action}`,
+                title: entry.description ?? entry.action,
+                at: entry.at ?? entry.createdAt,
+                by: entry.actor?.name ?? entry.actorName,
+              }))}
+            />
+          </>
+        }
+        aside={
+          <>
+            <DocumentSummary
+              rows={
+                devices.length > 0
+                  ? [
+                      {
+                        label: 'Services and parts',
+                        value: money(
+                          devices.reduce(
+                            (sum, device) =>
+                              sum +
+                              [...(device.services ?? []), ...(device.parts ?? [])].reduce(
+                                (n, line) => n + (line.priceCents ?? 0) * (line.qty ?? 1),
+                                0,
+                              ),
+                            0,
+                          ),
+                        ),
+                      },
+                      invoice.extendedServiceFee && {
+                        label: 'Extended service area',
+                        value: money(invoice.extendedServiceFeeCents ?? 0),
+                      },
+                      invoice.discountCents > 0 && {
+                        label: 'Discount',
+                        hint: invoice.discountCode || undefined,
+                        value: `− ${money(invoice.discountCents)}`,
+                        tone: 'ok',
+                      },
+                      {
+                        label: 'Tax',
+                        hint: invoice.taxPercent ? `${invoice.taxPercent}%` : undefined,
+                        value: money(invoice.taxCents ?? 0),
+                      },
+                    ]
+                  : []
+              }
+              total={{ value: money(invoice.amount) }}
+              after={[
+                invoice.amountPaid !== 0 && { label: 'Paid', value: `− ${money(invoice.amountPaid)}` },
+                {
+                  label: 'Balance due',
+                  value: money(Math.max(0, invoice.balance)),
+                  strong: true,
+                  tone: settled ? undefined : 'danger',
+                },
+              ]}
+              // The allowance is the shop's own cost for the journey: shown
+              // beside the total, never in it.
+              footnote={
+                invoice.travelAllowanceCents > 0
+                  ? `Travel allowance ${money(invoice.travelAllowanceCents)} (${invoice.travelKm} km) is internal and not billed.`
+                  : undefined
+              }
+            />
+
+            <DocumentCustomer
+              name={account}
+              business={invoice.businessName}
+              phone={invoice.phone}
+              email={invoice.email}
+              userId={invoice.userId}
+            />
+
+            <DocumentFacts
+              items={[
+                { label: 'Service type', value: serviceType },
+                {
+                  label: 'Order',
+                  value: invoice.orderNumber ? (
+                    <Link
+                      to={`/admin/orders/${invoice.orderNumber}`}
+                      className="font-medium text-brand hover:underline"
+                    >
+                      {invoice.orderNumber}
+                    </Link>
+                  ) : null,
+                },
+                { label: 'Terms', value: (invoice.terms ?? '').toUpperCase() },
+                { label: 'Issued', value: date(invoice.issuedAt) },
+                { label: 'Due', value: invoice.dueDate ? date(invoice.dueDate) : null },
+                { label: 'Reference', value: invoice.reference },
+              ]}
+            />
+          </>
+        }
+      />
 
       <RecordPaymentModal
         open={paying}
@@ -875,68 +773,9 @@ export function AdminInvoiceDetailPage() {
       />
 
       {/* One confirmation for both ways in - the pill on the badge row and the
-          menu item - because they are the same change and a status can carry a
-          message to the customer.
-
-          It carries its own picker rather than only confirming a choice already
-          made, since the menu route arrives here with nothing chosen: "Set
-          status" has to be able to ASK which. Arriving from the pill, the answer
-          is already filled in. */}
-      <ConfirmDialog
-        open={pickingStatus}
-        onClose={() => setPickingStatus(false)}
-        tone="info"
-        heading="Change after sales status?"
-        title={
-          <>
-            Where{' '}
-            <strong className="font-semibold text-ink-900">{invoice.number}</strong> has got to
-            with the customer. This moves no money.
-          </>
-        }
-        body={
-          <div className="space-y-3">
-            <SelectMenu
-              label="After Sales Status"
-              value={statusMove?.id ?? ''}
-              options={[
-                { value: '', label: 'No status' },
-                ...labels.map((label) => ({
-                  value: label.id,
-                  label: label.name,
-                })),
-              ]}
-              onChange={(next) =>
-                setStatusMove(labels.find((entry) => entry.id === next) ?? null)
-              }
-            />
-
-            {statusMove?.messageActive && statusMove.message?.trim() ? (
-              <p className="flex items-start gap-2 rounded-md bg-warn-50 px-3 py-2.5 text-sm text-warn">
-                <Mail className="mt-0.5 size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
-                <span>
-                  {statusMove.name} sends the customer its message{' '}
-                  {statusMove.delayDays
-                    ? `${statusMove.delayDays} ${statusMove.delayDays === 1 ? 'day' : 'days'} after it is set`
-                    : 'once it is set'}
-                  , with the next run of the scheduled messages.
-                </span>
-              </p>
-            ) : null}
-          </div>
-        }
-        confirmLabel="Confirm change"
-        loading={setInvoiceLabel.isPending}
-        error={setInvoiceLabel.error?.message}
-        onConfirm={() =>
-          setInvoiceLabel.mutate(
-            { number: invoice.number, labelId: statusMove?.id ?? null },
-            {
-              onSuccess: () => setPickingStatus(false),
-            },
-          )
-        }
-      />
+          menu item - and the same one the Invoices list raises. The menu route
+          arrives with nothing chosen, so it carries the picker. */}
+      <InvoiceStatusDialog move={statusMove} labels={labels} onClose={() => setStatusMove(null)} />
       {/* A reminder asks a real customer for money, so it confirms and names the
           figure: "send reminder" with no amount on it is a button somebody
           clicks down a list without reading which row they are on. */}

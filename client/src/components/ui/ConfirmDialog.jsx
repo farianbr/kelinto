@@ -262,7 +262,15 @@ export function ConfirmDialog({
             {title}
           </p>
 
-          {body && <p className="mt-1 text-sm leading-normal text-ink-400">{body}</p>}
+          {/* A sentence goes in a paragraph; anything richer (the status
+              dialogs' channel checkboxes) in a block, since a <p> cannot hold
+              one and the browser would split the markup around it. */}
+          {body &&
+            (typeof body === 'string' ? (
+              <p className="mt-1 text-sm leading-normal text-ink-400">{body}</p>
+            ) : (
+              <div className="mt-1 text-sm leading-normal text-ink-400">{body}</div>
+            ))}
 
           {/**
            * `consequence` is **opt-in, and off by default**.

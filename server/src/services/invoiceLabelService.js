@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 
 import { db } from '../db/models.js';
-import '../models/InvoiceLabel.js';
+import { LABEL_CHANNELS } from '../models/InvoiceLabel.js';
 import '../models/Invoice.js';
 import ApiError from '../utils/ApiError.js';
 
@@ -33,7 +33,7 @@ function shapeLabel(label) {
     isActive: label.isActive !== false,
     order: label.order ?? 0,
     delayDays: label.delayDays ?? 0,
-    channel: label.channel ?? 'email',
+    channels: label.channels?.length ? label.channels : ['email'],
     subject: label.subject ?? '',
     message: label.message ?? '',
     messageActive: label.messageActive === true,
@@ -47,7 +47,10 @@ function shapeLabel(label) {
 function messageFields(body = {}) {
   const out = {};
   if (body.delayDays !== undefined) out.delayDays = Math.max(Number(body.delayDays) || 0, 0);
-  if (body.channel !== undefined) out.channel = body.channel || 'email';
+  if (body.channels !== undefined) {
+    const channels = [...new Set((body.channels ?? []).filter((channel) => LABEL_CHANNELS.includes(channel)))];
+    out.channels = channels.length ? channels : ['email'];
+  }
   if (body.subject !== undefined) out.subject = String(body.subject ?? '').trim();
   if (body.message !== undefined) out.message = String(body.message ?? '').trim();
   if (body.messageActive !== undefined) out.messageActive = Boolean(body.messageActive);
@@ -160,15 +163,17 @@ async function deleteLabel(id) {
  * Set or clear the manual status on one invoice.
  *
  * `labelId` of `null` clears it. `labelSetAt` is what a status's message
- * counts its days from.
+ * counts its days from. `channels` is what the confirmation allowed the
+ * message to use on this invoice; absent means every channel the status has.
  */
-async function setInvoiceLabel(number, { labelId } = {}) {
+async function setInvoiceLabel(number, { labelId, channels } = {}) {
   const invoice = await db().Invoice.findOne({ number });
   if (!invoice) throw ApiError.notFound('Invoice not found.', 'INVOICE_NOT_FOUND');
 
   if (!labelId) {
     invoice.label = null;
     invoice.labelSetAt = null;
+    invoice.labelChannels = undefined;
     await invoice.save();
     return { cleared: true, label: null };
   }
@@ -179,6 +184,9 @@ async function setInvoiceLabel(number, { labelId } = {}) {
 
   invoice.label = label._id;
   invoice.labelSetAt = new Date();
+  invoice.labelChannels = Array.isArray(channels)
+    ? channels.filter((channel) => LABEL_CHANNELS.includes(channel))
+    : undefined;
 
   await invoice.save();
 

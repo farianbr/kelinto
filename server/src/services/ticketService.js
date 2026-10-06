@@ -8,13 +8,25 @@ import { db, controlModels } from '../db/models.js';
 // already loaded a module importing it - every entry point except the full
 // server, which is why a script or a test hit it and the app did not.
 import '../models/Quote.js';
+import '../models/ServiceQuote.js';
 import orderBuilder from './orderBuilder.js';
 import creditService from './creditService.js';
-import { costRepairParts, commitRepairParts } from './repairPartsService.js';
+import {
+  costRepairParts,
+  commitRepairParts,
+  takeTicketParts,
+  adjustTicketParts,
+  releaseTicketParts,
+  assertPartsAvailable,
+  partsDemand,
+} from './repairPartsService.js';
 import ticketNotifyService from './ticketNotifyService.js';
-import { renderTicketHtml, renderTicketLabel } from './ticketDocument.js';
+import { renderTicketLabel } from './ticketDocument.js';
+import { renderRepairDocumentHtml, resolveInvoiceBrand } from './invoiceDocument.js';
+import { warrantyTerms } from './warrantyTerms.js';
 import ApiError from '../utils/ApiError.js';
 import { likeRegex } from '../utils/regex.js';
+import { displayNameOf } from '../utils/displayName.js';
 
 /**
  * Repair tickets (Sales § Ticket).
@@ -22,16 +34,17 @@ import { likeRegex } from '../utils/regex.js';
  * A ticket tracks one device from intake to collection. Two things are worth
  * knowing before editing this file:
  *
- *   - **The customer is free-typed, not an account.** A repair is a walk-in.
- *     Search therefore hits `customerName` and `customerPhone` directly rather
- *     than resolving a `User` first, which is why this list is one query where
- *     `rmaService.listRmas` needs two.
+ *   - **The customer is an account, snapshotted as text.** The counter picks
+ *     one (`resolveCustomer`) and its name, phone and email are copied onto
+ *     the ticket. Search therefore hits `customerName` and `customerPhone`
+ *     directly rather than resolving a `User` first, which is why this list is
+ *     one query where `rmaService.listRmas` needs two.
  *   - **Status moves are unrestricted, and every move is recorded.** A repair
  *     genuinely goes backwards - parts arrive wrong, a fix does not hold - so
  *     the `timeline` is the control rather than a transition table. See the
  *     note on the model.
  *
- * Money here is integer cents and is an estimate, not an invoice: nothing in
+ * Money here is integer cents and is a quote, not an invoice: nothing in
  * this file moves a balance. Billing a completed repair is a separate step
  * through the invoice path, which is the only thing that may.
  */
@@ -113,6 +126,38 @@ function shapeTechnician(technician) {
   };
 }
 
+/**
+ * A priced line as the screens read it.
+ *
+ * The catalogue references go out as plain id strings: the edit form posts
+ * them straight back, and an ObjectId serialised by hand is one more place for
+ * a line to lose the entry it was picked from.
+ */
+function shapeLineOut(line) {
+  return {
+    name: line.name,
+    description: line.description ?? '',
+    priceCents: line.priceCents ?? 0,
+    qty: line.qty ?? 1,
+    service: line.service ? String(line.service) : null,
+    product: line.product ? String(line.product) : null,
+  };
+}
+
+/**
+ * A condition grid as a plain object, whichever shape it arrived in.
+ *
+ * The field is a mongoose `Map`: a hydrated document hands back a real `Map`,
+ * but a `.lean()` read hands back a plain object - and `Object.fromEntries` on
+ * a plain object throws. Every list and detail read is lean, so the moment the
+ * condition grid became mandatory (2026-10-02) every new ticket broke the
+ * screens that load it, while the create itself reported success.
+ */
+function plainMap(value) {
+  if (!value) return {};
+  return value instanceof Map ? Object.fromEntries(value) : { ...value };
+}
+
 function shapeTicket(ticket, slaDays) {
   const age = ageOf(ticket, slaDays);
 
@@ -135,8 +180,8 @@ function shapeTicket(ticket, slaDays) {
     issue: ticket.issue,
 
     status: ticket.status,
-    priority: ticket.priority,
     source: ticket.source,
+    serviceType: ticket.serviceType ?? 'walk_in',
 
     /**
      * What a self-service check-in left for the counter to finish.
@@ -170,12 +215,10 @@ function shapeTicket(ticket, slaDays) {
       problem: device.problem ?? null,
       solution: device.solution ?? null,
       notes: device.notes ?? null,
-      condition: device.condition ? Object.fromEntries(device.condition) : {},
-      customerCondition: device.customerCondition
-        ? Object.fromEntries(device.customerCondition)
-        : {},
-      services: device.services ?? [],
-      parts: device.parts ?? [],
+      condition: plainMap(device.condition),
+      customerCondition: plainMap(device.customerCondition),
+      services: (device.services ?? []).map(shapeLineOut),
+      parts: (device.parts ?? []).map(shapeLineOut),
     })),
 
     clientNotes: ticket.clientNotes ?? null,
@@ -214,10 +257,13 @@ function shapeTicket(ticket, slaDays) {
      * so the shape is the same either way and the caller checks `number` /
      * `quoteNumber` rather than the presence of the key.
      */
-    quote: ticket.quote
+    // Either kind of quote: a web quote (`Quote`) or a repair quote (`ServiceQuote`).
+    // At most one is ever set (see the model), and the lineage strip only
+    // needs to name it and link to it.
+    quote: (ticket.quote ?? ticket.serviceQuote)
       ? {
-          id: (ticket.quote._id ?? ticket.quote).toString(),
-          quoteNumber: ticket.quote.quoteNumber ?? null,
+          id: ((ticket.quote ?? ticket.serviceQuote)._id ?? ticket.quote ?? ticket.serviceQuote).toString(),
+          quoteNumber: (ticket.quote ?? ticket.serviceQuote).quoteNumber ?? null,
         }
       : null,
 
@@ -280,7 +326,6 @@ async function listTechnicians() {
 async function listTickets({
   status,
   q,
-  priority,
   technician,
   user,
   from,
@@ -312,8 +357,6 @@ async function listTickets({
    */
   else if (status === 'awaiting_review') query['intake.awaitingReview'] = true;
   else if (status && status !== 'all') query.status = String(status);
-
-  if (priority && priority !== 'all') query.priority = String(priority);
 
   // The customer profile's Tickets tab. Only tickets actually linked to an
   // account - a walk-in repair carries no `user` and belongs to nobody's list.
@@ -406,8 +449,9 @@ async function getTicket(id) {
   const ticket = await db().Ticket.findOne(query)
     .populate('technician', 'contactName businessName email')
     // The lineage strip names its neighbours, so it needs their numbers rather
-    // than their ids - a staff member navigates by QT-101018, not by an ObjectId.
+    // than their ids - a staff member navigates by QT-2026-00012, not by an ObjectId.
     .populate('quote', 'quoteNumber')
+    .populate('serviceQuote', 'quoteNumber')
     .populate('invoice', 'number')
     .lean();
 
@@ -441,7 +485,39 @@ function shapeLineIn(line) {
     description: line.description || undefined,
     priceCents: toCents(line.priceDollars),
     qty: line.qty ?? 1,
-    product: line.product || null,
+    service: isObjectId(line.service) ? line.service : null,
+    product: isObjectId(line.product) ? line.product : null,
+  };
+}
+
+/**
+ * The account a ticket is raised against, and the contact details copied off it.
+ *
+ * The same rule the quote applies (`serviceQuoteService.createQuote`): the
+ * id has to name a real customer, and the name, phone and email are
+ * snapshotted rather than read live, so a ticket already printed and handed
+ * over keeps saying what it said.
+ */
+async function resolveCustomer(userId) {
+  if (!isObjectId(userId)) {
+    throw ApiError.badRequest('Choose a customer for this ticket.', 'TICKET_NO_CUSTOMER');
+  }
+
+  const customer = await db()
+    .User.findById(userId)
+    .select('contactName businessName email phone')
+    .lean();
+  if (!customer) {
+    throw ApiError.badRequest('That customer no longer exists.', 'TICKET_NO_CUSTOMER');
+  }
+
+  return {
+    user: customer._id,
+    customerName: displayNameOf(customer),
+    // An account can be opened with only an email. Blank rather than refused:
+    // the profile is where a missing number gets filled in.
+    customerPhone: customer.phone ?? '',
+    customerEmail: customer.email ?? undefined,
   };
 }
 
@@ -498,12 +574,25 @@ function shapeDevicesIn(devices = []) {
   }));
 }
 
-async function createTicket(body, createdBy) {
+/**
+ * Open a ticket.
+ *
+ * `business` is the business the ERP is working in (`req.businessScope`). It
+ * has to be stamped: every list reads tickets through an exact business filter
+ * (`businessFilter`), so a ticket written without one was saved, opened once
+ * from the create redirect, and then appeared on no list anywhere - not the
+ * Tickets screen, not the customer's own Tickets tab.
+ */
+async function createTicket(body, createdBy, business = null) {
+  const customer = await resolveCustomer(body.user);
   const technician = await resolveTechnician(body.technician);
   const settings = await db().Settings.load();
   const status = body.status ?? 'diagnosis';
 
   const devices = shapeDevicesIn(body.devices);
+  // Refused before anything is written, so a part the shelf does not have
+  // never reaches a ticket (`repairPartsService.assertPartsAvailable`).
+  await assertPartsAvailable(partsDemand(devices));
   const priced = priceTicket(devices, {
     discountCents: toCents(body.discountDollars),
     taxRate: body.taxRate ?? 0,
@@ -517,12 +606,8 @@ async function createTicket(body, createdBy) {
   const ticket = await db().Ticket.create({
     ticketNumber: await nextTicketNumber(),
 
-    customerName: body.customerName,
-    customerPhone: body.customerPhone,
-    customerEmail: body.customerEmail || undefined,
-    // Set only when the ticket was raised against a known account - a walk-in
-    // has none, and `null` is the model's own default for that.
-    user: body.user || null,
+    ...customer,
+    business: business ?? null,
 
     devices,
     deviceBrand: lead?.brand ?? body.deviceBrand,
@@ -533,19 +618,19 @@ async function createTicket(body, createdBy) {
     issue: body.issue || lead?.problem || 'Intake',
 
     status,
-    priority: body.priority ?? 'normal',
     source: body.source ?? 'counter',
+    serviceType: body.serviceType ?? 'walk_in',
 
     technician: technician ?? null,
 
     /**
-     * The estimate is the **priced work** when there is any, and the typed
+     * The quote is the **priced work** when there is any, and the typed
      * figure otherwise.
      *
      * A counter that has listed three services and two parts has already said
      * what the job costs; asking them to total it themselves into a separate
      * box is asking for a number that disagrees with the lines beside it. The
-     * short form - no devices, just an estimate - still works, which is what
+     * short form - no devices, just a quote - still works, which is what
      * keeps a thirty-second walk-in intake possible.
      */
     estimateCents: devices.length ? priced.total : toCents(body.estimateDollars),
@@ -564,6 +649,11 @@ async function createTicket(body, createdBy) {
     timeline: [{ status, at: new Date(), note: 'Opened.', by: createdBy }],
     createdBy,
   });
+
+  // The parts it names come off the shelf now, not when it is billed
+  // (`repairPartsService`, 2026-10-06).
+  await takeTicketParts(ticket, { createdBy });
+  await ticket.save();
 
   return { ticket: shapeTicket(ticket.toObject(), settings?.operations?.ticketSlaDays ?? 7) };
 }
@@ -586,10 +676,22 @@ async function setTicketStatus(id, body, actor) {
 
   const wasClosed = CLOSED_STATUSES.includes(ticket.status);
   const isClosed = CLOSED_STATUSES.includes(body.status);
+  const wasCancelled = ticket.status === 'cancelled';
+  const isCancelled = body.status === 'cancelled';
 
   ticket.status = body.status;
   if (isClosed && !wasClosed) ticket.closedAt = new Date();
   if (!isClosed && wasClosed) ticket.closedAt = null;
+
+  /**
+   * A cancelled job gives its parts back, and a reopened one takes them again.
+   * Not once it is invoiced: the parts are billed and belong to the invoice.
+   */
+  if (!ticket.invoice && isCancelled && !wasCancelled) {
+    await releaseTicketParts(ticket, { createdBy: actor });
+  } else if (!ticket.invoice && wasCancelled && !isCancelled) {
+    await takeTicketParts(ticket, { createdBy: actor });
+  }
 
   ticket.timeline.push({ status: body.status, at: new Date(), note: body.note, by: actor });
   await ticket.save();
@@ -662,33 +764,93 @@ async function setTicketStatus(id, body, actor) {
  *
  * Status is deliberately not editable here - it moves through
  * `setTicketStatus`, which is the only path that keeps the timeline honest.
+ *
+ * **Everything the edit form shows is written back.** This used to assign a
+ * short list of legacy columns and nothing else, so the form posted its
+ * devices, notes, discount, tax, province and due date and the server dropped
+ * every one of them: the save reported success and the ticket reopened exactly
+ * as it was. The form is the create form with a record loaded into it, so the
+ * update accepts the same fields and re-prices the ticket from its lines the
+ * way `createTicket` does.
  */
-async function updateTicket(id, body) {
+async function updateTicket(id, body, actor) {
   const ticket = await db().Ticket.findById(id);
   if (!ticket) throw ApiError.notFound('Ticket not found.', 'TICKET_NOT_FOUND');
 
-  const assignable = [
-    'customerName',
-    'customerPhone',
-    'customerEmail',
-    'deviceBrand',
-    'deviceModel',
-    'deviceSerial',
-    'issue',
-    'priority',
-    'source',
-    'notes',
-  ];
+  // The devices as they stood, copied out before the edit replaces them, so
+  // the parts can move by the difference.
+  const devicesBefore = (ticket.devices ?? []).map((device) => device.toObject?.() ?? device);
 
+  // A different customer re-copies the contact details off that account. The
+  // same one does not: the snapshot is what was printed, and an edit to a price
+  // is not a reason to rewrite who the paper was made out to.
+  if (body.user !== undefined && String(ticket.user ?? '') !== String(body.user)) {
+    Object.assign(ticket, await resolveCustomer(body.user));
+  }
+
+  const assignable = ['deviceBrand', 'deviceModel', 'deviceSerial', 'issue', 'source', 'serviceType', 'notes'];
   for (const field of assignable) {
     if (body[field] !== undefined) ticket[field] = body[field];
   }
 
-  if (body.technician !== undefined) ticket.technician = await resolveTechnician(body.technician);
-  if (body.estimateDollars !== undefined) {
-    ticket.estimateCents = Math.round(body.estimateDollars * 100);
+  for (const field of ['clientNotes', 'technicianNotes', 'discountCode', 'province']) {
+    if (body[field] !== undefined) ticket[field] = body[field] || undefined;
   }
-  if (body.finalDollars !== undefined) ticket.finalCents = Math.round(body.finalDollars * 100);
+
+  if (body.dueDate !== undefined) {
+    ticket.dueDate = body.dueDate ? new Date(`${body.dueDate}T00:00:00`) : null;
+  }
+  if (body.technician !== undefined) ticket.technician = await resolveTechnician(body.technician);
+
+  if (body.devices !== undefined) {
+    ticket.devices = shapeDevicesIn(body.devices).map((device, index) => ({
+      ...device,
+      // What the customer said at the kiosk is not on the form, so it would be
+      // erased by a save that only meant to fix a price. Kept by position.
+      customerCondition: devicesBefore[index]?.customerCondition ?? undefined,
+    }));
+
+    /**
+     * The shelf follows the edit: a part added comes off, a part removed goes
+     * back. Not on an invoiced ticket, whose parts the invoice now owns, nor a
+     * cancelled one, which has already given its parts back.
+     */
+    if (!ticket.invoice && ticket.status !== 'cancelled') {
+      await adjustTicketParts(ticket, devicesBefore, { createdBy: actor });
+    }
+
+    // The legacy single-device columns mirror the first device, as on create.
+    const lead = ticket.devices[0];
+    if (lead) {
+      ticket.deviceBrand = lead.brand;
+      ticket.deviceModel = lead.model;
+      ticket.deviceSerial = lead.serial;
+      ticket.issue = lead.problem || ticket.issue;
+    }
+  }
+
+  if (body.taxRate !== undefined) ticket.taxRate = body.taxRate ?? 0;
+
+  /**
+   * Re-priced from the lines, never from a figure the form sent (§5.5).
+   *
+   * Only when something that moves the money arrived: a ticket written on the
+   * old short form has no lines, and recomputing it would zero a quote
+   * somebody typed by hand.
+   */
+  if (body.devices !== undefined || body.discountDollars !== undefined || body.taxRate !== undefined) {
+    const priced = priceTicket(ticket.devices ?? [], {
+      discountCents:
+        body.discountDollars !== undefined ? toCents(body.discountDollars) : (ticket.discountCents ?? 0),
+      taxRate: ticket.taxRate ?? 0,
+    });
+    ticket.discountCents = priced.discount;
+    ticket.taxCents = priced.taxCents;
+    if (ticket.devices?.length) ticket.estimateCents = priced.total;
+  } else if (body.estimateDollars !== undefined) {
+    ticket.estimateCents = toCents(body.estimateDollars);
+  }
+  if (body.finalDollars !== undefined) ticket.finalCents = toCents(body.finalDollars);
 
   await ticket.save();
 
@@ -758,14 +920,36 @@ async function ticketDocumentHtml(id, { kind = 'document', size, nonce, business
     customerTier = account?.tier ?? null;
   }
 
-  return kind === 'label'
-    ? renderTicketLabel({ ticket: withTotals, business, settings, size, nonce })
-    : renderTicketHtml({ ticket: withTotals, business, settings, customerTier, nonce });
+  if (kind === 'label') return renderTicketLabel({ ticket: withTotals, business, settings, size, nonce });
+
+  // The ticket itself is drawn as the invoice is (2026-10-06), in the same
+  // shop's name, colour and logo the invoice resolves.
+  const brand = await resolveInvoiceBrand(businessId);
+  return renderRepairDocumentHtml({
+    kind: 'ticket',
+    record: withTotals,
+    nonce,
+    shop: brand.shop,
+    brandColor: brand.brandColor,
+    logo: brand.logo ?? null,
+    warranty: warrantyTerms(settings, customerTier),
+  });
 }
 
-async function deleteTicket(id) {
-  const ticket = await db().Ticket.findByIdAndDelete(id).lean();
+async function deleteTicket(id, actor) {
+  const ticket = await db().Ticket.findById(id);
   if (!ticket) throw ApiError.notFound('Ticket not found.', 'TICKET_NOT_FOUND');
+
+  // Parts it was holding go back on the shelf - unless it was invoiced, when
+  // they were billed and the invoice still says they were used.
+  if (!ticket.invoice) {
+    await releaseTicketParts(ticket, {
+      createdBy: actor,
+      note: `Back on the shelf: repair ticket ${ticket.ticketNumber} was deleted.`,
+    });
+  }
+
+  await db().Ticket.deleteOne({ _id: ticket._id });
   return { deleted: true, ticketNumber: ticket.ticketNumber };
 }
 
@@ -879,9 +1063,10 @@ async function convertToInvoice(id, { terms = 'prepaid' } = {}, actor) {
 
   // The devices come across whole - the invoice's own `devices` array has the
   // same shape, so the document reproduces the job rather than summarising it.
-  // Catalogue parts get their cost snapshotted here and come off the shelf
-  // once the invoice exists (see `repairPartsService`).
-  const { devices, demand: partsDemand } = await costRepairParts(
+  // Catalogue parts get their cost snapshotted here. They came off the shelf
+  // when the ticket named them (`partsStockMovedAt`); only a ticket written
+  // before that rule still takes them here, once the invoice exists.
+  const { devices, demand: partsNeeded } = await costRepairParts(
     (ticket.devices ?? []).map((device) => ({
       category: device.category,
       brand: device.brand,
@@ -918,6 +1103,7 @@ async function convertToInvoice(id, { terms = 'prepaid' } = {}, actor) {
     reference: `Repair ${ticket.ticketNumber}`,
 
     devices,
+    serviceType: ticket.serviceType ?? 'walk_in',
     subtotalCents: totals.subtotal + totals.discount,
     discountCents: totals.discount,
     taxPercent: ticket.taxRate ?? 0,
@@ -947,14 +1133,17 @@ async function convertToInvoice(id, { terms = 'prepaid' } = {}, actor) {
   } else if (paid > 0) {
     invoice.status = 'partial';
   }
-  if (partsDemand.size) invoice.partsStockMovedAt = new Date();
+  const heldByTicket = Boolean(ticket.partsStockMovedAt);
+  if (partsNeeded.size && !heldByTicket) invoice.partsStockMovedAt = new Date();
   await invoice.save();
 
-  await commitRepairParts(partsDemand, {
-    reference: { kind: 'ticket', id: ticket._id, label: ticket.ticketNumber },
-    business: ticket.business ?? undefined,
-    createdBy: actor?._id,
-  });
+  if (!heldByTicket) {
+    await commitRepairParts(partsNeeded, {
+      reference: { kind: 'ticket', id: ticket._id, label: ticket.ticketNumber },
+      business: ticket.business ?? undefined,
+      createdBy: actor?._id,
+    });
+  }
 
   ticket.invoice = invoice._id;
   ticket.finalCents = totals.total;

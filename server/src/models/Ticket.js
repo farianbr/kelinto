@@ -4,11 +4,11 @@ import { CONDITION_PART_KEYS, CONDITION_VALUES } from '../../../shared/deviceCon
 /**
  * A repair ticket - a device brought in, diagnosed, worked on, collected.
  *
- * **The customer is free-typed, not an account reference.** A repair walks in
- * off the street; requiring an approved Cellvix business account before a
- * ticket can be opened would make the counter unusable. `customerName` and
- * `customerPhone` are the record, and the phone is what a staff member searches
- * by, so it is indexed alongside the ticket number.
+ * **The customer is an account, and its contact details are copied on.** The
+ * counter picks a customer the way the quote and the invoice do (client
+ * ruling 2026-10-05), and `customerName` / `customerPhone` / `customerEmail`
+ * are snapshotted from it. The phone is what a staff member searches by, so it
+ * is indexed alongside the ticket number.
  *
  * The status list is a vocabulary, not a ladder. Unlike `Rma`, a repair does
  * not move in one direction: a device goes back to `waiting_for_parts` from
@@ -35,7 +35,8 @@ const TICKET_OPEN_STATUSES = TICKET_STATUSES.filter(
   (status) => !['completed', 'cancelled', 'ready_to_pickup'].includes(status),
 );
 
-const TICKET_PRIORITIES = ['low', 'normal', 'high', 'urgent'];
+/** How the job is done. The same list the quote and the invoice carry. */
+const SERVICE_TYPES = ['walk_in', 'pickup', 'onsite', 'mail_in'];
 
 /** Where the ticket came from. A kiosk intake is flagged in the list. */
 const TICKET_SOURCES = ['counter', 'kiosk', 'web', 'phone'];
@@ -72,7 +73,9 @@ const ticketLineSchema = new mongoose.Schema(
     // Integer cents, like every other amount in this system.
     priceCents: { type: Number, default: 0, min: 0 },
     qty: { type: Number, default: 1, min: 1 },
-    // Set when the line came from the catalogue rather than being typed.
+    // Set when the line came from a catalogue rather than being typed: a
+    // service from the price book, a part from the shop's own inventory.
+    service: { type: mongoose.Schema.Types.ObjectId, ref: 'Service', default: null },
     product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', default: null },
   },
   { _id: false },
@@ -136,11 +139,13 @@ const ticketSchema = new mongoose.Schema(
     ticketNumber: { type: String, required: true, unique: true, index: true }, // TKT-2026-00001
 
     // --- who ---------------------------------------------------------------
-    // Free-typed on purpose (see the note above). `user` is an optional
-    // convenience link for the case where the walk-in happens to be a known
-    // account; nothing reads it as authority.
+    // Copied off the account when the ticket is written, so the list and the
+    // printed sheet read text and a later rename of the account does not
+    // rewrite a ticket already handed over. Older tickets may carry no `user`.
     customerName: { type: String, required: true, trim: true, maxlength: 120 },
-    customerPhone: { type: String, required: true, trim: true, maxlength: 40, index: true },
+    // Not required: an account can be opened with only an email, and the ticket
+    // copies whatever the account holds.
+    customerPhone: { type: String, trim: true, maxlength: 40, index: true },
     customerEmail: { type: String, trim: true, lowercase: true, maxlength: 160 },
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 
@@ -190,8 +195,8 @@ const ticketSchema = new mongoose.Schema(
 
     // --- state -------------------------------------------------------------
     status: { type: String, enum: TICKET_STATUSES, default: 'diagnosis', index: true },
-    priority: { type: String, enum: TICKET_PRIORITIES, default: 'normal', index: true },
     source: { type: String, enum: TICKET_SOURCES, default: 'counter' },
+    serviceType: { type: String, enum: SERVICE_TYPES, default: 'walk_in' },
 
     // A staff User, unlike the customer - a technician is an account, because
     // the assignment is what a workload report is counted from.
@@ -199,7 +204,7 @@ const ticketSchema = new mongoose.Schema(
 
     // --- money -------------------------------------------------------------
     // Integer cents, like everywhere else in the codebase. These are the
-    // counter's estimate and its outcome; neither is an invoice, and neither
+    // counter's quote and its outcome; neither is an invoice, and neither
     // moves a balance on its own.
     estimateCents: { type: Number, default: 0, min: 0 },
     finalCents: { type: Number, default: 0, min: 0 },
@@ -236,7 +241,7 @@ const ticketSchema = new mongoose.Schema(
      *
      * **A kiosk ticket is deliberately incomplete.** A customer standing at an
      * iPad can give their name, their number, roughly what device it is and
-     * what is wrong with it; they cannot grade the back glass, set a priority,
+     * what is wrong with it; they cannot grade the back glass,
      * price the work or pick a technician. So the kiosk writes what it honestly
      * knows and flags the rest for the counter.
      *
@@ -298,11 +303,11 @@ const ticketSchema = new mongoose.Schema(
     quote: { type: mongoose.Schema.Types.ObjectId, ref: 'Quote', default: null, index: true },
 
     /**
-     * The repair estimate this ticket was raised from, where it came from one.
+     * The repair quote this ticket was raised from, where it came from one.
      *
      * **A separate field from `quote` above, because they are separate models.**
      * `Quote` is a wholesale parts quote that can also become an order;
-     * `ServiceQuote` is a repair estimate and can only become this. One
+     * `ServiceQuote` is a repair quote and can only become this. One
      * polymorphic field would mean every reader had to ask which kind it held
      * before it could populate it, and a `populate` against the wrong model
      * returns `null` rather than failing - so the lineage strip would go quietly
@@ -316,6 +321,16 @@ const ticketSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+
+    /**
+     * When this ticket took its catalogue parts off the shelf (2026-10-06).
+     *
+     * A ticket holds its parts from the moment it names them; this stamp is
+     * what says it does, so an edit moves only the difference, a cancel puts
+     * them back, and the invoice it becomes does not take them twice. Null on
+     * a ticket written before the rule, whose parts are still on the shelf.
+     */
+    partsStockMovedAt: { type: Date, default: null },
 
     /** The invoice this ticket became, once it has become one. */
     invoice: { type: mongoose.Schema.Types.ObjectId, ref: 'Invoice', default: null },
@@ -341,5 +356,5 @@ ticketSchema.index({ customerName: 1 });
 
 const Ticket = mongoose.model('Ticket', ticketSchema);
 
-export { CONDITION_GRADES, CONDITION_PARTS, TICKET_STATUSES, TICKET_OPEN_STATUSES, TICKET_PRIORITIES, TICKET_SOURCES, Ticket };
+export { CONDITION_GRADES, CONDITION_PARTS, TICKET_STATUSES, TICKET_OPEN_STATUSES, TICKET_SOURCES, Ticket };
 export default Ticket;

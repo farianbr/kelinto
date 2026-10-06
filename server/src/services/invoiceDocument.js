@@ -3,6 +3,12 @@ import { formatDate } from '../../../shared/dates.js';
 import { paletteFor, migrateColorToken } from '../../../shared/businessPalette.js';
 import { db, controlModels } from '../db/models.js';
 import storage from './storageService.js';
+import { unlessDefault } from './warrantyTerms.js';
+import {
+  INVOICE_SERVICE_TYPES,
+  TAX_LABELS,
+  TICKET_STATUS_LABELS,
+} from '../../../shared/schemas/admin.js';
 
 /**
  * The invoice document.
@@ -104,6 +110,7 @@ function addressBlock(title, address) {
       ? COUNTRY_NAMES[String(address.country).toUpperCase()] ?? address.country
       : null,
     address.phone,
+    address.email,
   ]
     .filter((line) => line && String(line).trim())
     .map(
@@ -150,27 +157,51 @@ function itemRows(order) {
  * column, so a device with one service still reads as a heading over a line
  * rather than as two lines of similar text.
  */
-function deviceRows(devices = []) {
+function deviceRows(devices = [], { withEmpty = false } = {}) {
   let counter = 0;
 
   return devices
     .map((device) => {
       const lines = [...(device.services ?? []), ...(device.parts ?? [])];
-      if (lines.length === 0) return '';
+      // An invoice bills only what was priced; a ticket at intake still lists
+      // the device it took in, with nothing priced under it yet.
+      if (lines.length === 0 && !withEmpty) return '';
 
-      const title = [device.brand, device.series, device.model].filter(Boolean).join(' ');
-      const subtitle = [
-        device.serial ? `Serial ${device.serial}` : '',
-        device.problem ?? '',
+      // The series is left out when the model already says it: the device tree
+      // stores "iPhone 15" and then "iPhone 15 Pro Max" under it.
+      const model = device.model ?? '';
+      const series =
+        device.series && !model.toLowerCase().includes(String(device.series).toLowerCase())
+          ? device.series
+          : '';
+      const title = [device.brand, series, model].filter(Boolean).join(' ');
+
+      /**
+       * What was wrong and what was done, each on its own labelled line.
+       *
+       * The problem used to ride in the subtitle beside the serial and the
+       * solution and the device's note were not printed at all, so the paper
+       * the customer kept said what was billed but never why (client ruling
+       * 2026-10-05: notes and problems on the PDF, in the area they belong to).
+       */
+      const facts = [
+        ['Problem', device.problem],
+        ['Solution', device.solution],
+        ['Notes', device.notes],
       ]
-        .filter(Boolean)
-        .join(' · ');
+        .filter(([, value]) => String(value ?? '').trim())
+        .map(
+          ([label, value]) =>
+            `<div style="font-size:${T.micro};color:${MUTED};margin-top:3px;"><strong style="color:${INK};">${label}:</strong> ${escapeHtml(value)}</div>`,
+        )
+        .join('');
 
       const header = `
         <tr>
-          <td colspan="5" style="padding:14px 10px 6px;border-bottom:1px solid ${LINE};background:#fafafb;">
+          <td colspan="5" style="padding:14px 10px 8px;border-bottom:1px solid ${LINE};background:#fafafb;">
             <div style="font-size:${T.item};font-weight:700;color:${INK};">${escapeHtml(title || 'Device')}</div>
-            ${subtitle ? `<div style="font-size:${T.micro};color:${MUTED};margin-top:2px;">${escapeHtml(subtitle)}</div>` : ''}
+            ${device.serial ? `<div style="font-size:${T.micro};color:${MUTED};margin-top:2px;">Serial ${escapeHtml(device.serial)}</div>` : ''}
+            ${facts}
           </td>
         </tr>`;
 
@@ -194,9 +225,44 @@ function deviceRows(devices = []) {
         })
         .join('');
 
-      return header + rows;
+      const empty = lines.length
+        ? ''
+        : `<tr><td colspan="5" style="padding:11px 10px;border-bottom:1px solid ${LINE};font-size:${T.body};font-style:italic;color:${MUTED};">Nothing priced yet.</td></tr>`;
+
+      return header + rows + empty;
     })
     .join('');
+}
+
+/**
+ * The notes written for the customer: the client note and the technician's.
+ *
+ * Both are labelled "on the PDF" on the form, and neither was printed. The
+ * internal note is never read here - it is the one the form promises stays in
+ * the building.
+ */
+function notesRows(invoice) {
+  const notes = [
+    ['Notes', invoice.customerNotes],
+    ['Technician notes', invoice.technicianNotes],
+  ].filter(([, value]) => String(value ?? '').trim());
+
+  if (!notes.length) return '';
+
+  return `
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:24px;">
+        ${notes
+          .map(
+            ([label, value]) => `
+        <tr>
+          <td style="padding:12px 14px;background:#fafafb;border-top:1px solid ${LINE};">
+            <div style="font-size:${T.small};font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${INK};margin-bottom:4px;">${label}</div>
+            <div style="font-size:${T.body};line-height:1.7;color:${MUTED};white-space:pre-wrap;">${escapeHtml(value)}</div>
+          </td>
+        </tr>`,
+          )
+          .join('')}
+      </table>`;
 }
 
 function totalsRow(label, value, { strong = false, tone } = {}) {
@@ -520,6 +586,9 @@ ${/*
         </tr>
       </table>
 
+      <!-- ---- notes ---------------------------------------------------- -->
+      ${notesRows(invoice)}
+
       <!-- ---- terms ---------------------------------------------------- -->
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:30px;border-top:1px solid ${LINE};">
         <tr>
@@ -606,5 +675,379 @@ function renderInvoiceText({ invoice, order, origin, shop }) {
   return lines.filter((line) => line !== null).join('\n');
 }
 
-export { renderInvoiceHtml, renderInvoiceText, resolveInvoiceBrand };
+// ---- the repair documents ---------------------------------------------------
+
+/** "Walk-in", "On-site Repair" - the words a customer reads, never the stored key. */
+const SERVICE_TYPE_LABELS = Object.fromEntries(
+  INVOICE_SERVICE_TYPES.map((entry) => [entry.value, entry.label]),
+);
+
+/** One labelled fact in the right-hand panel beside the customer. */
+function factsBlock(title, facts) {
+  const rows = facts
+    .filter(([, value]) => value)
+    .map(
+      ([label, value]) =>
+        `<div style="font-size:${T.body};line-height:1.65;color:${MUTED};">${escapeHtml(label)}: <span style="color:${INK};">${escapeHtml(value)}</span></div>`,
+    )
+    .join('');
+  if (!rows) return `<td style="width:50%;"></td>`;
+
+  return `
+    <td style="vertical-align:top;padding:22px 24px;width:50%;">
+      <div style="font-size:${T.small};font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${INK};margin-bottom:10px;">${escapeHtml(title)}</div>
+      ${rows}
+    </td>`;
+}
+
+/**
+ * The warranty sheet a ticket carries as its second page, in the invoice's
+ * own type and spacing (it used to be drawn in the ticket's older style).
+ * Every tier is listed with the customer's own marked, because a table of
+ * only what they have tells them nothing.
+ */
+function warrantySheet({ number, dateLabel, shopName, contact, brand, tiers, review }) {
+  const mine = tiers.find((tier) => tier.isCustomer);
+  const rows = tiers
+    .map(
+      (tier) => `
+        <tr>
+          <td style="padding:10px;border-bottom:1px solid ${LINE};font-size:${T.item};color:${INK};${tier.isCustomer ? 'font-weight:700;' : ''}">${escapeHtml(tier.label)} member${tier.isCustomer ? ' (this customer)' : ''}</td>
+          <td style="padding:10px;border-bottom:1px solid ${LINE};font-size:${T.item};color:${INK};text-align:right;${tier.isCustomer ? 'font-weight:700;' : ''}">${tier.days}-day warranty</td>
+        </tr>`,
+    )
+    .join('');
+
+  return `
+<table role="presentation" class="sheet page-2" cellpadding="0" cellspacing="0" style="max-width:760px;width:100%;margin:18px auto 0;background:#fff;border-collapse:collapse;box-shadow:0 1px 3px rgba(0,0,0,.08);">
+  <tr>
+    <td style="padding:34px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="vertical-align:top;">
+            <div style="font-size:${T.figure};font-weight:800;letter-spacing:-.01em;color:${INK};line-height:1;">WARRANTY</div>
+            <div style="font-size:${T.small};letter-spacing:.06em;text-transform:uppercase;color:${MUTED};margin-top:8px;">${escapeHtml(shopName)}</div>
+          </td>
+          <td style="vertical-align:top;text-align:right;font-size:${T.small};letter-spacing:.06em;text-transform:uppercase;color:${INK};font-weight:700;">
+            Ticket no. ${escapeHtml(number)}
+            <div style="font-weight:400;color:${MUTED};margin-top:6px;">${escapeHtml(dateLabel)}</div>
+          </td>
+        </tr>
+      </table>
+
+      <p style="margin:24px 0 0;font-size:${T.item};line-height:1.7;color:${INK};">
+        Thank you for choosing ${escapeHtml(shopName)}.${
+          mine
+            ? ` As a ${escapeHtml(mine.label)} member, every repair on this ticket is covered by a <strong>${mine.days}-day warranty</strong>.`
+            : ' Every repair on this ticket is covered by the warranty shown below.'
+        }
+      </p>
+
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px;border-collapse:collapse;">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:9px 10px;border-top:1px solid ${LINE};border-bottom:1px solid ${LINE};font-size:${T.micro};letter-spacing:.08em;text-transform:uppercase;color:${MUTED};">Membership tier</th>
+            <th style="text-align:right;padding:9px 10px;border-top:1px solid ${LINE};border-bottom:1px solid ${LINE};font-size:${T.micro};letter-spacing:.08em;text-transform:uppercase;color:${MUTED};">Warranty, all repairs</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:26px;border-top:1px solid ${LINE};">
+        <tr>
+          <td style="vertical-align:top;width:50%;padding:20px 20px 0 0;">
+            <div style="font-size:${T.small};font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${INK};margin-bottom:8px;">What is covered</div>
+            <div style="font-size:${T.body};line-height:1.7;color:${MUTED};">The specific repair performed. Liquid damage and physical damage after service are not covered. Bring this ticket to make a claim.</div>
+          </td>
+          <td style="vertical-align:top;width:50%;padding:20px 0 0 20px;">
+            <div style="font-size:${T.small};font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${INK};margin-bottom:8px;">Your feedback</div>
+            <div style="font-size:${T.body};line-height:1.7;color:${MUTED};">Enjoyed the service? We would love to hear from you.${
+              review
+                ? ` <a href="${escapeHtml(review)}" style="color:${brand};text-decoration:none;">Leave us a review</a>.`
+                : ''
+            }</div>
+          </td>
+        </tr>
+      </table>
+
+      ${
+        contact
+          ? `<div style="margin-top:28px;padding-top:16px;border-top:1px solid ${LINE};font-size:${T.small};line-height:1.7;color:${MUTED};">For warranty support: ${escapeHtml(contact)}</div>`
+          : ''
+      }
+    </td>
+  </tr>
+</table>`;
+}
+
+/**
+ * The ticket and the repair quote, drawn as the invoice is (client ruling
+ * 2026-10-06: "follow invoice pdf design for quote and ticket pdfs").
+ *
+ * One job produces three pieces of paper - the quote, the ticket, the
+ * invoice - and they used to look like two different shops: the invoice on
+ * this renderer, the other two on the ticket's own. Now all three share the
+ * masthead, the customer panel, the numbered device table, the totals and the
+ * footer, and differ only in what they are called and what the right-hand
+ * panel says.
+ *
+ * `kind` is `ticket` or `quote`. `record` is the lean document. Internal notes
+ * are never read here.
+ */
+function renderRepairDocumentHtml({
+  kind,
+  record,
+  nonce,
+  shop,
+  brandColor,
+  logo = null,
+  warranty = null,
+}) {
+  const isTicket = kind === 'ticket';
+  const business = shop ?? BUSINESS_INFO;
+  const BRAND = brandColor ?? BRAND_FALLBACK;
+  const tagline = business.tagline === 'Wholesale phone and laptop parts' ? '' : (business.tagline ?? '');
+  const phone = unlessDefault(business.phone, 'phone');
+  const email = unlessDefault(business.email, 'email');
+
+  const number = isTicket ? record.ticketNumber : record.quoteNumber;
+  const docLabel = isTicket ? 'TICKET' : 'QUOTE';
+  const issued = isTicket ? record.createdAt : (record.quoteDate ?? record.createdAt);
+
+  const devices = record.devices?.length
+    ? record.devices
+    : [
+        {
+          brand: record.deviceBrand,
+          model: record.deviceModel,
+          serial: record.deviceSerial,
+          problem: record.issue,
+          services: [],
+          parts: [],
+        },
+      ];
+
+  const subtotal = devices.reduce(
+    (sum, device) =>
+      sum +
+      [...(device.services ?? []), ...(device.parts ?? [])].reduce(
+        (n, line) => n + (line.priceCents ?? 0) * (line.qty ?? 1),
+        0,
+      ),
+    0,
+  );
+  const fee = !isTicket && record.extendedServiceFee ? (record.extendedServiceFeeCents ?? 0) : 0;
+  const discount = Math.min(record.discountCents ?? 0, subtotal + fee);
+  // A ticket is re-priced from its lines here, as on its screen; a quote
+  // carries the figures `serviceQuoteService.applyTotals` keeps in step.
+  const tax = isTicket
+    ? Math.round((subtotal + fee - discount) * ((record.taxRate ?? 0) / 100))
+    : (record.taxCents ?? 0);
+  const total = isTicket ? subtotal + fee - discount + tax : (record.totalCents ?? 0);
+  const paid = isTicket ? (record.depositTotal ?? 0) : 0;
+  const taxLabel = `${TAX_LABELS[record.province] ?? 'Tax'}${record.taxRate ? ` (${record.taxRate}%)` : ''}`;
+
+  const terms = isTicket
+    ? [
+        'Proof of this ticket is required to collect the device.',
+        'Figures are not final until the work is complete; the invoice is issued on collection.',
+        'Any warranty covers the specific repair performed, not faults the device already had.',
+      ]
+    : [
+        'This quote is not a final price. It is confirmed once the device has been inspected.',
+        record.validUntil
+          ? `Prices hold until ${day(record.validUntil)}.`
+          : 'Prices may change if parts costs move before the work is booked.',
+        'Bring this quote with the device so the work can start from it.',
+      ];
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>${isTicket ? 'Ticket' : 'Quote'} ${escapeHtml(number)} · ${escapeHtml(business.name)}</title>
+<style>
+  @media print {
+    body { background: #fff !important; padding: 0 !important; }
+    .sheet { box-shadow: none !important; margin: 0 !important; }
+    .no-print { display: none !important; }
+    .page-2 { break-before: page; }
+  }
+</style>
+</head>
+<body style="margin:0;padding:24px 12px;background:#f4f4f6;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
+
+${
+  nonce
+    ? `<div class="no-print" style="max-width:760px;margin:0 auto 14px;text-align:right;">
+  <button type="button" id="print-document" style="cursor:pointer;border:0;border-radius:10px;padding:9px 16px;font-size:${T.item};font-weight:600;color:#fff;background:${BRAND};">
+    Print / save as PDF
+  </button>
+</div>
+<script nonce="${escapeHtml(nonce)}">
+  document.getElementById('print-document').addEventListener('click', function () { window.print(); });
+</script>`
+    : ''
+}
+
+<table role="presentation" class="sheet" cellpadding="0" cellspacing="0" style="max-width:760px;width:100%;margin:0 auto;background:#fff;border-collapse:collapse;box-shadow:0 1px 3px rgba(0,0,0,.08);">
+  <tr>
+    <td style="padding:34px 34px 0;">
+
+      <!-- ---- masthead ------------------------------------------------- -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="vertical-align:top;">
+            ${
+              logo
+                ? `<img src="${logo}" alt="${escapeHtml(business.name)}" width="190" height="48"
+                     style="display:block;width:190px;height:auto;border:0;" />`
+                : `<table role="presentation" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="width:34px;height:34px;background:${INK};border-radius:6px;"></td>
+                <td style="padding-left:11px;vertical-align:middle;">
+                  <div style="font-size:${T.figure};font-weight:800;letter-spacing:-.01em;color:${INK};">${escapeHtml(String(business.name ?? '').toUpperCase())}</div>
+                  <div style="font-size:${T.micro};letter-spacing:.16em;text-transform:uppercase;color:${MUTED};margin-top:2px;">${escapeHtml(tagline)}</div>
+                </td>
+              </tr>
+            </table>`
+            }
+          </td>
+          <td style="vertical-align:top;text-align:right;">
+            <div style="font-size:${T.figure};font-weight:800;letter-spacing:-.01em;color:${INK};line-height:1;">${docLabel}</div>
+            <div style="font-size:${T.small};letter-spacing:.06em;text-transform:uppercase;color:${MUTED};margin-top:8px;">${isTicket ? 'Opened' : 'Issued'} ${escapeHtml(day(issued))}</div>
+          </td>
+        </tr>
+      </table>
+
+      <!-- ---- parties -------------------------------------------------- -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:26px;background:#f7f7f9;border-radius:8px;">
+        <tr>
+          ${addressBlock(isTicket ? 'Customer' : 'Quote for', {
+            contactName: record.customerName,
+            phone: record.customerPhone,
+            email: record.customerEmail,
+          })}
+          ${factsBlock(
+            isTicket ? 'Repair' : 'Quote',
+            isTicket
+              ? [
+                  ['Status', TICKET_STATUS_LABELS[record.status] ?? record.status],
+                  ['Service', SERVICE_TYPE_LABELS[record.serviceType ?? 'walk_in']],
+                ]
+              : [['Service', SERVICE_TYPE_LABELS[record.serviceType ?? 'walk_in']]],
+          // The date the document holds until sits in the meta row below, where
+          // the invoice puts its due date, rather than twice.
+          )}
+        </tr>
+      </table>
+
+      <!-- ---- meta ----------------------------------------------------- -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:22px;">
+        <tr>
+          <td style="font-size:${T.small};letter-spacing:.06em;text-transform:uppercase;color:${MUTED};">
+            ${isTicket ? (record.dueDate ? `Ready by ${escapeHtml(day(record.dueDate))}` : '') : record.validUntil ? `Valid until ${escapeHtml(day(record.validUntil))}` : ''}
+          </td>
+          <td style="text-align:right;font-size:${T.small};letter-spacing:.06em;text-transform:uppercase;color:${INK};font-weight:700;">
+            ${isTicket ? 'Ticket no.' : 'Quote no.'} ${escapeHtml(number)}
+          </td>
+        </tr>
+      </table>
+
+      <!-- ---- lines ---------------------------------------------------- -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:14px;border-collapse:collapse;">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:9px 10px;border-top:1px solid ${LINE};border-bottom:1px solid ${LINE};font-size:${T.micro};letter-spacing:.08em;text-transform:uppercase;color:${MUTED};width:34px;">No</th>
+            <th style="text-align:left;padding:9px 10px;border-top:1px solid ${LINE};border-bottom:1px solid ${LINE};font-size:${T.micro};letter-spacing:.08em;text-transform:uppercase;color:${MUTED};">Item description</th>
+            <th style="text-align:right;padding:9px 10px;border-top:1px solid ${LINE};border-bottom:1px solid ${LINE};font-size:${T.micro};letter-spacing:.08em;text-transform:uppercase;color:${MUTED};">Price</th>
+            <th style="text-align:right;padding:9px 10px;border-top:1px solid ${LINE};border-bottom:1px solid ${LINE};font-size:${T.micro};letter-spacing:.08em;text-transform:uppercase;color:${MUTED};">Qty</th>
+            <th style="text-align:right;padding:9px 10px;border-top:1px solid ${LINE};border-bottom:1px solid ${LINE};font-size:${T.micro};letter-spacing:.08em;text-transform:uppercase;color:${MUTED};">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${deviceRows(devices, { withEmpty: true })}
+        </tbody>
+      </table>
+
+      <!-- ---- totals --------------------------------------------------- -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:20px;">
+        <tr>
+          <td style="vertical-align:top;width:47%;">
+            <div style="font-size:${T.small};font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${MUTED};">${paid > 0 ? 'Balance on collection' : 'Quoted total'}</div>
+            <div style="margin-top:10px;">
+              <span style="font-size:${T.figure};font-weight:800;color:${INK};letter-spacing:-.02em;">${money(Math.max(0, total - paid))}</span>
+            </div>
+          </td>
+          <td style="vertical-align:top;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+              ${totalsRow('Subtotal', money(subtotal))}
+              ${fee > 0 ? totalsRow('Extended service area', money(fee)) : ''}
+              ${discount > 0 ? totalsRow('Discount', `−${money(discount)}`) : ''}
+              ${totalsRow(taxLabel, money(tax))}
+              ${totalsRow('Total', money(total), { strong: true })}
+              ${paid > 0 ? totalsRow('Deposit paid', `−${money(paid)}`) : ''}
+              ${paid > 0 ? totalsRow('Balance due', money(Math.max(0, total - paid)), { strong: true }) : ''}
+            </table>
+          </td>
+        </tr>
+      </table>
+
+      <!-- ---- notes ---------------------------------------------------- -->
+      ${notesRows({ customerNotes: record.clientNotes, technicianNotes: record.technicianNotes })}
+
+      <!-- ---- terms ---------------------------------------------------- -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:30px;border-top:1px solid ${LINE};">
+        <tr>
+          <td style="vertical-align:top;padding:20px 0 0;">
+            <div style="font-size:${T.small};font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${INK};margin-bottom:8px;">${isTicket ? 'About this ticket' : 'About this quote'}</div>
+            ${terms.map((term) => `<div style="font-size:${T.body};line-height:1.7;color:${MUTED};">${escapeHtml(term)}</div>`).join('')}
+          </td>
+        </tr>
+      </table>
+
+      <!-- ---- footer --------------------------------------------------- -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;border-top:1px solid ${LINE};">
+        <tr>
+          <td style="padding:16px 0 30px;font-size:${T.small};line-height:1.7;color:${MUTED};">
+            ${
+              email || phone
+                ? `Questions? ${email ? `Email <a href="mailto:${escapeHtml(email)}" style="color:${BRAND};text-decoration:none;">${escapeHtml(email)}</a>` : ''}${email && phone ? ' or ' : ''}${phone ? `call ${escapeHtml(phone)}` : ''}.<br />`
+                : ''
+            }
+            ${escapeHtml(
+              [
+                business.address?.line1,
+                business.address?.city,
+                [business.address?.region, business.address?.postal].filter(Boolean).join(' '),
+              ]
+                .filter(Boolean)
+                .join(', '),
+            )}
+          </td>
+        </tr>
+      </table>
+
+    </td>
+  </tr>
+</table>
+${
+  isTicket && warranty
+    ? warrantySheet({
+        number,
+        dateLabel: day(issued),
+        shopName: business.name,
+        contact: warranty.contact,
+        brand: BRAND,
+        tiers: warranty.tiers,
+        review: warranty.review,
+      })
+    : ''
+}
+</body>
+</html>`;
+}
+
+export { renderInvoiceHtml, renderInvoiceText, resolveInvoiceBrand, renderRepairDocumentHtml };
 export default renderInvoiceHtml;

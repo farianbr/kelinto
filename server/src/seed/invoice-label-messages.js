@@ -140,7 +140,7 @@ ${review}`;
   return {
     'Thanks for Support': {
       delayDays: 0,
-      channel: 'email',
+      channels: ['email'],
       subject: 'Thanks, {{customer_name}}: your repair is done and covered',
       message: shell({
         brand,
@@ -151,7 +151,7 @@ ${review}`;
     },
     'Thank You for Being Part of Us': {
       delayDays: 7,
-      channel: 'email',
+      channels: ['email'],
       subject: 'How is your device doing, {{customer_name}}?',
       message: shell({
         brand,

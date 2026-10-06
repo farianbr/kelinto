@@ -10,6 +10,7 @@ import '../models/User.js';
 import '../models/Product.js';
 import '../models/Settings.js';
 import { buildQuotes } from './sales.data.js';
+import { highestWebQuoteSequence } from '../services/webQuoteNumbers.js';
 
 /**
  * Demo quotes, added to a database that already has real data.
@@ -22,7 +23,7 @@ import { buildQuotes } from './sales.data.js';
  * needs is **skipped with a line saying so**, not thrown on: one business
  * without a parts shelf must not stop the rest of the run.
  *
- * **Additive, like `seed:content` - it never wipes.** `npm run seed` rebuilds
+ * **Additive, like `seed:demo -- content` - it never wipes.** `npm run seed` rebuilds
  * the whole database from scratch, which is the wrong tool for "give me some
  * quotes to look at" on an instance that already holds accounts and orders
  * somebody is using. This adds rows and leaves everything else alone.
@@ -89,14 +90,11 @@ async function seedQuotes() {
   }
 
   // Continue the sequence rather than restarting it, so a second run does not
-  // collide on `quoteNumber`'s unique index.
+  // collide on `quoteNumber`'s unique index. The WQ- counter is shared with the
+  // website's enquiries (services/webQuoteNumbers.js), so both are read.
   const year = new Date().getFullYear();
-  const prefix = `QT-${year}-`;
-  const last = await db().Quote.findOne({ quoteNumber: new RegExp(`^${prefix}`) })
-    .sort({ quoteNumber: -1 })
-    .select('quoteNumber')
-    .lean();
-  const startAt = last ? Number(last.quoteNumber.slice(prefix.length)) + 1 : 1;
+  const prefix = `WQ-${year}-`;
+  const startAt = (await highestWebQuoteSequence(year)) + 1;
 
   const rate = db().Settings.rateFor(settings, 'ON');
   const built = buildQuotes({ products, users: buyers, rate, year });
@@ -156,7 +154,7 @@ async function seedQuotes() {
   return { added: inserted.length };
 }
 
-// CLI entry: `npm run seed:quotes`
+// CLI entry: `npm run seed:demo -- web-quotes`
 if (process.argv[1] && process.argv[1].endsWith('quotes.js')) {
   (async () => {
     console.log('\n  Seeding demo quotes…\n');

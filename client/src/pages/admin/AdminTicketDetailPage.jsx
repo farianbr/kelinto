@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router';
+import { useNavigate, useParams } from 'react-router';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import useAdminForm from '@/hooks/useAdminForm';
@@ -9,55 +9,52 @@ import {
   Banknote,
   ClipboardList,
   FileText,
-  History,
-  Mail,
-  PackageCheck,
-  Phone,
   Printer,
   Receipt,
   Smartphone,
-  Stethoscope,
   Tag,
   Trash2,
-  Wrench,
+  XCircle,
 } from 'lucide-react';
 import cn from '@/lib/cn';
 import { apiUrl } from '@/lib/api';
-import { money, date, dateTime, count as formatCount } from '@/lib/format';
+import { money, date, dateTime, count as formatCount, titleize } from '@/lib/format';
 import { TICKET_STATUSES, TICKET_STATUS_LABELS } from '@shared/schemas/admin';
-import { conditionAnswered, conditionProblems } from '@shared/deviceCondition';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
 import Modal from '@/components/ui/Modal';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Input from '@/components/ui/Input';
 import SelectField from '@/components/ui/SelectField';
-import Checkbox from '@/components/ui/Checkbox';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import Skeleton from '@/components/ui/Skeleton';
 import PageHeader from '@/components/admin/PageHeader';
-import ProcessStrip from '@/components/admin/ProcessStrip';
 import WorkflowLineage from '@/components/admin/WorkflowLineage';
+import TicketStatusDialog from '@/components/admin/TicketStatusDialog';
+import {
+  DocumentLayout,
+  DocumentDevices,
+  DocumentNotes,
+  DocumentSummary,
+  DocumentCustomer,
+  DocumentFacts,
+  DocumentHistory,
+  serviceTypeLabel,
+} from '@/components/admin/SalesDocument';
 import { useSetRecordLabel } from '@/components/admin/shell/recordLabel';
 import { useAdminTicket, useAdminMutations } from '@/hooks/useAdmin';
 import { toast } from '@/store/toastStore';
-import reportStatusOutcome from '@/lib/ticketStatusOutcome';
 import { pressable } from '@/lib/motion';
 
 /**
  * One repair, from drop-off to invoice.
  *
- * **The screen the panel was missing.** Tickets had a list and a form but no
- * detail view, so the only way to read a job was to open the edit form - which
- * shows every field as an input and answers none of the questions a staff member
- * actually arrives with: where is this up to, what did we quote, what has been
- * paid, and what happens next.
- *
- * The order of the page is the order of those questions. Stage first, because
- * it is the one thing that changes daily and the one thing a customer rings
- * about. Then the money already taken, then the fault and the work, then the
- * history. The lifecycle strip at the foot is the map - it says where this
- * ticket sits in a process that outlives any one screen.
+ * Laid out the way the quote and the invoice are (`SalesDocument`, client
+ * ruling 2026-10-05): the work in the wide column, and what it comes to, whose
+ * it is and when beside it. A ticket's own working panel, the repair status,
+ * leads the wide column because it is the one thing that changes daily and the
+ * one thing a customer rings about; the deposit sits after the work, beside
+ * the money it is taken against.
  */
 
 /** The tones the status ladder reads in. Open states warm, terminal ones cool. */
@@ -74,18 +71,8 @@ const STATUS_TONES = {
 };
 
 /**
- * The dot beside each status in the picker.
- *
- * **The same map the Tickets list uses**, deliberately duplicated rather than
- * imported: `STATUS_DOTS` lives in `AdminTicketsPage` as a module constant and
- * exporting a colour table from a page component to another page component is
- * how two screens end up importing each other. The pair is small, stable and
- * the labels are already shared through `TICKET_STATUS_LABELS`; if a third
- * screen needs it, it moves to `shared/` then.
- *
- * Without these the picker was nine lines of identical grey text - readable,
- * but nothing to aim at, and visibly not the control the list had trained
- * people on.
+ * The dot beside each status in the picker - the same map the Tickets list
+ * uses, so the two controls read as one vocabulary rather than two.
  */
 const STATUS_DOTS = {
   diagnosis: 'bg-info/60',
@@ -111,13 +98,10 @@ const DEPOSIT_METHODS = [
 /**
  * Payment terms on the invoice a repair converts into.
  *
- * **Worded for a repair shop, not for the wholesale desk.** These labels were
- * the parts business's own - bare "Net 30", "Net 60" - which is a credit
- * vocabulary that belongs to a buyer with an account and a line of credit. The
- * customer collecting a phone pays at the counter, so "Due on collection" is
- * the normal case and says the thing that actually happens; the net terms stay
- * for the business accounts a shop does invoice, named so it is clear they
- * draw on credit rather than settle now.
+ * Worded for a repair shop: the customer collecting a phone pays at the
+ * counter, so "Due on collection" is the normal case; the net terms stay for
+ * the business accounts a shop does invoice, named so it is clear they draw on
+ * credit rather than settle now.
  */
 const TERMS = [
   { value: 'prepaid', label: 'Due on collection' },
@@ -126,67 +110,6 @@ const TERMS = [
   { value: 'net60', label: 'On account - 60 days' },
 ];
 
-/**
- * This page reads tighter than the rest of the panel, on purpose.
- *
- * A ticket is a **working screen**: a counter has it open while somebody is
- * standing there, and it carries eight sections that all want to be visible at
- * once - stage, deposit, fault, work, timeline, customer, lifecycle. The default
- * panel padding is right for a settings form somebody reads once; here it pushed
- * the timeline below the fold and made the page feel loose rather than calm.
- *
- * Applied through `bodyClassName` rather than by changing `Panel`, because that
- * component serves every screen in the admin and this is a judgement about one.
- * `twMerge` lets the later padding win at both breakpoints.
- */
-const COMPACT_BODY = 'p-3 sm:p-4';
-
-/**
- * Shorter controls, for the same reason the panels are tighter.
- *
- * **Height only.** The 16px font on an input is load-bearing rather than
- * decorative: mobile Safari zooms the page in when a focused field sets text
- * below it and never zooms back out, which leaves the sticky header wider than
- * the viewport for the rest of the visit. See the note in `ui/Input`. So these
- * lose 8px of vertical padding and keep every character size.
- */
-const COMPACT_FIELD = 'h-9';
-
-/**
- * The stages a repair moves through.
- *
- * Rendered by the shared `ProcessStrip`, **not a local component**. This page
- * used to draw its own row of brand-tinted pills with an ASCII arrow between
- * them - the same idea as the quote's and the invoice's life cycle, in a
- * different shape, so the one pattern looked like three patterns and only this
- * one lacked the tick-versus-clock distinction that tells a finished stage from
- * a live one. Quote is the standard; this now follows it.
- *
- * **Four stations, not nine.** The real ladder in `TICKET_STATUSES` has nine
- * rungs and most are shades of the same station - `ready_to_repair` and
- * `waiting_for_parts` are both "in repair" as far as anyone outside the workshop
- * is concerned. The `Status` panel above is where the exact rung lives; this is the
- * shape of the process, which is what somebody scanning wants.
- *
- * `cancelled` is not a fifth station. It is an exit that can happen from any
- * rung, so it stops the strip at whichever station the ticket had reached
- * rather than laying itself out as a stage a ticket passes *through*.
- */
-const LIFECYCLE = [
-  { key: 'diagnosis', label: 'Diagnosis', icon: Stethoscope },
-  { key: 'processing', label: 'In repair', icon: Wrench },
-  { key: 'ready_to_pickup', label: 'Ready to pickup', icon: PackageCheck },
-  { key: 'invoiced', label: 'Invoiced', icon: Receipt },
-];
-
-/**
- * Which of the four stations a ticket's nine-rung status sits at.
- *
- * A cancelled ticket keeps the station it died at - `timeline` is the only
- * record of how far it got, so the last status before the cancellation is
- * where the strip stops. Without that a cancelled ticket showed as stopped at
- * Diagnosis whether it was cancelled at the counter or on the workshop.
- */
 /** Taking a deposit on a ticket. The box starts empty, so this is the one that most needed a rule. */
 const depositFormSchema = z
   .object({
@@ -198,56 +121,24 @@ const depositFormSchema = z
   // passed through rather than restated.
   .passthrough();
 
-function stationOf(ticket, invoiced) {
-  if (invoiced) return 'invoiced';
-
-  const status =
-    ticket.status === 'cancelled'
-      ? ([...(ticket.timeline ?? [])]
-          .reverse()
-          .find((entry) => entry.status && entry.status !== 'cancelled')?.status ?? 'diagnosis')
-      : ticket.status;
-
-  if (['ready_to_pickup', 'completed'].includes(status)) return 'ready_to_pickup';
-  if (['processing', 'ready_to_repair', 'waiting_for_parts', 'retention_policy'].includes(status)) {
-    return 'processing';
-  }
-  return 'diagnosis';
-}
-
 export function AdminTicketDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { data, isLoading, error } = useAdminTicket(id);
 
-  const {
-    setTicketStatus,
-    recordTicketDeposit,
-    removeTicketDeposit,
-    convertTicketToInvoice,
-    deleteTicket,
-  } = useAdminMutations();
+  const { recordTicketDeposit, removeTicketDeposit, convertTicketToInvoice, deleteTicket } =
+    useAdminMutations();
 
   const [converting, setConverting] = useState(false);
   const [removingDeposit, setRemovingDeposit] = useState(null);
-  const [cancelling, setCancelling] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   /**
-   * The submitted-but-unconfirmed stage move and deposit.
-   *
-   * **Every mutation confirms** (Instructions §3.0.1), and these two were the
-   * exceptions - argued on the grounds that a form somebody filled in is itself
-   * the confirmation. That reading has been overruled twice, and the two of
-   * them are the page's consequential writes: a stage move MESSAGES THE
-   * CUSTOMER by default, and a deposit records money taken. Neither is
-   * recoverable by editing a field back - an SMS is out, and a deposit is
-   * removed rather than undone.
-   *
-   * The form's values are parked here and the mutation fires from the dialog,
-   * so what is confirmed is exactly what was typed.
+   * The stage move waiting on the shared status dialog, and the deposit waiting
+   * on its own confirm. Both are parked here and the write fires from the
+   * dialog, so what is confirmed is exactly what was typed.
    */
-  const [movingStage, setMovingStage] = useState(null);
+  const [statusMove, setStatusMove] = useState(null);
   const [recordingDeposit, setRecordingDeposit] = useState(null);
 
   const ticket = data?.ticket;
@@ -258,11 +149,7 @@ export function AdminTicketDetailPage() {
       <>
         <PageHeader icon={ClipboardList} title="Ticket" />
         <Panel>
-          <PanelEmpty
-            icon={AlertCircle}
-            title="That ticket could not be opened"
-            body={error.message}
-          />
+          <PanelEmpty icon={AlertCircle} title="That ticket could not be opened" body={error.message} />
         </Panel>
       </>
     );
@@ -270,7 +157,7 @@ export function AdminTicketDetailPage() {
 
   if (isLoading || !ticket) {
     return (
-      <div className="space-y-4">
+      <div className="record-page space-y-4">
         <Skeleton className="h-16 w-72" />
         <Skeleton className="h-24" />
         <Skeleton className="h-64" />
@@ -279,25 +166,50 @@ export function AdminTicketDetailPage() {
   }
 
   const invoiced = Boolean(ticket.invoice);
-  const balance = Math.max(0, (ticket.finalCents || ticket.estimateCents || 0) - ticket.depositTotal);
+  const total = ticket.finalCents || ticket.estimateCents || 0;
+  const balance = Math.max(0, total - ticket.depositTotal);
+
+  /**
+   * The devices, or the one a ticket written before devices existed describes.
+   * Its fault lived on `issue`, so it is shown as that device's problem rather
+   * than in a panel of its own.
+   */
+  const devices = ticket.devices?.length
+    ? ticket.devices
+    : [
+        {
+          brand: ticket.device?.brand,
+          model: ticket.device?.model,
+          serial: ticket.device?.serial,
+          problem: ticket.issue,
+          services: [],
+          parts: [],
+        },
+      ];
+
+  const gross = devices.reduce(
+    (sum, device) =>
+      sum +
+      [...(device.services ?? []), ...(device.parts ?? [])].reduce(
+        (n, line) => n + (line.priceCents ?? 0) * (line.qty ?? 1),
+        0,
+      ),
+    0,
+  );
+
+  const serviceType = serviceTypeLabel(ticket.serviceType);
 
   return (
-    // The record measure, centred. `.record-page` carries the whole treatment
-    // (see the container tokens in index.css) - this page used to hard-code its
-    // own 1120px, which is exactly the per-page invented number that token
-    // exists to prevent.
     <div className="record-page">
       <PageHeader
         icon={ClipboardList}
         title={ticket.ticketNumber}
+        description={[ticket.customer?.name, serviceType].filter(Boolean).join(' · ')}
         badgesBelow
         badge={
           <>
             <Badge tone={STATUS_TONES[ticket.status] ?? 'neutral'} size="sm">
               {TICKET_STATUS_LABELS[ticket.status] ?? ticket.status}
-            </Badge>
-            <Badge tone={ticket.priority === 'urgent' ? 'danger' : 'neutral'} size="sm">
-              {ticket.priority}
             </Badge>
             {ticket.overSla && (
               <Badge tone="warn" size="sm">
@@ -315,25 +227,14 @@ export function AdminTicketDetailPage() {
         }
         action={
           <>
-            {/* The two things a counter prints. The label goes on the device so
-                it can be found on a shelf of forty; the ticket is what the
-                customer leaves with. Both render through the browser's print
-                dialog, which is where "save as PDF" lives - the same reasoning
-                the invoice screen gives for not shipping a PDF generator. */}
+            {/* The two things a counter prints. Both render through the
+                browser's print dialog, which is where "save as PDF" lives.
+                `kind` goes in the params, never in the path: `apiUrl` appends
+                the business with a fresh `?`. */}
             <Button
-              size="xs"
+              size="sm"
               variant="outline"
               icon={Tag}
-              /**
-               * `kind` goes in the params, never in the path.
-               *
-               * `apiUrl` appends the selected business as a query parameter of
-               * its own, and it does so by starting a fresh `?`. A path that
-               * already carried one produced `?kind=label?business=...`, which
-               * Express reads as a single parameter named `kind` whose value is
-               * `label?business=...` - so the route matched, the business never
-               * resolved, and the whole thing 404'd.
-               */
               onClick={() =>
                 window.open(
                   apiUrl(`/admin/tickets/${ticket.id}/document`, { kind: 'label' }),
@@ -345,39 +246,40 @@ export function AdminTicketDetailPage() {
               Print label
             </Button>
             <Button
-              size="xs"
+              size="sm"
               variant="outline"
               icon={Printer}
               onClick={() =>
-                window.open(
-                  apiUrl(`/admin/tickets/${ticket.id}/document`),
-                  '_blank',
-                  'noopener',
-                )
+                window.open(apiUrl(`/admin/tickets/${ticket.id}/document`), '_blank', 'noopener')
               }
             >
-              Download PDF
+              Print or PDF
             </Button>
-            <Link to={`/admin/tickets/${ticket.id}/edit`}>
-              <Button size="xs" variant="outline" icon={FileText}>
-                Edit
-              </Button>
-            </Link>
+            <Button
+              size="sm"
+              variant="outline"
+              icon={FileText}
+              onClick={() => navigate(`/admin/tickets/${ticket.id}/edit`)}
+            >
+              Edit
+            </Button>
             {invoiced ? (
-              <Link to={`/admin/invoices/${ticket.invoice.number ?? ticket.invoice.id}`}>
-                <Button size="xs" icon={Receipt}>
-                  View invoice
-                </Button>
-              </Link>
+              <Button
+                size="sm"
+                icon={Receipt}
+                onClick={() => navigate(`/admin/invoices/${ticket.invoice.number ?? ticket.invoice.id}`)}
+              >
+                View invoice
+              </Button>
             ) : (
-              <Button size="xs" icon={Receipt} onClick={() => setConverting(true)}>
+              <Button size="sm" icon={Receipt} onClick={() => setConverting(true)}>
                 Convert to invoice
               </Button>
             )}
             {/* Destructive, so it is an icon apart from the row rather than a
                 fifth equal button - and it still confirms by name. */}
             <Button
-              size="xs"
+              size="sm"
               variant="danger"
               icon={Trash2}
               aria-label={`Delete ${ticket.ticketNumber}`}
@@ -387,100 +289,111 @@ export function AdminTicketDetailPage() {
         }
       />
 
-      {/* Where this job came from and where it went - the whole chain, above
-          the record, because "am I looking at the right one?" is the first
-          question a staff member arrives with. It replaces the single "created
-          from quote" banner this page used to carry, which only ever showed
-          the half of the chain behind the ticket. */}
       <WorkflowLineage
         current="ticket"
         quote={ticket.quote}
         ticket={ticket}
         invoice={ticket.invoice}
-        // A ticket that has not been invoiced still has that step ahead of it,
-        // so the station is drawn in waiting. A ticket raised at the counter
-        // with no quote behind it is not shown a quote station at all - that
-        // step did not happen and never will.
+        // A ticket that has not been invoiced still has that step ahead of it.
         pending={invoiced ? undefined : 'invoice'}
-        className="mb-3"
+        className="mb-4"
       />
 
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_300px]">
-        <div className="space-y-3">
-          <StageCard
-            ticket={ticket}
-            disabled={invoiced}
-            isPending={setTicketStatus.isPending}
-            error={setTicketStatus.error?.message}
-            // Held for the confirm rather than sent - see `movingStage`.
-            onMove={setMovingStage}
-          />
+      <DocumentLayout
+        main={
+          <>
+            <StageCard
+              // Keyed by the status, so a move made anywhere (the list, another tab)
+              // re-seeds the picker with where the ticket now is.
+              key={ticket.status}
+              ticket={ticket}
+              invoiced={invoiced}
+              onMove={setStatusMove}
+              onCancel={() =>
+                setStatusMove({ ticket, status: 'cancelled', note: 'Ticket cancelled.' })
+              }
+            />
 
-          <DepositCard
-            ticket={ticket}
-            invoiced={invoiced}
-            isPending={recordTicketDeposit.isPending}
-            error={recordTicketDeposit.error?.message}
-            onRecord={setRecordingDeposit}
-            onRemove={setRemovingDeposit}
-          />
+            <DocumentDevices devices={devices} showCondition showPasscode />
 
-          <Panel icon={Stethoscope} title="Reported fault" bodyClassName={COMPACT_BODY}>
-            <p className="whitespace-pre-wrap text-sm text-ink-700">{ticket.issue}</p>
-          </Panel>
+            <DocumentNotes
+              clientNotes={ticket.clientNotes}
+              technicianNotes={ticket.technicianNotes}
+              internalNotes={ticket.notes}
+            />
 
-          <WorkCard ticket={ticket} balance={balance} />
+            <DepositCard
+              ticket={ticket}
+              invoiced={invoiced}
+              isPending={recordTicketDeposit.isPending}
+              error={recordTicketDeposit.error?.message}
+              onRecord={setRecordingDeposit}
+              onRemove={setRemovingDeposit}
+            />
 
-          <Panel icon={History} title="Timeline" flush={ticket.timeline?.length > 0}>
-            {(ticket.timeline ?? []).length === 0 ? (
-              <p className="text-sm text-ink-400">No history yet.</p>
-            ) : (
-              <ul className="divide-y divide-line">
-                {[...ticket.timeline].reverse().map((entry, index) => (
-                  <li key={index} className="flex items-start gap-2.5 px-3.5 py-2 sm:px-4">
-                    <span
-                      className="mt-1.5 size-1.5 shrink-0 rounded-full bg-brand"
-                      aria-hidden="true"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-ink-900">
-                        {TICKET_STATUS_LABELS[entry.status] ?? entry.status}
-                      </p>
-                      {entry.note && (
-                        <p className="mt-0.5 text-sm text-ink-500">{entry.note}</p>
-                      )}
-                    </div>
-                    <p className="shrink-0 text-xs text-ink-400">{dateTime(entry.at)}</p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Panel>
-        </div>
+            <DocumentHistory
+              entries={[...(ticket.timeline ?? [])].reverse().map((entry, index) => ({
+                key: `${entry.at}-${index}`,
+                title: TICKET_STATUS_LABELS[entry.status] ?? entry.status,
+                note: entry.note,
+                at: entry.at,
+              }))}
+            />
+          </>
+        }
+        aside={
+          <>
+            <DocumentSummary
+              rows={[
+                { label: 'Services and parts', value: money(gross) },
+                ticket.discountCents > 0 && {
+                  label: 'Discount',
+                  hint: ticket.discountCode || undefined,
+                  value: `− ${money(ticket.discountCents)}`,
+                  tone: 'ok',
+                },
+                {
+                  label: 'Tax',
+                  hint: ticket.taxRate ? `${ticket.taxRate}%` : undefined,
+                  value: money(ticket.taxCents ?? 0),
+                },
+              ]}
+              total={{ value: money(total) }}
+              after={
+                ticket.depositTotal > 0
+                  ? [
+                      { label: 'Deposit held', value: `− ${money(ticket.depositTotal)}` },
+                      { label: 'Still to pay', value: money(balance), strong: true },
+                    ]
+                  : []
+              }
+              footnote={invoiced ? undefined : 'Not final until the ticket is invoiced.'}
+            />
 
-        <div className="space-y-3">
-          <CustomerCard ticket={ticket} />
-        </div>
-      </div>
+            <DocumentCustomer
+              name={ticket.customer?.name}
+              phone={ticket.customer?.phone}
+              email={ticket.customer?.email}
+              userId={ticket.customer?.userId}
+              // The kiosk asked whether they had the account's phone with them
+              // and they did not; this number is for this repair only, and the
+              // profile keeps its own. Said, so the mismatch is not "fixed".
+              phoneNote={ticket.intake?.alternateContact ? 'for this repair only' : undefined}
+            />
 
-      {/* At the foot, matching the quote, the invoice and the purchase order:
-          it summarises where the record ended up after everything above it, so
-          it reads as a conclusion rather than a heading. */}
-      <Lifecycle ticket={ticket} invoiced={invoiced} className="mt-3" />
-
-      {!invoiced && (
-        <button
-          type="button"
-          onClick={() => setCancelling(true)}
-          className={cn(
-            pressable,
-            'mt-4 flex w-full items-center justify-center gap-2 rounded-lg border border-danger/30 bg-danger-50 px-4 py-2.5 text-sm font-semibold text-danger hover:border-danger/50',
-          )}
-        >
-          <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
-          Cancel ticket
-        </button>
-      )}
+            <DocumentFacts
+              items={[
+                { label: 'Service type', value: serviceType },
+                { label: 'Technician', value: ticket.technician?.name ?? 'Unassigned' },
+                { label: 'Source', value: titleize(ticket.source ?? '') },
+                { label: 'Created', value: date(ticket.createdAt) },
+                { label: 'Est. completion', value: ticket.dueDate ? date(ticket.dueDate) : null },
+                { label: 'Completed', value: ticket.closedAt ? date(ticket.closedAt) : null },
+              ]}
+            />
+          </>
+        }
+      />
 
       <ConvertModal
         open={converting}
@@ -495,62 +408,20 @@ export function AdminTicketDetailPage() {
             {
               onSuccess: (payload) => {
                 setConverting(false);
-                if (payload?.invoice?.number) {
-                  navigate(`/admin/invoices/${payload.invoice.number}`);
-                }
+                if (payload?.invoice?.number) navigate(`/admin/invoices/${payload.invoice.number}`);
               },
             },
           )
         }
       />
 
-      {/*
-        Moving the stage, confirmed.
-
-        The consequence worth naming is not the stage - the staff member just chose
-        that - it is the MESSAGE. "Message the customer" is ticked by default,
-        so the commonest way to text somebody by accident is to move a stage
-        without noticing the box, and the dialog says which of the two is about
-        to happen in the sentence rather than leaving it to a checkbox
-        higher up the page.
-      */}
-      <ConfirmDialog
-        open={Boolean(movingStage)}
-        onClose={() => setMovingStage(null)}
-        onConfirm={() =>
-          setTicketStatus.mutate(
-            { id: ticket.id, ...movingStage },
-            {
-              onSuccess: (payload) => {
-                setMovingStage(null);
-                reportStatusOutcome(payload);
-              },
-            },
-          )
-        }
-        title={`Move ${ticket.ticketNumber} to ${TICKET_STATUS_LABELS[movingStage?.status] ?? 'the next stage'}?`}
-        body={
-          movingStage?.channels?.length === 0
-            ? `${ticket.customer?.name ?? 'The customer'} will not be told. The stage changes and the timeline records it.`
-            : `${ticket.customer?.name ?? 'The customer'} is messaged about this change on the channels this shop has switched on. A message cannot be recalled once it is out.`
-        }
-        // `warn` rather than `info` when it reaches somebody outside the
-        // building, which is the tone rule exactly (see ConfirmDialog).
-        tone={movingStage?.channels?.length === 0 ? 'info' : 'warn'}
-        confirmLabel="Set repair status"
-        confirmPhrase={movingStage?.channels?.length === 0 ? undefined : ticket.ticketNumber}
-        confirmPhraseLabel="the ticket number"
-        loading={setTicketStatus.isPending}
-        error={setTicketStatus.error?.message}
-      />
+      {/* The same confirmation the Tickets list raises, cancelling included:
+          channels to untick, no typed phrase (client ruling 2026-10-05). */}
+      <TicketStatusDialog move={statusMove} onClose={() => setStatusMove(null)} />
 
       {/*
-        Taking a deposit, confirmed.
-
-        Money in, against a record that has no invoice yet - so the amount and
-        the method are both in the question. `critical` and a typed amount
-        would be the rule for money LEAVING; this is money arriving and fully
-        reversible by removing it, which is the dialog directly below.
+        Taking a deposit, confirmed. Money in, against a record that has no
+        invoice yet - so the amount and the method are both in the question.
       */}
       <ConfirmDialog
         open={Boolean(recordingDeposit)}
@@ -594,12 +465,8 @@ export function AdminTicketDetailPage() {
         error={removeTicketDeposit.error?.message}
       />
 
-      {/*
-        Deleting destroys the repair history for a device, so it takes the
-        second gate the Instructions reserve for the irreversible: the staff member
-        types the ticket number. Cancelling, below, only stops the job and is a
-        single confirm.
-      */}
+      {/* Deleting destroys the repair history for a device, so the ticket
+          number is typed back. */}
       <ConfirmDialog
         open={deleting}
         onClose={() => setDeleting(false)}
@@ -621,79 +488,48 @@ export function AdminTicketDetailPage() {
         loading={deleteTicket.isPending}
         error={deleteTicket.error?.message}
       />
-
-      <ConfirmDialog
-        open={cancelling}
-        onClose={() => setCancelling(false)}
-        onConfirm={() =>
-          setTicketStatus.mutate(
-            { id: ticket.id, status: 'cancelled', note: 'Ticket cancelled.' },
-            {
-              onSuccess: (payload) => {
-                setCancelling(false);
-                reportStatusOutcome(payload);
-              },
-            },
-          )
-        }
-        title={`Cancel ${ticket.ticketNumber}?`}
-        body="The job stops and the ticket closes. Any deposit stays recorded - refund it separately."
-        tone="danger"
-        confirmLabel="Cancel ticket"
-        confirmPhrase={ticket.ticketNumber}
-        confirmPhraseLabel="the ticket number"
-        loading={setTicketStatus.isPending}
-        error={setTicketStatus.error?.message}
-      />
     </div>
   );
 }
 
 /**
- * Move the job to its next stage.
+ * Move the job to another stage.
  *
- * The **next** status is preselected, because advancing one rung is what
- * happens nine times in ten and pre-picking it turns the common case into one
- * click. Every other status stays available: a repair genuinely goes backwards
- * - a device on the workshop returns to `waiting_for_parts` when a part turns out
- * to be wrong - and a control that only moved forward would make a staff member
- * lie about where the job is.
+ * The field starts on where the ticket IS, with the next rung marked "(next)",
+ * so it answers "what is this?" first and the common move is one pick. Every
+ * other status stays available: a repair genuinely goes backwards. Submitting
+ * opens the shared status dialog, which is where the customer message is
+ * decided - the same one the Tickets list raises.
+ *
+ * Cancelling is the one move offered on its own, in the panel's header: it
+ * stops the job, and a staff member looking for it should not have to know it
+ * is the last entry in a list of nine.
  */
-function StageCard({ ticket, disabled, isPending, error, onMove }) {
+function StageCard({ ticket, invoiced, onMove, onCancel }) {
   const currentIndex = TICKET_STATUSES.indexOf(ticket.status);
   const next = TICKET_STATUSES[currentIndex + 1];
 
-  /**
-   * The field starts on where the ticket IS, not where it is going next.
-   *
-   * It used to pre-select the next rung, which turned the control into
-   * something that read as a state display showing the wrong state: a ticket
-   * sitting at Ready to Pickup showed "Completed", the current status was
-   * missing from the list entirely, and the button beside it carried the same
-   * word. Three things all saying a status nobody had chosen yet.
-   *
-   * Starting on the current status makes the field answer "what is this?"
-   * first and "what next?" only once somebody opens it - and it makes a
-   * wrongly-pressed button a no-op rather than a stage change, because the
-   * submit is disabled until the value actually differs.
-   */
-  const { register, handleSubmit, control, watch } = useAdminForm({
-    defaultValues: { status: ticket.status, note: '', notify: true },
+  const { register, handleSubmit, control, watch, reset } = useAdminForm({
+    defaultValues: { status: ticket.status, note: '' },
   });
 
   // Nothing to do while the field still reads the status it started on.
   const unchanged = watch('status') === ticket.status;
 
   return (
-    <Panel icon={ArrowRight} title="Repair Status" bodyClassName={COMPACT_BODY}>
-      {error && (
-        <p className="mb-3 flex items-start gap-2 rounded-md bg-danger-50 px-3 py-2.5 text-sm text-danger">
-          <AlertCircle className="mt-0.5 size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
-          {error}
-        </p>
-      )}
-
-      {disabled ? (
+    <Panel
+      icon={ArrowRight}
+      title="Repair status"
+      action={
+        !invoiced &&
+        ticket.status !== 'cancelled' && (
+          <Button size="xs" variant="ghost" icon={XCircle} onClick={onCancel}>
+            Cancel ticket
+          </Button>
+        )
+      }
+    >
+      {invoiced ? (
         <p className="text-sm text-ink-500">
           This ticket has been invoiced, so its stage is settled. Changes now belong on the invoice.
         </p>
@@ -701,19 +537,12 @@ function StageCard({ ticket, disabled, isPending, error, onMove }) {
         <form
           onSubmit={handleSubmit((values) =>
             onMove({
+              ticket,
               status: values.status,
               note: values.note || undefined,
-              /**
-               * An empty list is "change it silently"; omitting the field
-               * entirely is "behave as before", which is every channel.
-               *
-               * This used to submit straight to the mutation, arguing a filled-in
-               * form is its own confirmation. It confirms now like everything
-               * else on the page (§3.0.1): the values go to `movingStage` and
-               * the dialog fires the write, because the part worth pausing on
-               * is the message to the customer, not the stage.
-               */
-              channels: values.notify ? undefined : [],
+              // Clears the note once the move is made, and only then - backing
+              // out of the dialog keeps what was typed.
+              onDone: () => reset({ status: values.status, note: '' }),
             }),
           )}
           className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto] sm:items-end"
@@ -722,18 +551,6 @@ function StageCard({ ticket, disabled, isPending, error, onMove }) {
             control={control}
             name="status"
             label="Set repair status to"
-            size="sm"
-            /**
-             * Every status, the current one included and marked as such.
-             *
-             * It was filtered out before, on the reasoning that moving to
-             * where you already are is not a move. True, but it left the field
-             * unable to show the ticket's own state - so it opened on a value
-             * that was a proposal, with no entry for the answer to "where is
-             * this now?". The current rung is listed and labelled "(current)";
-             * the next one still says "(next)", which is the shortcut that
-             * makes the common case one click.
-             */
             options={TICKET_STATUSES.map((status) => ({
               value: status,
               label:
@@ -742,49 +559,15 @@ function StageCard({ ticket, disabled, isPending, error, onMove }) {
                   : status === next
                     ? `${TICKET_STATUS_LABELS[status]} (next)`
                     : TICKET_STATUS_LABELS[status],
-              // The same tinted dot the Tickets list puts on this status, so
-              // the two controls read as one vocabulary rather than two.
               dotClass: STATUS_DOTS[status],
             }))}
           />
-          <Input
-            label="Note"
-            placeholder="Stage change note…"
-            className={COMPACT_FIELD}
-            {...register('note')}
-          />
-          {/*
-            The button says what it DOES, not where it lands.
-
-            It used to read the destination alone - "Completed", "Processing" -
-            which beside a dropdown already showing that word read as a second
-            label rather than as the action, and gave no clue that pressing it
-            was the thing that moved the ticket. Naming the verb and leaving
-            the stage to the field next to it is the fix; the two together
-            would be "Set status to Completed" on a 36px control, which wraps.
-
-            Disabled until the field differs from the ticket's own status:
-            with the current status now selected by default, an enabled button
-            beside it would invite a click that does nothing.
-          */}
-          <Button
-            type="submit"
-            size="sm"
-            icon={ArrowRight}
-            loading={isPending}
-            disabled={unchanged}
-          >
+          <Input label="Note" placeholder="Stage change note…" {...register('note')} />
+          {/* The button says what it DOES, not where it lands, and stays
+              disabled until the field differs from the ticket's own status. */}
+          <Button type="submit" size="sm" icon={ArrowRight} disabled={unchanged}>
             Set status
           </Button>
-
-          {/* Spans the row: it qualifies the whole move rather than belonging to
-              any one field above it. */}
-          <div className="sm:col-span-3">
-            <Checkbox
-              label="Message the customer about this change"
-              {...register('notify')}
-            />
-          </div>
         </form>
       )}
     </Panel>
@@ -829,12 +612,8 @@ function DepositCard({ ticket, invoiced, isPending, error, onRecord, onRemove })
           {ticket.deposits.map((deposit) => (
             <li key={deposit.id} className="flex items-center gap-3 px-4 py-2.5 sm:px-5">
               <p className="min-w-0 flex-1 text-sm text-ink-500">{dateTime(deposit.at)}</p>
-              <p className="tnum shrink-0 text-sm font-semibold text-ink-900">
-                {money(deposit.amount)}
-              </p>
-              <p className="w-24 shrink-0 text-right text-xs capitalize text-ink-500">
-                {deposit.method}
-              </p>
+              <p className="tnum shrink-0 text-sm font-semibold text-ink-900">{money(deposit.amount)}</p>
+              <p className="w-24 shrink-0 text-right text-xs capitalize text-ink-500">{deposit.method}</p>
               {!invoiced && (
                 <button
                   type="button"
@@ -853,7 +632,7 @@ function DepositCard({ ticket, invoiced, isPending, error, onRecord, onRemove })
         </ul>
       )}
 
-      <div className={cn(ticket.deposits.length > 0 && 'p-3 sm:p-4')}>
+      <div className={cn(ticket.deposits.length > 0 && 'p-4 sm:p-5')}>
         {invoiced ? (
           <p className="text-sm text-ink-500">
             This ticket is invoiced. Record any further payment against the invoice.
@@ -873,15 +652,9 @@ function DepositCard({ ticket, invoiced, isPending, error, onRecord, onRemove })
             )}
 
             <form
-              /**
-               * Submitting opens the confirm; it does not clear the form.
-               *
-               * The reset rides along as a callback the dialog runs once the
-               * deposit is actually written. Clearing here would empty the
-               * fields the moment the question was asked, so backing out of
-               * the confirm would lose an amount the staff member had just
-               * counted at the counter.
-               */
+              // Submitting opens the confirm; the reset rides along as a
+              // callback the dialog runs once the deposit is actually written,
+              // so backing out keeps an amount just counted at the counter.
               onSubmit={handleSubmit((values) =>
                 onRecord({
                   ...values,
@@ -895,23 +668,11 @@ function DepositCard({ ticket, invoiced, isPending, error, onRecord, onRemove })
                 required
                 inputMode="decimal"
                 placeholder="0.00"
-                className={COMPACT_FIELD}
                 error={errors.amountDollars?.message}
                 {...register('amountDollars')}
               />
-              <SelectField
-                control={control}
-                name="method"
-                label="Method"
-                size="sm"
-                options={DEPOSIT_METHODS}
-              />
-              <Input
-                label="Note"
-                placeholder="optional"
-                className={COMPACT_FIELD}
-                {...register('note')}
-              />
+              <SelectField control={control} name="method" label="Method" options={DEPOSIT_METHODS} />
+              <Input label="Note" placeholder="optional" {...register('note')} />
               <Button type="submit" size="sm" loading={isPending}>
                 Record
               </Button>
@@ -920,122 +681,6 @@ function DepositCard({ ticket, invoiced, isPending, error, onRecord, onRemove })
         )}
       </div>
     </Panel>
-  );
-}
-
-/** The devices, what was done to each, and what it comes to. */
-function WorkCard({ ticket, balance }) {
-  const devices = ticket.devices ?? [];
-  const gross = devices.reduce(
-    (sum, device) =>
-      sum +
-      [...(device.services ?? []), ...(device.parts ?? [])].reduce(
-        (n, line) => n + (line.priceCents ?? 0) * (line.qty ?? 1),
-        0,
-      ),
-    0,
-  );
-
-  return (
-    <Panel icon={Wrench} title="Services and parts" bodyClassName={COMPACT_BODY}>
-      {devices.length === 0 ? (
-        <p className="text-sm text-ink-400">Nothing priced yet.</p>
-      ) : (
-        <div className="space-y-4">
-          {devices.map((device, index) => {
-            const lines = [
-              ...(device.services ?? []).map((line) => ({ ...line, kind: 'Service' })),
-              ...(device.parts ?? []).map((line) => ({ ...line, kind: 'Part' })),
-            ];
-
-            return (
-              <div key={index}>
-                <p className="mb-2 flex items-center gap-1.5 font-display text-sm font-bold text-ink-900">
-                  <Smartphone className="size-3.5 text-brand" strokeWidth={2.25} aria-hidden="true" />
-                  {[device.brand, device.series, device.model].filter(Boolean).join(' ') ||
-                    `Device ${index + 1}`}
-                </p>
-
-                {device.serial && (
-                  <p className="mb-2 font-mono text-2xs text-ink-400">Serial {device.serial}</p>
-                )}
-
-                <CustomerCondition condition={device.customerCondition} />
-
-                {lines.length === 0 ? (
-                  <p className="text-sm text-ink-400">Nothing priced on this device.</p>
-                ) : (
-                  <ul className="divide-y divide-line rounded-md border border-line">
-                    {lines.map((line, lineIndex) => (
-                      <li
-                        key={lineIndex}
-                        className="flex items-center gap-3 px-3 py-2 text-sm"
-                      >
-                        <span className="w-14 shrink-0 text-2xs uppercase tracking-wide text-ink-400">
-                          {line.kind}
-                        </span>
-                        <span className="min-w-0 flex-1 truncate text-ink-900">{line.name}</span>
-                        <span className="tnum w-10 shrink-0 text-right text-ink-500">
-                          ×{line.qty ?? 1}
-                        </span>
-                        <span className="tnum w-24 shrink-0 text-right font-medium text-ink-900">
-                          {money((line.priceCents ?? 0) * (line.qty ?? 1))}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* The arithmetic, in the order the server applies it. */}
-      <dl className="mt-3 space-y-1.5 border-t border-line pt-2.5 text-sm">
-        <Row label="Subtotal" value={money(gross - (ticket.discountCents ?? 0))} />
-        {ticket.discountCents > 0 && (
-          <Row label="Discount" value={`− ${money(ticket.discountCents)}`} />
-        )}
-        <Row
-          label={`Tax${ticket.taxRate ? ` (${ticket.taxRate}%)` : ''}`}
-          value={money(ticket.taxCents ?? 0)}
-        />
-        <div className="flex items-baseline justify-between border-t border-line pt-2 font-display text-md font-bold text-ink-900">
-          <dt>Total</dt>
-          <dd className="tnum">{money(ticket.finalCents || ticket.estimateCents || 0)}</dd>
-        </div>
-        {ticket.depositTotal > 0 && (
-          <>
-            <Row label="Deposit held" value={`− ${money(ticket.depositTotal)}`} />
-            <div className="flex items-baseline justify-between pt-1 text-sm font-semibold text-ink-900">
-              <dt>Still to pay</dt>
-              <dd className="tnum">{money(balance)}</dd>
-            </div>
-          </>
-        )}
-      </dl>
-    </Panel>
-  );
-}
-
-/**
- * The condition as the CUSTOMER described it at the kiosk.
- *
- * A claim, not a test, so it is labelled as whose it is and kept out of the
- * counter's own grid: the grid is what answers a dispute, and the counter grades
- * the device itself when it reviews the ticket. Only the parts that are not
- * "works" are listed, because those are the ones worth checking first.
- */
-function CustomerCondition({ condition }) {
-  if (!conditionAnswered(condition)) return null;
-  const problems = conditionProblems(condition);
-
-  return (
-    <p className="mb-2 border-l-2 border-line-strong pl-2.5 text-sm text-ink-600">
-      <span className="font-medium text-ink-900">Customer says: </span>
-      {problems || 'everything is good'}
-    </p>
   );
 }
 
@@ -1048,106 +693,16 @@ function Row({ label, value }) {
   );
 }
 
-/** Who it belongs to and what came in. */
-function CustomerCard({ ticket }) {
-  return (
-    <Panel
-      icon={ClipboardList}
-      title="Customer"
-      action={
-        ticket.customer.userId && (
-          <Link
-            to={`/admin/clients/${ticket.customer.userId}`}
-            className="inline-flex items-center gap-1 text-sm font-semibold text-brand hover:text-brand-700"
-          >
-            View
-            <ArrowRight className="size-3.5" strokeWidth={2.25} aria-hidden="true" />
-          </Link>
-        )
-      }
-    >
-      <p className="font-display text-md font-bold text-ink-900">{ticket.customer.name}</p>
-
-      <div className="mt-2 space-y-1.5 text-sm text-ink-600">
-        {ticket.customer.phone && (
-          <p className="flex items-center gap-1.5">
-            <Phone className="size-3.5 shrink-0 text-ink-300" strokeWidth={2.25} aria-hidden="true" />
-            {ticket.customer.phone}
-            {/* The kiosk asked whether they had the account's phone with them
-                and they did not; this number is for this repair only, and the
-                profile keeps its own. Said, so the mismatch is not "fixed". */}
-            {ticket.intake?.alternateContact && (
-              <span className="text-ink-400">· for this repair only</span>
-            )}
-          </p>
-        )}
-        {ticket.customer.email && (
-          <p className="flex min-w-0 items-center gap-1.5">
-            <Mail className="size-3.5 shrink-0 text-ink-300" strokeWidth={2.25} aria-hidden="true" />
-            <span className="truncate">{ticket.customer.email}</span>
-          </p>
-        )}
-      </div>
-
-      <dl className="mt-3 space-y-2 border-t border-line pt-2.5 text-sm">
-        <Detail label="Technician" value={ticket.technician?.name ?? 'Unassigned'} />
-        <Detail label="Source" value={ticket.source} />
-        <Detail label="Created" value={date(ticket.createdAt)} />
-        {ticket.closedAt && <Detail label="Completed" value={date(ticket.closedAt)} />}
-        {ticket.dueDate && <Detail label="Due" value={date(ticket.dueDate)} />}
-      </dl>
-    </Panel>
-  );
-}
-
-function Detail({ label, value }) {
-  return (
-    <div>
-      <dt className="eyebrow text-ink-400">{label}</dt>
-      <dd className="mt-0.5 capitalize text-ink-900">{value}</dd>
-    </div>
-  );
-}
-
-/**
- * Where this ticket sits in the repair process.
- *
- * The quote's treatment, applied here: `ProcessStrip` at the foot of the page,
- * `successOnLast` so reaching Invoiced reads as an outcome rather than an
- * alert, and a cancelled ticket drawn in `danger` at the station it stopped at
- * instead of being replaced by a banner. One component, one placement, one
- * vocabulary across quote, ticket, invoice and purchase order.
- */
-function Lifecycle({ ticket, invoiced, className }) {
-  const cancelled = ticket.status === 'cancelled';
-
-  return (
-    <ProcessStrip
-      title="Life cycle of a ticket"
-      successOnLast
-      steps={LIFECYCLE}
-      current={stationOf(ticket, invoiced)}
-      stoppedTone={cancelled ? 'danger' : undefined}
-      caption={
-        cancelled
-          ? 'Cancelled - the job stopped here. Any deposit taken stays recorded against it.'
-          : 'The stage follows the Repair Status control above; invoicing settles it.'
-      }
-      className={className}
-    />
-  );
-}
-
 /**
  * Raising the invoice.
  *
  * Only the terms are asked. Everything billed comes off the ticket, because
  * that is where the job was priced - a form that let the staff member restate the
- * lines here would be a second place for them to differ. The summary states
- * what will be carried so the conversion is not a leap of faith.
+ * lines here would be a second place for them to differ.
  */
 function ConvertModal({ open, ticket, balance, isPending, error, onClose, onConfirm }) {
   const { handleSubmit, control } = useAdminForm({ defaultValues: { terms: 'prepaid' } });
+  const deviceCount = ticket.devices?.length ?? 0;
 
   return (
     <Modal open={open} onClose={onClose} title="Convert to invoice" size="md" align="top">
@@ -1163,7 +718,7 @@ function ConvertModal({ open, ticket, balance, isPending, error, onClose, onConf
           <p className="eyebrow mb-2 text-ink-400">What carries over</p>
           <dl className="space-y-1.5 text-sm">
             <Row
-              label={`${formatCount(ticket.devices?.length ?? 0)} device${(ticket.devices?.length ?? 0) === 1 ? '' : 's'}, priced as invoiced`}
+              label={`${formatCount(deviceCount)} device${deviceCount === 1 ? '' : 's'}, priced as invoiced`}
               value={money(ticket.finalCents || ticket.estimateCents || 0)}
             />
             {ticket.depositTotal > 0 && (
@@ -1178,9 +733,9 @@ function ConvertModal({ open, ticket, balance, isPending, error, onClose, onConf
 
         <SelectField control={control} name="terms" label="Payment terms" options={TERMS} />
 
-        <p className="rounded-md bg-surface-2 px-3 py-2.5 text-xs leading-relaxed text-ink-500">
-          The ticket stays as the record of the work. It cannot be invoiced twice, and any deposit
-          on it becomes a payment against the new invoice.
+        <p className="text-xs leading-relaxed text-ink-500">
+          The ticket stays as the record of the work. It cannot be invoiced twice, and any deposit on
+          it becomes a payment against the new invoice.
         </p>
 
         <div className="flex justify-end gap-2">

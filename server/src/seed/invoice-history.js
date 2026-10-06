@@ -15,7 +15,7 @@ import { refundableOf } from '../services/invoiceRefundService.js';
  * Demo history on invoices that already exist: a manual status, and one refund.
  *
  * **Additive, and it never invents an invoice.** The invoices come from
- * `seed:service-quotes` and the ticket flow; this only decorates ones already
+ * `seed:demo -- sales` and the ticket flow; this only decorates ones already
  * there, so running it cannot produce a repair invoice with no repair behind it.
  * Running it twice is a no-op: an invoice that already carries a label is left
  * alone, and the refund is skipped once one is present.
@@ -53,7 +53,7 @@ async function seedInvoiceHistory({ quiet = false } = {}) {
     .lean();
 
   if (labels.length === 0) {
-    log('    no manual statuses yet - run seed:invoice-labels first');
+    log('    no manual statuses yet - run seed:demo -- invoice-labels first');
     return { labelled: 0, refunded: 0 };
   }
 
@@ -165,7 +165,7 @@ async function seedInvoiceHistory({ quiet = false } = {}) {
   return { labelled, refunded };
 }
 
-// CLI entry: `npm run seed:invoice-history`
+// CLI entry: `npm run seed:demo -- invoice-history`
 if (process.argv[1] && process.argv[1].endsWith('invoice-history.js')) {
   (async () => {
     console.log('\n  Seeding invoice statuses and a demo refund…\n');

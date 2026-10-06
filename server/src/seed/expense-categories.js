@@ -47,7 +47,7 @@ async function seedExpenseCategories({ quiet = false } = {}) {
   return { added: missing.length, existing: have.size };
 }
 
-// CLI entry: `npm run seed:expense-categories`
+// CLI entry: `npm run seed:demo -- expense-categories`
 if (process.argv[1] && process.argv[1].endsWith('expense-categories.js')) {
   (async () => {
     console.log('\n  Seeding Cellvix expense categories…\n');

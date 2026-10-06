@@ -10,7 +10,7 @@ import '../models/ExpenseCategory.js';
 import '../models/StockMovement.js';
 import '../models/Product.js';
 import ApiError from '../utils/ApiError.js';
-import { likeRegex } from '../utils/regex.js';
+import { escapeRegex, likeRegex } from '../utils/regex.js';
 import { classify, lowStockThreshold } from './lowStockService.js';
 import * as supplierPortalService from './supplierPortalService.js';
 
@@ -1332,21 +1332,43 @@ function shapeInventoryRow(product, threshold) {
   };
 }
 
-async function listInventory({ q, stock, brand, grade, category } = {}) {
+async function listInventory({ q, stock, brand, grade, category, fitBrand, fitModel } = {}) {
   // Resolved once for both the rows and the pills below, so the two cannot
   // classify the same product differently.
   const threshold = await lowStockThreshold();
 
   const query = {};
+  const and = [];
   if (brand) query.brandSlug = String(brand);
   if (grade) query.grade = String(grade);
   // One product type at a time, so its features can be columns (2026-10-02).
   if (typeof category === 'string' && category && category !== 'all') Object.assign(query, categoryFilter(category));
 
+  /**
+   * Only what fits the device on the document (client ruling 2026-10-05: "if
+   * the device is selected, show only the parts for the selected device").
+   *
+   * Matched by NAME, because the device on a ticket comes from the shop's own
+   * device tree (`DeviceCatalog`) and a part sits in the catalogue taxonomy:
+   * two trees with separate slugs that name the same handset the same way.
+   * A part filed no deeper than the brand (an "Any model" part, 2026-10-03)
+   * fits every model of it, so a blank model counts as a match.
+   */
+  if (fitBrand) and.push({ brandName: new RegExp(`^${escapeRegex(String(fitBrand).trim())}$`, 'i') });
+  if (fitModel) {
+    and.push({
+      $or: [
+        { modelName: new RegExp(`^${escapeRegex(String(fitModel).trim())}$`, 'i') },
+        { modelSlug: { $in: [null, ''] } },
+      ],
+    });
+  }
+
   if (q) {
     const rx = likeRegex(q);
-    query.$or = [{ name: rx }, { sku: rx }, { barcode: rx }];
+    and.push({ $or: [{ name: rx }, { sku: rx }, { barcode: rx }] });
   }
+  if (and.length) query.$and = and;
 
   const products = await db().Product.find(query)
     .sort({ name: 1 })

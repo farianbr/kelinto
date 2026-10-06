@@ -8,7 +8,13 @@ import TicketForm from '@/components/admin/TicketForm';
 import { ADMIN_ROUTES } from '@/lib/adminRoutes';
 import { adminIcon } from '@/components/admin/shell/adminIcons';
 import { useSetRecordLabel } from '@/components/admin/shell/recordLabel';
-import { useAdminTickets, useAdminUsers, useAdminMutations } from '@/hooks/useAdmin';
+import {
+  useAdminTicket,
+  useAdminTickets,
+  useAdminUsers,
+  useAdminServices,
+  useAdminMutations,
+} from '@/hooks/useAdmin';
 import { toast } from '@/store/toastStore';
 import { pressable } from '@/lib/motion';
 import cn from '@/lib/cn';
@@ -38,42 +44,42 @@ export function AdminTicketFormPage() {
   const { createTicket, updateTicket } = useAdminMutations();
 
   /**
-   * The ticket being edited, and the technicians it can be assigned to.
+   * The ticket being edited, read on its own.
    *
-   * Both come from the list endpoint: it already returns `technicians`, and
-   * there is no single-ticket GET. Fetching the list to find one row is
-   * wasteful in principle and free in practice at this size - the alternative
-   * is a new endpoint whose only caller is this screen.
+   * This used to fetch the list's newest 200 and look for the id in them, from
+   * before `GET /admin/tickets/:id` existed - so the 201st ticket opened onto
+   * "Ticket not found" while it sat on the list one page down.
    */
-  const { data, isLoading } = useAdminTickets({ status: 'all', limit: 200 });
-  const technicians = data?.technicians ?? [];
+  const { data: ticketData, isLoading } = useAdminTicket(editing ? id : undefined);
+  const ticket = ticketData?.ticket;
+
+  // The technicians ride along with the list, which is readable at the
+  // permission level a counter has (see `ticketService.listTechnicians`).
+  const { data: listData } = useAdminTickets({ status: 'all', limit: 5 });
+  const technicians = listData?.technicians ?? [];
 
   /**
-   * Accounts offered by the customer shortcut above the contact fields.
+   * Accounts offered by the customer picker.
    *
-   * No `status` filter, unlike the quote and invoice builders: those need an
-   * approved account because they price and bill, while a repair is taken in
-   * from whoever walks up - a pending account is still a person with a broken
-   * phone.
+   * No `status` filter, unlike the quote and the invoice builders: those
+   * price and bill, while a repair is taken in from whoever walks up - a
+   * pending account is still a person with a broken phone, and a kiosk
+   * check-in opens one.
    */
   const { data: clientData } = useAdminUsers({ limit: 500 });
   const clients = clientData?.users ?? [];
-  const ticket = editing ? data?.tickets?.find((row) => row.id === id) : undefined;
+
+  // What the service picker lists: the shop's own price book.
+  const { data: serviceData } = useAdminServices({ status: 'active', limit: 200 });
+  const services = serviceData?.services ?? [];
 
   useSetRecordLabel(ticket?.ticketNumber);
 
   /**
-   * Seeded from the query string when the ticket was raised from a customer
-   * profile. A ticket stores its customer as free text - a repair walks in and
-   * the counter must not need an account first - so the name, phone and email
-   * travel in the link rather than an id this screen would have to resolve.
+   * The account the ticket was raised for, from `?client=<id>`: the customer
+   * profile's "Ticket" button and `+ Create > Ticket` both arrive with it.
    */
-  const seed = {
-    client: searchParams.get('client') ?? undefined,
-    name: searchParams.get('name') ?? undefined,
-    phone: searchParams.get('phone') ?? undefined,
-    email: searchParams.get('email') ?? undefined,
-  };
+  const seed = { client: searchParams.get('client') ?? undefined };
 
   const page = editing
     ? {
@@ -113,50 +119,38 @@ export function AdminTicketFormPage() {
        priced lines, which are tables and need more than a 760px column. */
     <div className="record-page">
       <Link
-        to="/admin/tickets"
+        to={editing ? `/admin/tickets/${id}` : '/admin/tickets'}
         className={cn(pressable, 'mb-3 inline-flex items-center gap-1.5 text-sm font-medium text-ink-500 hover:text-ink-900')}
       >
         <ArrowLeft className="size-3.5" strokeWidth={2.25} aria-hidden="true" />
-        Back to tickets
+        {editing ? `Back to ${ticket.ticketNumber}` : 'Back to tickets'}
       </Link>
 
       <PageHeader icon={page.icon} title={page.title} description={page.description} />
 
       <Panel>
         <TicketForm
+          // Keyed by the record, so the form's defaults are read once the
+          // ticket has arrived rather than frozen on the empty first render.
+          key={ticket?.id ?? 'new'}
           ticket={ticket}
-          seed={seed.name ? seed : undefined}
+          seed={seed.client ? seed : undefined}
           technicians={technicians}
-          // Offered as a shortcut above the contact fields; a walk-in with no
-          // account is still typed straight in.
           clients={clients}
+          services={services}
           isPending={editing ? updateTicket.isPending : createTicket.isPending}
           error={(editing ? updateTicket : createTicket).error?.message}
-          onCancel={() => navigate('/admin/tickets')}
+          onCancel={() => navigate(editing ? `/admin/tickets/${id}` : '/admin/tickets')}
           onSubmit={(values) => {
-            const payload = {
-              ...values,
-              estimateDollars: Number(values.estimateDollars) || 0,
-              /**
-               * The linked account.
-               *
-               * `values.user` is the picker's answer and wins when it has one;
-               * the seed covers arriving from a customer profile without
-               * touching the picker. Sent as `undefined` rather than `''` when
-               * there is neither, because a walk-in has no account and an empty
-               * string is not an id the server can store.
-               */
-              user: values.user || (!editing ? seed.client : '') || undefined,
-            };
-
             const mutation = editing ? updateTicket : createTicket;
-            mutation.mutate(editing ? { id, ...payload } : payload, {
-              onSuccess: () => {
+            mutation.mutate(editing ? { id, ...values } : values, {
+              onSuccess: (result) => {
                 toast.ok(
                   editing ? 'Ticket saved' : 'Ticket opened',
                   editing ? undefined : 'It is now on the repair board.',
                 );
-                navigate('/admin/tickets');
+                const next = result?.ticket?.id ?? id;
+                navigate(next ? `/admin/tickets/${next}` : '/admin/tickets');
               },
             });
           }}

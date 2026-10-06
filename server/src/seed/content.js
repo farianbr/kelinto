@@ -51,7 +51,7 @@ async function seedContent({ quiet = false } = {}) {
 }
 
 /**
- * CLI entry: `npm run seed:content`.
+ * CLI entry: `npm run seed:demo -- content`.
  *
  * Every business gets its own pass, each against its own database. A standalone
  * seed has to open that context itself - there is no request middleware here to

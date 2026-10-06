@@ -6,13 +6,13 @@ import cn from '@/lib/cn';
 import Panel, { PanelEmpty } from '@/components/ui/Panel';
 import DataTable, { CountLine } from '@/components/admin/DataTable';
 import Input from '@/components/ui/Input';
+import Checkbox from '@/components/ui/Checkbox';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Modal from '@/components/ui/Modal';
 import DeleteWithPreview from '@/components/admin/DeleteWithPreview';
 import { useAdminInvoiceLabels, useAdminInvoiceRules, useAdminMutations } from '@/hooks/useAdmin';
-import { dateTime } from '@/lib/format';
 import { pressable } from '@/lib/motion';
 import SelectMenu from '@/components/ui/SelectMenu';
 import MessageBodyField from '@/components/admin/MessageBodyField';
@@ -47,6 +47,9 @@ const EMPTY_RULE = {
 
 const CHANNEL_NAMES = { email: 'Email', sms: 'SMS', whatsapp: 'WhatsApp' };
 
+/** The channels a message can be written for, as a select or a row of checkboxes. */
+const CHANNEL_CHOICES = Object.entries(CHANNEL_NAMES).map(([value, label]) => ({ value, label }));
+
 /** "3 days before the invoice falls due" - the timing, in words. */
 function timingText(rule, triggers) {
   const trigger = triggers.find((t) => t.value === rule.trigger);
@@ -65,36 +68,72 @@ function timingText(rule, triggers) {
  * (2026-10-01) and its form must read exactly like this one; only the timing
  * differs. `form` holds `channel`, `subject` and `message`; `set` patches it.
  */
-export function MessageFields({ form, set, tokens = [], channels, messageError }) {
-  const channelStatus = channels?.[form.channel];
+export function MessageFields({ form, set, tokens = [], channels, messageError, multiple = false }) {
+  /**
+   * `multiple` is the manual status's form (2026-10-06): a status can send on
+   * several channels at once, so it ticks them rather than picking one, and
+   * `form.channels` is the list. A scheduled message keeps its one channel.
+   */
+  const picked = multiple ? (form.channels ?? []) : [form.channel];
+  const hasEmail = picked.includes('email');
+  const blocked = picked
+    .map((value) => ({ value, status: channels?.[value] }))
+    .filter((entry) => entry.status && !entry.status.delivers);
 
   return (
     <>
-      <label className="block">
-        <span className="mb-1.5 block text-sm font-medium text-ink-700">Channel</span>
-        <SelectMenu
-          srLabel="Channel"
-          size="md"
-          value={form.channel}
-          onChange={(next) => set({ channel: next })}
-          options={[
-            { value: 'email', label: 'Email' },
-            { value: 'sms', label: 'SMS' },
-            { value: 'whatsapp', label: 'WhatsApp' },
-          ]}
-          containerClassName="w-full"
-        />
-        {/* Named at the point of choosing, not after saving: picking a channel
-            that cannot send is a decision worth interrupting. */}
-        {channelStatus && !channelStatus.delivers && (
-          <span className="mt-1.5 flex items-start gap-1.5 text-sm text-warn">
-            <AlertCircle className="mt-px size-3.5 shrink-0" strokeWidth={2.25} aria-hidden="true" />
-            {channelStatus.reason}
-          </span>
-        )}
-      </label>
+      {multiple ? (
+        <fieldset>
+          <legend className="mb-1.5 block text-sm font-medium text-ink-700">
+            Channels
+            <span className="ml-0.5 text-danger" aria-hidden="true">
+              *
+            </span>
+          </legend>
+          <div className="flex flex-wrap gap-x-5 gap-y-2">
+            {CHANNEL_CHOICES.map((choice) => (
+              <Checkbox
+                key={choice.value}
+                label={choice.label}
+                checked={picked.includes(choice.value)}
+                onChange={(event) =>
+                  set({
+                    channels: event.target.checked
+                      ? [...picked, choice.value]
+                      : picked.filter((value) => value !== choice.value),
+                  })
+                }
+              />
+            ))}
+          </div>
+          {picked.length === 0 && (
+            <span className="mt-1.5 block text-sm text-danger">Pick at least one channel.</span>
+          )}
+        </fieldset>
+      ) : (
+        <label className="block">
+          <span className="mb-1.5 block text-sm font-medium text-ink-700">Channel</span>
+          <SelectMenu
+            srLabel="Channel"
+            size="md"
+            value={form.channel}
+            onChange={(next) => set({ channel: next })}
+            options={CHANNEL_CHOICES}
+            containerClassName="w-full"
+          />
+        </label>
+      )}
 
-      {form.channel === 'email' && (
+      {/* Named at the point of choosing, not after saving: picking a channel
+          that cannot send is a decision worth interrupting. */}
+      {blocked.map((entry) => (
+        <span key={entry.value} className="-mt-2 flex items-start gap-1.5 text-sm text-warn">
+          <AlertCircle className="mt-px size-3.5 shrink-0" strokeWidth={2.25} aria-hidden="true" />
+          {entry.status.reason}
+        </span>
+      ))}
+
+      {hasEmail && (
         <Input
           label="Subject"
           value={form.subject ?? ''}
@@ -103,7 +142,9 @@ export function MessageFields({ form, set, tokens = [], channels, messageError }
       )}
 
       <MessageBodyField
-        channel={form.channel}
+        // One body for every channel. With email among them it is written as
+        // the email, and a text message carries its plain-text form.
+        channel={hasEmail ? 'email' : (picked[0] ?? 'email')}
         value={form.message ?? ''}
         counter={MESSAGE_BODY_MAX}
         onChange={(next) => set({ message: next })}

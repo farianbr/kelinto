@@ -224,10 +224,9 @@ server is worse than none.
 ```bash
 npm run dev            # client + server together
 npm run build          # production client bundle
-npm run seed           # WIPES taxonomy, products, users, orders, invoices — then reseeds
-npm run seed:content   # blog, FAQ and offers only; safe on a database with real accounts
-npm run seed:expense-categories   # upserts the starter expense categories; never wipes
-npm run backfill:competitors      # competitor benchmarks for products missing them; safe on a real DB
+npm run seed           # WIPES taxonomy, products, users, orders, invoices, then reseeds
+npm run seed:demo      # the additive demo seeds in order; `-- <name>` runs one, `-- --list` names them
+npm run backfill       # the one-off migrations; no args lists them, `-- <name>` runs one
 npm run smoke          # 208 end-to-end API assertions
 npm run a11y           # axe-core WCAG 2.1 AA audit across 39 surfaces
 npm run shoot          # Playwright screenshot set -> docs/screenshots/

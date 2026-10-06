@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 
 import { connectDb, disconnectDb } from '../config/db.js';
 import { db, dbFor } from '../db/models.js';
-import { runInBusiness } from '../db/context.js';
+import { currentContext, runInBusiness } from '../db/context.js';
 import '../models/DeviceCatalog.js';
 import '../models/Service.js';
 import '../models/Product.js';
@@ -10,7 +10,8 @@ import '../models/Business.js';
 import { slugFor } from '../services/deviceCatalogService.js';
 import { DEVICE_TREE, SERVICES } from './service-business.data.js';
 import { SERVICE_PARTS } from './service-parts.data.js';
-import { SERVICE_PHOTOS } from '../../../shared/catalog.js';
+import { SERVICE_PHOTOS, servicePhotoFileFor } from '../../../shared/catalog.js';
+import { libraryKey } from '../utils/photoLibrary.js';
 
 /**
  * A repair shop's starting lists: the devices it takes in, and the labour it
@@ -155,6 +156,18 @@ async function seedServices({ quiet = false, business = null } = {}) {
   const added = [...missing, ...pictured];
   if (added.length) await db().Service.insertMany(added);
 
+  // A pictured repair with no picture of its own gets the photo from this
+  // business's library in R2. Written onto the record: nothing matches a photo
+  // by name when a service is shown any more.
+  const code = currentContext()?.code;
+  if (code) {
+    const bare = await db().Service.find({ image: { $in: [null, ''] } }).select('name').lean();
+    for (const row of bare) {
+      const file = servicePhotoFileFor(row.name);
+      if (file) await db().Service.updateOne({ _id: row._id }, { $set: { image: libraryKey(code, 'services', file) } });
+    }
+  }
+
   log(`    services: ${added.length} added (${pictured.length} from the service photos), ${have.size} already present`);
   return { added: added.length, existing: have.size };
 }
@@ -210,7 +223,7 @@ async function seedServiceBusiness(options = {}) {
   return { devices, services, parts };
 }
 
-// CLI entry: `npm run seed:service-business`
+// CLI entry: `npm run seed:demo -- service-business`
 if (process.argv[1] && process.argv[1].endsWith('service-business.js')) {
   (async () => {
     console.log('\n  Seeding service business devices and services…\n');

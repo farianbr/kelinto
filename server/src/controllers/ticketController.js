@@ -58,11 +58,11 @@ const getTicket = asyncHandler(async (req, res) => {
 });
 
 const createTicket = asyncHandler(async (req, res) => {
-  res.status(201).json(await ticketService.createTicket(req.body, req.user._id));
+  res.status(201).json(await ticketService.createTicket(req.body, req.user._id, req.businessScope));
 });
 
 const updateTicket = asyncHandler(async (req, res) => {
-  res.json(await ticketService.updateTicket(req.params.id, req.body));
+  res.json(await ticketService.updateTicket(req.params.id, req.body, req.user._id));
 });
 
 const setTicketStatus = asyncHandler(async (req, res) => {
@@ -87,7 +87,7 @@ const markReviewed = asyncHandler(async (req, res) => {
  * is the only trace left of what was removed.
  */
 const deleteTicket = asyncHandler(async (req, res) => {
-  const result = await ticketService.deleteTicket(req.params.id);
+  const result = await ticketService.deleteTicket(req.params.id, req.user._id);
 
   await auditService.record({
     req,

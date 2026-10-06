@@ -57,6 +57,24 @@ const TOPIC_TONES = {
   other: 'neutral',
 };
 
+/**
+ * How each status reads in the table, row by row (client, 2026-10-06: tell the
+ * statuses apart by the rows). An inbox's reading: a NEW web quote is the work,
+ * so it reads in full-weight type; a READ one is seen and still open, a step
+ * quieter; a CLOSED one is done and recedes onto the surface ground in muted
+ * type. (A coloured bar down each row's edge was tried and removed at the
+ * client's request.)
+ */
+const ROW_LOOK = {
+  new: { name: 'font-semibold text-ink-900', body: 'text-ink-700', row: '' },
+  read: { name: 'font-medium text-ink-700', body: 'text-ink-500', row: '' },
+  closed: { name: 'font-normal text-ink-400', body: 'text-ink-400', row: 'bg-surface-2' },
+};
+const lookOf = (row) => ROW_LOOK[row.status] ?? ROW_LOOK.read;
+
+/** How a confirmation or a toast names the record: by its number when it has one. */
+const recordName = (row) => (row.number ? `${row.number} from ${row.name}` : `the enquiry from ${row.name}`);
+
 const ROWS_PER_PAGE = 25;
 
 export function AdminWebQuotesPage() {
@@ -109,7 +127,7 @@ export function AdminWebQuotesPage() {
   function move(row, status, title) {
     return setWebQuoteStatus
       .mutateAsync({ id: row.id, status })
-      .then(() => toast.ok(title, `Enquiry from ${row.name}.`));
+      .then(() => toast.ok(title, row.number ? `${row.number}, from ${row.name}.` : `Enquiry from ${row.name}.`));
   }
 
   /** What each move asks before it runs (§3.0.1). */
@@ -119,7 +137,7 @@ export function AdminWebQuotesPage() {
     reopen: { label: 'Reopen', done: 'Back in the queue', body: 'It shows as outstanding again.' },
   };
   const ask = (row, kind) => ({
-    title: `${MOVES[kind].label} the enquiry from ${row.name}?`,
+    title: `${MOVES[kind].label} ${recordName(row)}?`,
     body: MOVES[kind].body,
     confirmLabel: MOVES[kind].label,
   });
@@ -185,21 +203,35 @@ export function AdminWebQuotesPage() {
 
   const columns = [
     {
+      key: 'number',
+      header: 'Web quote',
+      priority: 1,
+      width: '15%',
+      render: (row) =>
+        row.number ? (
+          <span
+            className={cn(
+              'block whitespace-nowrap font-mono text-sm',
+              row.status === 'closed' ? 'text-ink-400' : 'font-medium text-ink-900',
+            )}
+          >
+            {row.number}
+          </span>
+        ) : (
+          <span className="text-xs text-ink-300">–</span>
+        ),
+    },
+    {
       key: 'name',
       header: 'From',
       priority: 1,
-      width: '26%',
+      width: '22%',
       render: (row) => (
         <>
-          <span className="flex flex-wrap items-center gap-2">
-            <span className="truncate text-md font-semibold text-ink-900">{row.name}</span>
-            {row.status === 'new' && (
-              <Badge tone="brand" size="sm">
-                new
-              </Badge>
-            )}
+          <span className={cn('block truncate text-md', lookOf(row).name)}>{row.name}</span>
+          <span className={cn('block truncate text-xs', row.status === 'closed' ? 'text-ink-400' : 'text-ink-500')}>
+            {row.email}
           </span>
-          <span className="block truncate text-xs text-ink-500">{row.email}</span>
         </>
       ),
     },
@@ -207,7 +239,7 @@ export function AdminWebQuotesPage() {
       key: 'topic',
       header: 'Topic',
       priority: 2,
-      width: '14%',
+      width: '12%',
       render: (row) => (
         <Badge tone={TOPIC_TONES[row.topic] ?? 'neutral'} size="sm">
           {titleize(row.topic)}
@@ -218,16 +250,16 @@ export function AdminWebQuotesPage() {
       key: 'message',
       header: 'Enquiry',
       priority: 2,
-      width: '34%',
+      width: '27%',
       render: (row) => (
-        <span className="block truncate text-sm text-ink-700">{row.message}</span>
+        <span className={cn('block truncate text-sm', lookOf(row).body)}>{row.message}</span>
       ),
     },
     {
       key: 'createdAt',
       header: 'Received',
       priority: 3,
-      width: '14%',
+      width: '12%',
       sortValue: (row) => new Date(row.createdAt).getTime(),
       render: (row) => (
         <span className="tnum whitespace-nowrap text-sm text-ink-500">
@@ -289,7 +321,7 @@ export function AdminWebQuotesPage() {
         <FilterStrip
           search={query}
           onSearchChange={setQuery}
-          searchPlaceholder="Name, email, phone or message…"
+          searchPlaceholder="WQ- number, name, email, phone or message…"
           pills={PILLS.map((pill) => ({
             ...pill,
             count: pill.value === 'all' ? total : counts[pill.value],
@@ -312,6 +344,7 @@ export function AdminWebQuotesPage() {
           rowKey={(row) => row.id}
           loading={isLoading}
           onRowClick={open}
+          rowClassName={(row) => lookOf(row).row}
           rowMenu={rowMenu}
           defaultSort={{ key: 'createdAt', direction: 'desc' }}
           empty={
@@ -337,7 +370,13 @@ export function AdminWebQuotesPage() {
       <Modal
         open={Boolean(reading)}
         onClose={() => setReading(null)}
-        title={reading ? `Enquiry from ${reading.name}` : 'Enquiry'}
+        title={
+          reading
+            ? reading.number
+              ? `${reading.number} · ${reading.name}`
+              : `Enquiry from ${reading.name}`
+            : 'Web quote'
+        }
         size="lg"
       >
         {reading && (

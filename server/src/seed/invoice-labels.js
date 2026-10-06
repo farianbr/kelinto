@@ -100,7 +100,7 @@ async function seedInvoiceLabels({ quiet = false, colorToken } = {}) {
   return { added: missing.length, existing: have.size, messages: written };
 }
 
-// CLI entry: `npm run seed:invoice-labels`
+// CLI entry: `npm run seed:demo -- invoice-labels`
 if (process.argv[1] && process.argv[1].endsWith('invoice-labels.js')) {
   (async () => {
     console.log('\n  Seeding manual invoice statuses…\n');

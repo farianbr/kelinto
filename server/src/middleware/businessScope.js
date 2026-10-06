@@ -215,7 +215,7 @@ function resolveBusinessScope(req, _res, next) {
  * `business: null` so that anything unassigned stays visible - but that leaks:
  * every unassigned record would appear under *every* business, so switching to
  * one would show another's history and the figures would not add up.
- * `backfill:business` is what makes exactness safe; it stamps the pre-scoping
+ * `backfill -- business` is what makes exactness safe; it stamps the pre-scoping
  * rows onto the default business, and it is idempotent so it can be re-run if
  * an old code path ever writes another null.
  */

@@ -205,6 +205,13 @@ const invoiceSchema = new mongoose.Schema(
      */
     label: { type: mongoose.Schema.Types.ObjectId, ref: 'InvoiceLabel', default: null, index: true },
     labelSetAt: { type: Date, default: null },
+    /**
+     * Which of the status's channels the staff member let its message use on
+     * THIS invoice, chosen in the confirmation when the status was set
+     * (2026-10-06). A permission list, as on a ticket status move: empty means
+     * "set it silently", absent means every channel the status has.
+     */
+    labelChannels: { type: [String], default: undefined },
 
     /**
      * When the warranty and review email went out, if it ever did.

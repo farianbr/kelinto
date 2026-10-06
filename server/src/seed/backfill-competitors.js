@@ -8,7 +8,7 @@ import { buildCompetitors } from './generate.js';
  *
  * `npm run seed` would do it, but it wipes the whole database - the wrong tool
  * once there are real accounts, orders and carts in there. This touches ONE
- * field on ONE collection and nothing else, the same way `seed:content` is the
+ * field on ONE collection and nothing else, the same way `seed:demo -- content` is the
  * safe tool for the editorial collections.
  *
  * Safe to re-run: by default it skips products that already carry benchmarks,
@@ -19,8 +19,8 @@ import { buildCompetitors } from './generate.js';
  * catalogue produces the same numbers on every run and a re-run does not
  * quietly reprice the store.
  *
- *   npm run backfill:competitors
- *   npm run backfill:competitors -- --force
+ *   npm run backfill -- competitors
+ *   npm run backfill -- competitors -- --force
  */
 async function backfillCompetitors({ force = false, quiet = false } = {}) {
   const log = quiet ? () => {} : (...args) => console.log(...args);

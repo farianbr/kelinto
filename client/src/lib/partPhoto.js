@@ -1,21 +1,16 @@
-import { partPhoto } from '@shared/partPhotos.js';
-
 /**
- * A product's picture.
+ * A product's picture: its own `image`, or null.
  *
- * The brand-and-component-type photo map moved to `shared/partPhotos.js`: the
- * catalogue hides products that have no picture, and that filter is applied
- * server-side so the result count matches the grid. Both sides read one map.
- */
-export { partPhoto };
-
-/**
- * `product.image` first, then the brand stock photo. Null means the caller
- * should draw `PartIllustration` instead - which, for a catalogue product,
- * should not happen: the server does not list products without a photo.
+ * Null means the caller should draw `PartIllustration` instead - which, for a
+ * catalogue product, should not happen: the server does not list products
+ * without a picture.
+ *
+ * There is no brand-and-component-type fallback any more (2026-10-06). It drew
+ * one business's photos for every business; the seeded photos are now written
+ * onto each product as a key into its own business's library in R2.
  */
 export function productPhoto(product) {
-  return product?.image || partPhoto(product);
+  return product?.image || null;
 }
 
 export default productPhoto;

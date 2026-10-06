@@ -29,9 +29,9 @@ import Ticket from '../models/Ticket.js';
  * already set unless asked. `--force` rewrites every mirror from its forward
  * pointer, which is what you want if a forward pointer was itself corrected.
  *
- *   npm run backfill:lineage
- *   npm run backfill:lineage -- --dry-run
- *   npm run backfill:lineage -- --force
+ *   npm run backfill -- lineage
+ *   npm run backfill -- lineage -- --dry-run
+ *   npm run backfill -- lineage -- --force
  */
 async function backfillLineage({ force = false, dryRun = false, quiet = false } = {}) {
   const log = quiet ? () => {} : (...args) => console.log(...args);

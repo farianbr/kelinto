@@ -580,8 +580,8 @@ export function useAdminRma(id) {
 }
 
 /**
- * Repair tickets. `params` carries the status pill, the search, the priority
- * and technician filters and the page - all of it in the key, so paging back
+ * Repair tickets. `params` carries the status pill, the search, the
+ * technician filter and the page - all of it in the key, so paging back
  * to a page already seen is instant.
  */
 export function useAdminTickets(params) {
@@ -1630,8 +1630,8 @@ export function useAdminMutations() {
      * clear.
      */
     setInvoiceLabel: useMutation({
-      mutationFn: ({ number, labelId }) =>
-        api.patch(`/admin/invoices/${number}/label`, { labelId }),
+      mutationFn: ({ number, labelId, channels }) =>
+        api.patch(`/admin/invoices/${number}/label`, { labelId, channels }),
       onSuccess: invalidate,
     }),
     createExpenseCategory: useMutation({

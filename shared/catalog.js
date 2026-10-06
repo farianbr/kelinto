@@ -426,16 +426,17 @@ export const catalogCategorySchema = z.object({
 });
 
 /**
- * Stock photos for services, keyed on the service's name.
+ * CellShoppe's service photos, keyed on the service's name.
  *
- * The client supplied a photo per repair (`client/public/service-photos`), so
- * the same reasoning as `partPhotos.js` applies: the mapping lives in one file,
- * a service that matches a title shows its picture with no record touched, and
- * adding one is dropping a file plus a line. Matched case-insensitively on the
- * service name; the first entry whose `names` contains it wins.
+ * The client supplied a photo per repair, kept in the business's photo library
+ * in R2 (`businesses/<code>/library/services/`), so the same reasoning as
+ * `partPhotos.js` applies: seed data, written onto `Service.image` by the seed
+ * and `backfill -- stock-media`, never looked up when a service is shown.
+ * Matched case-insensitively on the service name; the first entry whose
+ * `names` contains it wins.
  *
  * `create` is the service the seed adds when a business has nothing matching
- * (`npm run seed:service-photos`): "if the service is not available, create
+ * (`npm run seed:demo -- service-business`): "if the service is not available, create
  * it". The prices are demo figures, like every other seeded price.
  */
 export const SERVICE_PHOTOS = [
@@ -532,10 +533,13 @@ export const SERVICE_PHOTOS = [
   },
 ];
 
-/** The site path of a service's stock photo, or null. */
-export function servicePhotoFor(name) {
+/**
+ * The file name of the photo for a service, by its name, or null. Seed data:
+ * the seed and `backfill -- stock-media` write the business's library key onto
+ * `Service.image`; nothing reads this on the way out.
+ */
+export function servicePhotoFileFor(name) {
   const key = String(name ?? '').trim().toLowerCase();
   if (!key) return null;
-  const match = SERVICE_PHOTOS.find((entry) => entry.names.includes(key));
-  return match ? `/service-photos/${match.file}` : null;
+  return SERVICE_PHOTOS.find((entry) => entry.names.includes(key))?.file ?? null;
 }

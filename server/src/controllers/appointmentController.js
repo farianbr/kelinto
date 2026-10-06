@@ -105,7 +105,6 @@ const list = asyncHandler(async (req, res) => {
       device,
       customerName: row.customerName ?? "",
       status: row.status,
-      priority: row.priority ?? null,
       technician: tech ? tech.contactName || tech.businessName || tech.email : null,
       createdAt: row.createdAt,
     };

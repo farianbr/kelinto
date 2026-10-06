@@ -92,6 +92,10 @@ export function AdminTopBar({ user, onOpenSearch, onOpenMobileNav }) {
         {!isImpersonating && (
           <button
             type="button"
+            // The signed link is minted while the pointer is on its way, so
+            // the click opens a finished link (see useOpenWebsite).
+            onPointerEnter={() => website.prepare('/')}
+            onFocus={() => website.prepare('/')}
             onClick={() => website.open('/')}
             disabled={website.opening}
             aria-label="Open the website"

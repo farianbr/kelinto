@@ -17,7 +17,6 @@ import {
 } from 'lucide-react';
 
 import {
-  SERVICE_INVOICE_TYPES,
   TAX_RATES,
   provinceTaxOptions,
   adminInvoiceSchema,
@@ -32,13 +31,13 @@ import SelectField from '@/components/ui/SelectField';
 import PageHeader from '@/components/admin/PageHeader';
 import MissingFields from '@/components/admin/MissingFields';
 import { Section } from '@/components/admin/DeviceLines';
+import SalesCustomerSection from '@/components/admin/SalesCustomerSection';
 import DeviceFinder from '@/components/admin/DeviceFinder';
-import PricedLines, { emptyLine } from '@/components/admin/PricedLines';
+import PricedLines from '@/components/admin/PricedLines';
 import { pressable } from '@/lib/motion';
 import {
   useAdminUsers,
   useAdminServices,
-  useAdminInventory,
   useAdminSettings,
   useAdminInvoice,
   useAdminMutations,
@@ -47,6 +46,9 @@ import Skeleton from '@/components/ui/Skeleton';
 
 // Each option carries its tax name and rate - see `provinceTaxOptions`.
 const PROVINCE_OPTIONS = provinceTaxOptions();
+
+/** Every new document starts in Alberta (client ruling 2026-10-05). */
+const DEFAULT_PROVINCE = 'AB';
 
 /**
  * One resolver for both modes: the edit page sends the whole invoice and is
@@ -100,7 +102,8 @@ const emptyDevice = () => ({
   problem: '',
   solution: '',
   notes: '',
-  services: [emptyLine()],
+  // No blank row: the add bar under the list is where a line starts.
+  services: [],
   parts: [],
 });
 
@@ -182,7 +185,6 @@ export function AdminServiceInvoiceFormPage() {
 
   const { data: clientData } = useAdminUsers({ status: 'approved', limit: 500 });
   const { data: serviceData } = useAdminServices({ status: 'active', limit: 200 });
-  const { data: inventoryData } = useAdminInventory({ limit: 500 });
   const { data: settingsData } = useAdminSettings();
 
   const { createInvoice, updateInvoice } = useAdminMutations();
@@ -190,17 +192,6 @@ export function AdminServiceInvoiceFormPage() {
 
   const clients = clientData?.users ?? [];
   const services = serviceData?.services ?? [];
-
-  const parts = useMemo(
-    () =>
-      (inventoryData?.products ?? []).map((product) => ({
-        id: product.id,
-        name: product.name,
-        price: (product.price ?? 0) / 100,
-        description: product.sku ?? '',
-      })),
-    [inventoryData],
-  );
 
   /**
    * The mileage rate, from the shop's own settings.
@@ -236,8 +227,8 @@ export function AdminServiceInvoiceFormPage() {
       extendedServiceFeeDollars: '',
       discountDollars: 0,
       discountCode: '',
-      province: '',
-      taxPercent: 5,
+      province: DEFAULT_PROVINCE,
+      taxPercent: TAX_RATES[DEFAULT_PROVINCE],
     },
   });
 
@@ -267,6 +258,7 @@ export function AdminServiceInvoiceFormPage() {
       description: entry.description ?? '',
       qty: entry.qty ?? 1,
       priceDollars: toDollars(entry.priceCents),
+      service: entry.service ?? undefined,
       product: entry.product ?? undefined,
     });
 
@@ -494,43 +486,17 @@ export function AdminServiceInvoiceFormPage() {
           before react-hook-form runs, one field at a time and unstyled, so the
           summary beside the button would never appear. See `TicketForm`. */}
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-3 pb-24" noValidate>
-        <Section icon={Info} title="Basic information">
-          <div className="grid gap-3 lg:grid-cols-4">
-            <SelectField
-              control={control}
-              name="user"
-              label="Customer"
-              // An invoice is raised against somebody, so the schema requires
-              // it on both paths - unlike the estimate, the customer stays
-              // editable on an edit here.
-              required
-              // Searchable explicitly, not by row count: this is every approved
-              // account and it grows with the business.
-              searchable
-              searchPlaceholder="Name, business or email…"
-              options={[
-                { value: '', label: '– Choose a customer –' },
-                ...clients.map((client) => ({
-                  value: client.id,
-                  label: `${client.displayName}${client.email ? ` · ${client.email}` : ''}`,
-                })),
-              ]}
-              onCreate={(typed) =>
-                navigate(
-                  `/admin/clients?new=1${typed ? `&name=${encodeURIComponent(typed)}` : ''}`,
-                )
-              }
-              createLabelEmpty="Add a customer"
-            />
-            {/* No `size` or `h-9` here any more: the density context sets the
-                height, and hand-sizing a field beside it is what let the two
-                drift apart in the first place. */}
-            <Input
-              label="Invoice date"
-              type="date"
-              error={errors.issuedAt?.message}
-              {...register('issuedAt')}
-            />
+        <SalesCustomerSection
+          control={control}
+          register={register}
+          errors={errors}
+          clients={clients}
+          dateField={{ name: 'issuedAt', label: 'Invoice date' }}
+          addHint="an invoice is raised against somebody"
+        >
+          {/* The one field only an invoice has, under the shared row so that
+              row reads the same as the ticket's and the quote's. */}
+          <div className="mt-3 grid gap-3 lg:grid-cols-3">
             <Input
               label="Due date"
               type="date"
@@ -538,22 +504,8 @@ export function AdminServiceInvoiceFormPage() {
               error={errors.dueDate?.message}
               {...register('dueDate')}
             />
-            <SelectField
-              control={control}
-              name="serviceType"
-              label="Service type"
-              options={SERVICE_INVOICE_TYPES}
-            />
           </div>
-
-          <p className="mt-2 text-xs text-ink-400">
-            No account yet?{' '}
-            <Link to="/admin/clients?new=1" className="font-medium text-brand underline">
-              Add a customer
-            </Link>{' '}
-            first - an invoice is raised against somebody.
-          </p>
-        </Section>
+        </SalesCustomerSection>
 
         <Section icon={Smartphone} title="Devices and services">
           <div className="space-y-3">
@@ -624,9 +576,7 @@ export function AdminServiceInvoiceFormPage() {
                   setValue={setValue}
                   name={`devices.${index}.services`}
                   label="Services"
-                  addLabel="Add service"
-                  placeholder="Search a service…"
-                  emptyHint="No services yet."
+                  placeholder="Search services to add…"
                   catalogue={services}
                   refField="service"
                 />
@@ -636,12 +586,11 @@ export function AdminServiceInvoiceFormPage() {
                   register={register}
                   setValue={setValue}
                   name={`devices.${index}.parts`}
-                  label="Parts used"
-                  addLabel="Add part"
-                  placeholder="Search inventory…"
-                  emptyHint="No parts yet."
-                  catalogue={parts}
+                  label="Parts"
+                  placeholder="Scan or search parts to add…"
+                  emptyHint="Parts come off the shelf when the invoice is saved."
                   refField="product"
+                  requireStock
                 />
               </div>
             ))}

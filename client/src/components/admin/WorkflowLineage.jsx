@@ -6,13 +6,11 @@ import { pressableSurface } from '@/lib/motion';
 /**
  * The chain a repair travels: quote → ticket → invoice.
  *
- * **Not the life cycle, and not a duplicate of it.** `ProcessStrip` says where
- * *one* record sits inside its own states - a quote is sent, an invoice is
- * partly paid. This says which *other records* are the same job. They answer
- * different questions and they sit at opposite ends of the page for that
- * reason: lineage at the top, because "am I even looking at the right record?"
- * is the first question, and life cycle at the foot, because "where did this
- * end up?" is the last.
+ * **Not a life cycle.** This says which *other records* are the same job, not
+ * where one record sits inside its own states - the status badge in the header
+ * carries that. The sales documents dropped their life-cycle strip from the foot
+ * (client ruling 2026-10-05); this stays at the top, because "am I even looking
+ * at the right record?" is the first question a staff member arrives with.
  *
  * ## Only the stations that exist
  *
@@ -160,9 +158,9 @@ export function WorkflowLineage({ quote, ticket, invoice, current, pending, clas
       </h2>
 
       <ol className="flex flex-wrap items-center gap-y-1.5">
-        {stations.map((station, index) => (
-          <li key={station.key} className="flex items-center">
-            <Station {...station} current={current === station.key} />
+        {stations.map(({ key, ...station }, index) => (
+          <li key={key} className="flex items-center">
+            <Station {...station} current={current === key} />
 
             {index < stations.length - 1 && (
               <ChevronRight

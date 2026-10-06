@@ -1,9 +1,17 @@
-import { CopyObjectCommand, DeleteObjectsCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import {
+  CopyObjectCommand,
+  DeleteObjectsCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import env from '../config/env.js';
 import ApiError from '../utils/ApiError.js';
 import { controlModels } from '../db/models.js';
 import '../models/PendingUpload.js';
 import { newId, processUpload, SIBLINGS } from './mediaProcessor.js';
+import { decodeKey, encodeKey, isNamedKey } from '../utils/photoLibrary.js';
 
 /**
  * Uploaded files, in Cloudflare R2.
@@ -15,6 +23,7 @@ import { newId, processUpload, SIBLINGS } from './mediaProcessor.js';
  * touching anybody else's:
  *
  *   businesses/<business code>/<kind>/<random>.<ext>   a business's own files
+ *   businesses/<business code>/library/<set>/<name>     its named photo library
  *   kelinto/<kind>/<random>.<ext>                      Kelinto's own files
  *
  * Kelinto's folder was `platform/` until 2026-09-27. Keys under it still
@@ -108,9 +117,9 @@ function s3() {
   return client;
 }
 
-/** The public address of a stored key. */
+/** The public address of a stored key. A library file's human name is encoded. */
 function publicUrl(key) {
-  return `${env.R2_PUBLIC_URL}/${key}`;
+  return `${env.R2_PUBLIC_URL}/${isNamedKey(key) ? encodeKey(key) : key}`;
 }
 
 /**
@@ -126,14 +135,22 @@ function publicUrl(key) {
  */
 const KEY_PATTERN = /^(?:businesses\/[a-z0-9_-]+|kelinto|platform)\/[a-z-]+\/[0-9a-f-]{36}(?:-[a-z0-9]+)?\.[a-z0-9]+$/i;
 
-/** The key behind a stored key or one of OUR public URLs, or null for anything else. */
+/**
+ * The key behind a stored key or one of OUR public URLs, or null for anything else.
+ *
+ * A business's photo library (`utils/photoLibrary.js`) is keys too, with human
+ * file names rather than generated ids, so it has a pattern of its own and its
+ * URLs carry the names encoded.
+ */
 function keyOf(value) {
   if (!value) return null;
   const text = String(value);
-  if (KEY_PATTERN.test(text)) return text;
+  if (KEY_PATTERN.test(text) || isNamedKey(text)) return text;
   if (!env.R2_PUBLIC_URL) return null;
   const prefix = `${env.R2_PUBLIC_URL}/`;
-  return text.startsWith(prefix) && KEY_PATTERN.test(text.slice(prefix.length)) ? text.slice(prefix.length) : null;
+  if (!text.startsWith(prefix)) return null;
+  const rest = text.slice(prefix.length);
+  return KEY_PATTERN.test(rest) ? rest : decodeKey(rest);
 }
 
 /** What to store: the key for one of our files, anything else unchanged. */
@@ -144,7 +161,8 @@ function toKey(value) {
 /** What to send: the public URL for a stored key, anything else unchanged. */
 function urlOf(value) {
   if (!value || !env.R2_PUBLIC_URL) return value;
-  return KEY_PATTERN.test(String(value)) ? publicUrl(String(value)) : value;
+  const text = String(value);
+  return KEY_PATTERN.test(text) || isNamedKey(text) ? publicUrl(text) : value;
 }
 
 /**
@@ -174,8 +192,9 @@ function ownsKey(key, owner) {
 }
 
 /**
- * Is this a URL a record may point at? One of this owner's own files, a path
- * on our own site (the bundled placeholders and stock photos), or nothing.
+ * Is this a URL a record may point at? One of this owner's own files (its
+ * photo library included), a path on our own site (the bundled placeholders),
+ * or nothing.
  * Anything else - a hotlink to somebody else's server - is refused, because
  * it is a file we neither hold nor vouch for, served into our pages.
  */
@@ -194,7 +213,10 @@ function keysWithSiblings(key) {
   return [key, ...(SIBLINGS[kind] ?? []).map((sibling) => `${base}${sibling.suffix}.${sibling.ext}`)];
 }
 
-async function deleteKeys(keys) {
+async function deleteKeys(input) {
+  // A library photo is shared by many of its business's records (every iPhone
+  // screen shows the same one), so no single record's cleanup may delete it.
+  const keys = input.filter((key) => !isNamedKey(key));
   if (!keys.length || !isConfigured()) return;
   try {
     await s3().send(
@@ -413,8 +435,57 @@ async function releaseReplaced(before, after, owner) {
   );
 }
 
+/**
+ * Every key under a prefix (paged), for the seeds that read a business's photo
+ * library rather than a folder on disk.
+ */
+async function listKeys(prefix) {
+  if (!isConfigured()) return [];
+  const keys = [];
+  let token;
+  do {
+    const page = await s3().send(
+      new ListObjectsV2Command({ Bucket: env.R2_BUCKET, Prefix: prefix, ContinuationToken: token }),
+    );
+    for (const item of page.Contents ?? []) keys.push(item.Key);
+    token = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (token);
+  return keys;
+}
+
+/** Is there an object at this key? For migrations that copy only what is missing. */
+async function hasKey(key) {
+  try {
+    await s3().send(new HeadObjectCommand({ Bucket: env.R2_BUCKET, Key: key }));
+    return true;
+  } catch (error) {
+    if (error.name === 'NotFound' || error.$metadata?.httpStatusCode === 404) return false;
+    throw error;
+  }
+}
+
+/**
+ * Copy one object as it is, leaving the original. For migrations only (the
+ * photo library's move under each business): a live upload goes through
+ * `store`, which checks and optimises everything.
+ */
+async function copyKey(fromKey, toKey) {
+  if (!isConfigured()) throw new Error('R2 is not configured');
+  await s3().send(
+    new CopyObjectCommand({
+      Bucket: env.R2_BUCKET,
+      CopySource: `${env.R2_BUCKET}/${encodeKey(fromKey)}`,
+      Key: toKey,
+      MetadataDirective: 'COPY',
+    }),
+  );
+}
+
 const storage = {
   KINDS,
+  listKeys,
+  hasKey,
+  copyKey,
   MAX_UPLOAD_BYTES,
   isConfigured,
   isAllowedUrl,
@@ -435,6 +506,9 @@ const storage = {
 
 export {
   KINDS,
+  listKeys,
+  hasKey,
+  copyKey,
   MAX_UPLOAD_BYTES,
   sniff,
   ownerPrefix,

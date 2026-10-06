@@ -1,41 +1,53 @@
-import { useFieldArray, useFormState } from 'react-hook-form';
-import { Plus, Trash2 } from 'lucide-react';
+import { useFieldArray, useFormState, useWatch } from 'react-hook-form';
+import { Minus, Plus, X } from 'lucide-react';
 
 import cn from '@/lib/cn';
-import { money } from '@/lib/format';
-import Input from '@/components/ui/Input';
-import SelectMenu from '@/components/ui/SelectMenu';
-import Button from '@/components/ui/Button';
+import { money, count as formatCount } from '@/lib/format';
+import InventoryPicker from '@/components/admin/InventoryPicker';
+import ServicePicker from '@/components/admin/ServicePicker';
 import { useAdminMutations } from '@/hooks/useAdmin';
 import { toast } from '@/store/toastStore';
 import { pressable } from '@/lib/motion';
 
 /**
- * A priced line with a catalogue picker, shared by the estimate and the
- * service invoice.
+ * The priced lines on one device - its services, or its parts - shared by the
+ * ticket, the quote and the service invoice.
  *
- * Extracted rather than copied: the two screens bill the same work in the same
- * shape, and a second copy is how one of them quietly stops writing the
+ * Extracted rather than copied: the three screens bill the same work in the
+ * same shape, and a second copy is how one of them quietly stops writing the
  * reference field or stops honouring an override. `emptyLine` lives here too,
- * so both pages agree on what a blank row is.
+ * so the pages agree on what a blank row is.
  */
-const emptyLine = () => ({ name: '', description: '', priceDollars: '', qty: 1, service: '', product: '' });
+const emptyLine = () => ({
+  name: '',
+  description: '',
+  priceDollars: '',
+  qty: 1,
+  service: '',
+  product: '',
+});
 
 /**
- * One priced line, with a picker in front of it.
+ * ## How it works (redesigned 2026-10-06, client: "adding service and part feels robotic")
  *
- * **The picker fills the line; it does not become the line.** Choosing "Screen
- * replacement" copies its name and list price into the two fields beside it and
- * then gets out of the way - the staff member raises the price for a bent frame,
- * and the line keeps the id so reporting can still group by what was sold. A
- * picker that owned the price would make the override impossible, and the
- * override is the normal case.
+ * It used to be a form per line: press "Add service", get an empty box with a
+ * picker on top and four bare fields under it, pick, then check the fields the
+ * pick had filled. Two steps and a wall of inputs for what a counter thinks of
+ * as one act - "add a screen replacement".
  *
- * **One component, two catalogues.** A service business sells labour AND parts,
- * so this fills from `Service` for one list and the shop's own `Product`
- * inventory for the other. `refField` is which reference the picked id belongs
- * in; everything else about a line is identical, which is why they share an
- * editor rather than having two that drift.
+ * Now **the add bar is the action**. One search field under the list: pick a
+ * service (or scan a part) and the line is on the document, named and priced,
+ * and the field is ready for the next. Picking something already listed adds
+ * one to its quantity instead of a duplicate row.
+ *
+ * **The lines read as lines.** Name and note are edited in place, styled as
+ * text until touched; then a quantity stepper, the price, and the line total -
+ * the figure a counter reads back, so it gets the weight. The heading carries
+ * the count and the subtotal, so a closed-up device still says what it costs.
+ *
+ * **The picker fills the line; it does not own it.** The price stays editable:
+ * raising it for a bent frame is the normal case, and the line keeps the
+ * catalogue id either way so reporting can still group by what was sold.
  */
 function PricedLines({
   control,
@@ -43,218 +55,284 @@ function PricedLines({
   setValue,
   name,
   label,
-  addLabel,
-  catalogue,
+  catalogue = [],
   placeholder,
   emptyHint,
   // `service` or `product`: which reference field the picked id belongs in.
   refField,
+  // Parts only: refuse one with nothing on the shelf (see `InventoryPicker`).
+  requireStock = false,
 }) {
   const { fields, append, remove } = useFieldArray({ control, name });
   const { createService } = useAdminMutations();
+  const lines = useWatch({ control, name }) ?? [];
 
   /**
-   * The errors for this array only.
-   *
-   * `useFormState` with a `name` subscribes this editor to its own slice, so a
-   * rejected line re-renders the block it is in rather than every priced line
-   * on the page - a service invoice can hold twenty devices with two arrays
-   * each, and a form-wide subscription would re-render all forty on a keystroke.
+   * The device these lines belong to, so the part search stays on its shelf.
+   * `name` is `devices.N.parts`, and the device's own fields sit beside it.
    */
+  const devicePath = String(name).replace(/\.(parts|services)$/, '');
+  const [deviceBrand, deviceModel] = useWatch({
+    control,
+    name: [`${devicePath}.brand`, `${devicePath}.model`],
+  });
+  const fits = deviceModel ? { brand: deviceBrand, model: deviceModel } : null;
+
+  // This array's own errors, so a rejected line re-renders its own block only.
   const { errors } = useFormState({ control, name });
   const lineErrors = at(errors, name);
 
-  /**
-   * Add a service to the price book from inside the picker.
-   *
-   * **Services only, and deliberately.** `serviceCatalogSchema` needs a name
-   * and defaults the rest, so a labour line somebody has just described can
-   * become a catalogue entry in one step. A PART is an inventory record - SKU,
-   * cost, stock, supplier, reorder point - and inventing one from a name would
-   * create a product with no stock and no cost that then appears in reordering
-   * and valuation reports as a real thing. So a part typed here stays a
-   * free-typed line on this document, which is what the line already supports.
-   *
-   * The catalogue entry is created AND the line is filled, because the reason
-   * somebody is adding it is that they are billing it right now.
-   */
-  const canCreate = refField === 'service';
+  const lineCents = (line) =>
+    Math.round((Number(line?.priceDollars) || 0) * 100) * Math.max(1, Number(line?.qty) || 1);
+  const subtotal = lines.reduce((sum, line) => sum + lineCents(line), 0);
 
-  async function addToCatalogue(index, typed) {
-    // The server refuses a one-character name (`SERVICE_NAME_REQUIRED`), so it
-    // is caught here rather than as a failed request the staff member has to
-    // interpret.
+  /** Add a picked entry, or one more of it if it is already listed. */
+  function addLine(line) {
+    const id = line[refField];
+    const index = id ? lines.findIndex((existing) => existing?.[refField] === id) : -1;
+    if (index >= 0) {
+      setValue(`${name}.${index}.qty`, (Number(lines[index]?.qty) || 1) + 1, { shouldDirty: true });
+      return;
+    }
+    // shouldFocus off: RHF otherwise moves focus to the new line's name field,
+    // which pulled the cursor out of the add bar and left its list hanging open.
+    append({ ...emptyLine(), ...line }, { shouldFocus: false });
+  }
+
+  function addService(service) {
+    addLine({
+      name: service.name,
+      description: service.description ?? '',
+      priceDollars: dollars(service.price),
+      service: service.id,
+    });
+  }
+
+  function addPart(product) {
+    if (!product) return;
+    addLine({
+      name: product.name,
+      description: product.sku ?? '',
+      priceDollars: dollars((product.price ?? 0) / 100),
+      product: product.id,
+    });
+  }
+
+  /**
+   * Add a typed service to the price book and bill it.
+   *
+   * Services only: a PART is an inventory record - SKU, cost, stock, supplier -
+   * and inventing one from a name would put a stockless product into reordering
+   * and valuation. The line is added either way, because the reason somebody
+   * typed it is that they are billing it now.
+   */
+  async function createAndAdd(typed) {
     if (typed.length < 2) {
       toast.error('That name is too short', 'A service needs at least two characters.');
       return;
     }
-
     try {
       const created = await createService.mutateAsync({ name: typed });
-      const service = created?.service;
-
-      setValue(`${name}.${index}.name`, typed, { shouldDirty: true });
-      if (service?.id) setValue(`${name}.${index}.service`, service.id, { shouldDirty: true });
-
-      toast.ok(`${typed} added`, 'It is on the service list now - set its price here.');
+      addLine({ name: typed, service: created?.service?.id ?? '' });
+      toast.ok(`${typed} added`, 'It is on the service list now. Set its price on the line.');
     } catch (error) {
-      // The line still gets the name: the staff member is billing this job
-      // either way, and losing what they typed because a catalogue write
-      // failed is the worse of the two outcomes.
-      setValue(`${name}.${index}.name`, typed, { shouldDirty: true });
+      addLine({ name: typed });
       toast.error('It was not added to the service list', error.message);
     }
   }
 
+  const noun = refField === 'product' ? 'part' : 'service';
+
   return (
-    <div className="mt-3">
-      <p className="eyebrow mb-2 text-ink-400">{label}</p>
+    <section className="mt-4">
+      <header className="mb-2 flex items-baseline justify-between gap-3">
+        <h4 className="eyebrow text-ink-400">{label}</h4>
+        {fields.length > 0 && (
+          <p className="tnum text-xs text-ink-500">
+            {formatCount(fields.length)} {fields.length === 1 ? noun : `${noun}s`} ·{' '}
+            <span className="font-semibold text-ink-900">{money(subtotal)}</span>
+          </p>
+        )}
+      </header>
 
-      {fields.length === 0 && <p className="mb-2 text-xs text-ink-400">{emptyHint}</p>}
-
-      <div className="space-y-2">
-        {fields.map((field, index) => (
-          <div key={field.id} className="rounded-md border border-line bg-surface-2 p-2">
-            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-              {/* Searchable, because this list is the whole price book.
-
-                  A native `<select>` over 200 services or 500 parts gives no
-                  way to type past the first letter, so finding a line meant
-                  scrolling a list the platform sized itself. It is also
-                  deliberately a PICKER, not a value: choosing an entry writes
-                  the name, price and id onto the line below and resets, so the
-                  same entry can be added twice in a row. */}
-              <SelectMenu
-                srLabel={placeholder}
-                size="md"
-                align="left"
-                placeholder={placeholder}
-                searchable
-                searchPlaceholder={placeholder}
-                value=""
-                options={[
-                  { value: '', label: placeholder },
-                  ...catalogue.map((entry) => ({
-                    value: entry.id,
-                    label: entry.price
-                      ? `${entry.name} · ${money(Math.round(entry.price * 100))}`
-                      : entry.name,
-                  })),
-                ]}
-                onChange={(next) => {
-                  const picked = catalogue.find((entry) => entry.id === next);
-                  if (!picked) return;
-                  setValue(`${name}.${index}.name`, picked.name, { shouldDirty: true });
-                  setValue(`${name}.${index}.priceDollars`, picked.price ?? 0, {
-                    shouldDirty: true,
-                  });
-                  /**
-                   * The id goes in the field for its OWN kind.
-                   *
-                   * A service business sells two things and this editor fills
-                   * both: labour from `Service`, and parts from the shop's own
-                   * `Product` inventory. They are different collections, so a
-                   * part's id written into `service` would point at a service
-                   * that does not exist - the line would still read correctly,
-                   * because it snapshots its own name and price, and every
-                   * report grouping by service would silently miss it.
-                   */
-                  setValue(`${name}.${index}.${refField}`, picked.id, { shouldDirty: true });
-                  if (picked.description) {
-                    setValue(`${name}.${index}.description`, picked.description, {
-                      shouldDirty: true,
-                    });
-                  }
-                  // Nothing resets here: `value` is held at `''` above, so the
-                  // control is already back to the placeholder on the next
-                  // render and the same entry can be picked again.
-                }}
-                // Parts are inventory records and are not invented from a
-                // name - see `addToCatalogue`.
-                onCreate={canCreate ? (typed) => addToCatalogue(index, typed) : undefined}
-                createLabel={'Add "{q}" to the service list'}
-                createLabelEmpty="Type a service name to add it"
-              />
-
+      {fields.length > 0 && (
+        <ul className="divide-y divide-line rounded-md border border-line bg-surface">
+          {fields.map((field, index) => {
+            const errorsHere = lineErrors?.[index];
+            const qty = Math.max(1, Number(lines[index]?.qty) || 1);
+            // The remove button is drawn twice and shown once: beside the name
+            // on a phone, at the end of the row at desktop, so a phone's figures
+            // row has room for the quantity, the price and the total.
+            const lineTotal = () => (
+              <p className="tnum min-w-14 shrink-0 text-right text-sm font-semibold text-ink-900">
+                {money(lineCents(lines[index]))}
+              </p>
+            );
+            const removeButton = (where) => (
               <button
                 type="button"
                 onClick={() => remove(index)}
-                aria-label={`Remove line ${index + 1}`}
+                aria-label={`Remove ${lines[index]?.name || `this ${noun}`}`}
                 className={cn(
                   pressable,
-                  // Matches the picker beside it at admin density. `size-11`
-                  // left this button 8px taller than the control it sits next
-                  // to, which is the ragged edge this pass exists to remove.
-                  'inline-flex size-9 items-center justify-center rounded-md border border-line-strong bg-surface text-ink-400 hover:border-danger hover:text-danger',
+                  'size-8 shrink-0 items-center justify-center rounded-md text-ink-400 hover:bg-danger-50 hover:text-danger',
+                  where === 'phone' ? 'flex sm:hidden' : 'hidden sm:flex',
                 )}
               >
-                <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
+                <X className="size-4" strokeWidth={2} aria-hidden="true" />
               </button>
-            </div>
+            );
+            return (
+              <li key={field.id} className="px-2 py-2 sm:px-3">
+                {/* One row at desktop; on a phone the name takes the full width
+                    and the figures sit on their own row under it. */}
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_7rem_5.5rem_auto] sm:items-center sm:gap-x-3">
+                  {/* Name and note, edited in place. Styled as text until
+                      hovered or focused: the line is a statement, and a box
+                      round every word made it read as a form to fill. */}
+                  <div className="flex min-w-0 items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      <input
+                        aria-label={`${noun} name`}
+                        placeholder={`Name this ${noun}`}
+                        className={cn(
+                          INLINE,
+                          'font-medium text-ink-900',
+                          errorsHere?.name && 'border-danger',
+                        )}
+                        {...register(`${name}.${index}.name`)}
+                      />
+                      <input
+                        aria-label={`${noun} note`}
+                        placeholder="Add a note"
+                        className={cn(
+                          INLINE,
+                          'mt-0.5 text-xs text-ink-500 placeholder:text-ink-300',
+                        )}
+                        {...register(`${name}.${index}.description`)}
+                      />
+                    </div>
+                    {removeButton('phone')}
+                  </div>
 
-            <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_90px_90px]">
-              {/* The line name is the only required field on a row, and only
-                  once the row has been started: an untouched row is one the
-                  form drops on submit rather than one somebody got wrong, which
-                  is what `deviceFormResolver` exists to keep true. The star is
-                  on the placeholder rather than a label because this grid has
-                  no labels - a four-column row of them would be taller than the
-                  values it describes. */}
-              <Input
-                placeholder="Line name *"
-                aria-label="Line name"
-                error={lineErrors?.[index]?.name?.message}
-                {...register(`${name}.${index}.name`)}
-              />
-              <Input
-                placeholder="Description (optional)"
-                aria-label="Description"
-                error={lineErrors?.[index]?.description?.message}
-                {...register(`${name}.${index}.description`)}
-              />
-              <Input
-                type="number"
-                step="0.01"
-                min="0"
-                placeholder="0.00"
-                aria-label="Price"
-                error={lineErrors?.[index]?.priceDollars?.message}
-                {...register(`${name}.${index}.priceDollars`)}
-              />
-              <Input
-                type="number"
-                min="1"
-                placeholder="Qty"
-                aria-label="Quantity"
-                error={lineErrors?.[index]?.qty?.message}
-                {...register(`${name}.${index}.qty`)}
-              />
-            </div>
-          </div>
-        ))}
+                  <div className="flex items-center gap-1.5 sm:contents">
+                    {/* Quantity: a stepper, because it is almost always 1 or 2
+                      and a bare number box invites typing over it. */}
+                    <div
+                      className="flex shrink-0 items-center rounded-md border border-line"
+                      role="group"
+                      aria-label="Quantity"
+                    >
+                      <button
+                        type="button"
+                        aria-label="One fewer"
+                        disabled={qty <= 1}
+                        onClick={() =>
+                          setValue(`${name}.${index}.qty`, qty - 1, { shouldDirty: true })
+                        }
+                        className={cn(pressable, STEP, 'disabled:opacity-40')}
+                      >
+                        <Minus className="size-3" strokeWidth={2.5} aria-hidden="true" />
+                      </button>
+                      <input
+                        aria-label="Quantity"
+                        inputMode="numeric"
+                        className="tnum h-8 w-6 border-0 bg-transparent text-center text-base text-ink-900 focus:outline-none sm:w-9 sm:text-sm"
+                        {...register(`${name}.${index}.qty`)}
+                      />
+                      <button
+                        type="button"
+                        aria-label="One more"
+                        onClick={() =>
+                          setValue(`${name}.${index}.qty`, qty + 1, { shouldDirty: true })
+                        }
+                        className={cn(pressable, STEP)}
+                      >
+                        <Plus className="size-3" strokeWidth={2.5} aria-hidden="true" />
+                      </button>
+                    </div>
+
+                    <label className="relative block min-w-0 flex-1 sm:flex-none">
+                      <span className="sr-only">Price each</span>
+                      <span className="pointer-events-none absolute left-1.5 top-1/2 -translate-y-1/2 text-sm text-ink-400 sm:left-2.5">
+                        $
+                      </span>
+                      <input
+                        inputMode="decimal"
+                        placeholder="0.00"
+                        className={cn(
+                          'tnum h-9 w-full rounded-md border border-line bg-surface pl-4 pr-1.5 text-right text-base text-ink-900 sm:pl-6 sm:pr-2 sm:text-sm',
+                          'focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25',
+                          errorsHere?.priceDollars && 'border-danger',
+                        )}
+                        {...register(`${name}.${index}.priceDollars`)}
+                      />
+                    </label>
+
+                    {lineTotal()}
+
+                    {removeButton('desktop')}
+                  </div>
+                </div>
+
+                {(errorsHere?.name || errorsHere?.priceDollars || errorsHere?.qty) && (
+                  <p role="alert" className="mt-1 text-xs font-medium text-danger">
+                    {errorsHere?.name?.message ??
+                      errorsHere?.priceDollars?.message ??
+                      errorsHere?.qty?.message}
+                  </p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {/* The add bar: the one action this block exists for. */}
+      <div className={cn(fields.length > 0 && 'mt-2')}>
+        {refField === 'product' ? (
+          <InventoryPicker
+            value={null}
+            amount="price"
+            appearance="add"
+            placeholder={placeholder}
+            fits={fits}
+            requireStock={requireStock}
+            onChange={addPart}
+          />
+        ) : (
+          <ServicePicker
+            catalogue={catalogue}
+            placeholder={placeholder}
+            onPick={addService}
+            onCreate={createAndAdd}
+            onCustom={(typed) => addLine({ name: typed })}
+          />
+        )}
+        {fields.length === 0 && emptyHint && (
+          <p className="mt-1.5 text-xs text-ink-400">{emptyHint}</p>
+        )}
       </div>
-
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        icon={Plus}
-        className="mt-2"
-        onClick={() => append(emptyLine())}
-      >
-        {addLabel}
-      </Button>
-    </div>
+    </section>
   );
 }
 
+/** "189.00", the way a price is read, rather than the bare number. */
+const dollars = (value) => (Number(value) || 0).toFixed(2);
+
+/** A field that reads as text until it is hovered or focused. */
+const INLINE = cn(
+  'block w-full rounded-sm border border-transparent bg-transparent px-1 -mx-1 text-base sm:text-sm',
+  'transition-[border-color,background-color] duration-press',
+  'hover:border-line focus:border-brand focus:bg-surface focus:outline-none',
+);
+
+/** One end of the quantity stepper. */
+const STEP = 'flex h-8 w-6 items-center justify-center text-ink-500 hover:text-ink-900 sm:w-8';
+
 /**
- * Walk a dotted path into the error tree.
- *
- * `name` arrives as `devices.0.services`, which is where RHF nests this
- * array's errors, and there is no lookup on the error object itself. Returns
- * `undefined` at the first missing step, which is the normal case: the tree is
- * empty until a submit is refused.
+ * Walk a dotted path into the error tree. `name` arrives as `devices.0.services`,
+ * which is where RHF nests this array's errors.
  */
 function at(errors, path) {
   return String(path)

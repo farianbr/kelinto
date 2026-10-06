@@ -41,7 +41,7 @@ const quoteItemSchema = new mongoose.Schema(
 
 const quoteSchema = new mongoose.Schema(
   {
-    quoteNumber: { type: String, required: true, unique: true, index: true }, // QT-2026-00001
+    quoteNumber: { type: String, required: true, unique: true, index: true }, // WQ-2026-00001 (a web quote)
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
 
     /** The shop that quoted. An accepted quote passes this to its order. */
