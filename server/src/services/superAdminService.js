@@ -357,6 +357,8 @@ async function listTenants() {
     // What a slug becomes, so the console can show `cellshoppe.kelinto.com`
     // rather than a bare label. Null when no wildcard domain is configured.
     storefrontDomain: env.storefrontDomain,
+    // Where a custom domain's A record points (see ORIGIN_IPV4). Null when unset.
+    originIp: env.ORIGIN_IPV4 || null,
     // Every domain the platform answers on as itself, so the address editor can
     // refuse `app.<platform>` as a custom domain while it is typed, not only
     // after it is sent. The server re-checks either way.

@@ -131,6 +131,17 @@ const schema = z.object({
    */
   CORS_WILDCARD_ORIGINS: z.string().default(''),
 
+  // The VPS's public IPv4, for the console's custom-domain instructions: a
+  // business points its domain here with an A record. Not a CNAME onto
+  // kelinto.com, which sits behind Kelinto's own Cloudflare account, and
+  // Cloudflare refuses a domain in another account that CNAMEs onto it (error
+  // 1014, 2026-10-06). Empty: the console falls back to the CNAME it showed.
+  ORIGIN_IPV4: z
+    .string()
+    .trim()
+    .regex(/^$|^(?:\d{1,3}\.){3}\d{1,3}$/, 'ORIGIN_IPV4 must be an IPv4 address')
+    .default(''),
+
   // The Vite dev server's port, for links the server builds in development
   // (`env.originFor`). Ignored in production.
   DEV_CLIENT_PORT: z.coerce.number().int().positive().default(5173),

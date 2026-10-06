@@ -303,7 +303,7 @@ function AccessSection({ business }) {
 
 export function SuperAdminBusinessPage({ section = 'overview' }) {
   const { businessId } = useParams();
-  const { businessById, storefrontDomain, platformDomains, isLoading } = usePlatformDirectory();
+  const { businessById, storefrontDomain, platformDomains, originIp, isLoading } = usePlatformDirectory();
 
   if (isLoading) return <PlatformPageSkeleton />;
 
@@ -378,7 +378,7 @@ export function SuperAdminBusinessPage({ section = 'overview' }) {
         </>
       )}
       {section === 'domains' && (
-        <BusinessDomains business={business} storefrontDomain={storefrontDomain} platformDomains={platformDomains} />
+        <BusinessDomains business={business} storefrontDomain={storefrontDomain} platformDomains={platformDomains} originIp={originIp} />
       )}
       {section === 'access' && <AccessSection business={business} />}
     </>

@@ -113,6 +113,7 @@ export function usePlatformDirectory() {
       tenantById: new Map(tenants.map((tenant) => [tenant.id, tenant])),
       businessById: new Map(businesses.map((business) => [business.id, business])),
       storefrontDomain: data?.storefrontDomain ?? null,
+      originIp: data?.originIp ?? null,
       platformDomains: data?.platformDomains ?? [],
     };
   }, [data]);

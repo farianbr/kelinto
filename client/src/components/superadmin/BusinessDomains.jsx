@@ -385,7 +385,7 @@ export function AddressRequestPanel({ business, storefrontDomain }) {
   );
 }
 
-export function BusinessDomains({ business, storefrontDomain, platformDomains }) {
+export function BusinessDomains({ business, storefrontDomain, platformDomains, originIp }) {
   const [slug, setSlug] = useState(business.slug ?? '');
   const [domain, setDomain] = useState(business.domain ?? '');
   const [panelDomain, setPanelDomain] = useState(business.panelDomain ?? '');
@@ -477,16 +477,24 @@ export function BusinessDomains({ business, storefrontDomain, platformDomains })
               <tbody className="divide-y divide-plat-line-soft">
                 {needsDns.map((host) => (
                   <tr key={host}>
-                    <td className="px-3 py-2.5 font-mono text-plat-muted">CNAME</td>
+                    {/* An A record to the server, not a CNAME onto kelinto.com:
+                        kelinto.com is behind Kelinto's own Cloudflare account, and
+                        Cloudflare refuses a domain in another account that
+                        CNAMEs onto it (error 1014, 2026-10-06). */}
+                    <td className="px-3 py-2.5 font-mono text-plat-muted">{originIp ? 'A' : 'CNAME'}</td>
                     <td className="px-1.5 py-2.5"><CopyValue value={host} /></td>
-                    <td className="px-1.5 py-2.5"><CopyValue value={storefrontDomain} /></td>
+                    <td className="px-1.5 py-2.5"><CopyValue value={originIp ?? storefrontDomain} /></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           <ul className="mt-4 space-y-1.5 text-sm text-plat-muted">
-            <li>If the domain is on Cloudflare, set the record to <strong className="font-medium text-plat-text">DNS only</strong> (grey cloud) until it shows live here.</li>
+            {originIp ? (
+              <li>On Cloudflare, either cloud works. Never a CNAME to {storefrontDomain}: Cloudflare refuses that between two accounts (error 1014).</li>
+            ) : (
+              <li>If the domain is on Cloudflare, set the record to <strong className="font-medium text-plat-text">DNS only</strong> (grey cloud) until it shows live here.</li>
+            )}
             <li>The certificate is issued automatically on the first visit after the record exists. That visit also turns the domain live.</li>
           </ul>
         </PlatformPanel>

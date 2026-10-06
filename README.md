@@ -1,65 +1,97 @@
-# Cellvix
+# Kelinto
 
-B2B wholesale marketplace for replacement electronics parts — screens, batteries, cameras and
-housings for repair shops, refurbishers and resellers across Canada.
+A multi-tenant ERP for service and retail businesses: repair shops, parts wholesalers, garages,
+salons, clinics, IT services. One codebase serves every business on it, each with its own website,
+its own ERP and its own database.
 
-It is not a normal shop. The people buying here are businesses with a wholesale account, so three things
-work differently from a consumer store, and most of the architecture follows from them:
+The repository is still called `cellvix` because it started as Cellvix, a B2B wholesale marketplace
+for replacement phone parts. That build became **tenant #1** on Kelinto. Where code or older
+docs say "Cellvix" meaning the whole system, read "Kelinto".
 
-1. **Prices are private.** Nobody sees wholesale pricing until an admin has approved their business.
-   That gate is enforced on the server — the price is simply absent from the API response for
-   everyone else.
-2. **Buying happens on credit.** An approved account has a credit limit and payment terms (Net 30
-   and so on). Orders draw against the limit and are invoiced, rather than being paid for up front.
-3. **Buyers know what they want.** The catalogue is ~420 parts across a deep device tree, so finding
-   "the back glass for a Galaxy S23 Ultra, OEM grade" has to take seconds. Three different filter
-   UIs exist for that, and they all share one state.
-
-**Stack:** React 19 · Vite 6 · Tailwind v4 · Express 4.21 · MongoDB / Mongoose 8 · Zod.
-JavaScript ESM throughout, npm workspaces.
+**Stack:** React 19 · Vite 6 · Tailwind v4 · TanStack Query · Zustand · Express 4.21 · MongoDB /
+Mongoose 8 · Zod · Cloudflare R2. JavaScript ESM throughout, npm workspaces (`client`, `server`,
+plus `shared/` imported by both). Node 20 or later.
 
 ---
 
-## What is in it
+## The model in one minute
 
-**For a buyer**
+- A **tenant** is an account. It owns **one or more businesses**, buying a slot from Kelinto for
+  each one.
+- **The business owns the database.** The control database holds tenants, plans, super admins and
+  the `Business` records; each business's records live in `<DB_PREFIX>_biz_<code>`.
+- Every business is typed **product** (sells parts), **service** (repairs devices) or **both**. The
+  type sets which ERP sections exist by default; a super admin can toggle any feature per business
+  afterwards.
 
-- A catalogue filtered by device type → brand → series → model, plus part type, grade, price and
-  stock — through a sidebar, a mega menu or a step-by-step wizard, whichever suits.
-- Live search over part names, SKUs and models.
-- A cart that survives sign-in, can be saved and reloaded, and can be filled from a **quick order
-  pad** (search a part per line, or paste a column of SKUs out of a spreadsheet).
-- A five-step checkout that pays by card or on account, applies store credit automatically, and
-  accepts a promo code.
-- An account dashboard: orders with tracking, invoices and statements, credit and balance, saved
-  addresses, payment methods.
+| | Product | Service | Both |
+|---|---|---|---|
+| **Sales** | Customers · Orders · Returns · Invoices · Web Quote | Customers · Tickets · Invoices · Quotes · Web Quote | union |
+| **Purchase** | Suppliers · Purchase Orders · Expenses · Inventory | Suppliers · Purchase Orders · Expenses · Inventory | union |
 
-**For an admin**
+Product runs **Quote → Order → Invoice**, service runs **Quote → Ticket → Invoice**, so `both` is a
+clean union. Returns (`Rma`, money out, needs an order) and Tickets (work to do, money in) are
+separate records.
 
-`/admin` is not a settings screen bolted onto a shop — it is the business's ERP, and Cellvix is the
-system of record. It runs in its own shell (dark sidebar, command palette on `Ctrl`/`⌘ K`,
-notification bell, breadcrumbs) with no storefront chrome, and every route is wired:
+**Tenant #1 runs one business today: CellShoppe, typed `both`,** and it is the default business. It
+sells parts on its website and repairs devices at the counter.
 
-- An approvals queue — a new business signs up, an admin sets its credit limit and terms and lets it
-  in.
-- **Sales:** orders, invoices, quotes, RMAs, customers and client profiles, with refunds to store
-  credit, credit-limit changes and status moves with tracking numbers.
-- **Purchase:** suppliers, purchase orders and expenses against a category tree.
-- **Inventory:** stock, reorder points and competitor benchmarks per SKU.
-- **Reports:** a dashboard of collected/invoiced/outstanding, trend and top-client charts, plus a
-  business overview built to print.
-- **Marketing:** offers, blog, FAQ, email, and SMS/WhatsApp/call logs.
-- **Outlet, staff & roles:** outlets, staff accounts, and per-area permission roles — an admin
-  bypasses the role system, a staff account without a role is told it has no access yet.
-- **Settings:** business info, sale/shipping/payment/inventory defaults, taxonomy, invoice statuses
-  and messages, email templates, API keys and encrypted third-party secrets, appointments and the
-  scheduling board, plus an activity log and a separate security log.
+---
 
-Every list screen is one component — search, segmented pills, filter and export popovers, sortable
-columns that fold into an expandable row rather than disappearing at narrow widths.
+## The surfaces
 
-**Offers** are their own engine: percentage or fixed discounts, combo bundles priced as a unit,
-promo codes that can be single-use or open, and offers restricted to named accounts.
+| Surface | Who uses it | Live | Local |
+|---|---|---|---|
+| **Website** | A business's customers | https://cellshoppe.kelinto.com | http://cellshoppe.localhost:5173 |
+| **ERP** | Owners and staff | https://app.kelinto.com | http://app.localhost:5173 |
+| **Console** | Kelinto's super admins | https://admin.kelinto.com | http://admin.localhost:5173 |
+| **Supplier portal** | A business's suppliers | `<website>/supplier` | http://cellshoppe.localhost:5173/supplier |
+| **Kiosk** | Walk-in customers, on a tablet | `<website>/kiosk` | http://cellshoppe.localhost:5173/kiosk |
+| **Kelinto** | Everyone else | https://kelinto.com | http://localhost:5173 |
+
+`*.localhost` resolves to your own machine in every major browser, so the host split works locally
+with no hosts-file edit. With `PANEL_HOST` and `SUPERADMIN_HOST` empty, every route also works on
+plain `localhost:5173`.
+
+A business can also have its own domains (`parts.cellshoppe.ca` for the website, an ERP domain for
+staff). Those are saved in the console and need no env edit or restart; see
+[docs/SUBDOMAIN_SETUP.md](docs/SUBDOMAIN_SETUP.md).
+
+### Website
+
+The homepage is a landing page at `/`; the catalogue lives at `/shop`, with `/clearance` and
+`/deals/:slug` beside it. Three filter UIs (sidebar, mega menu, step wizard) share **one** Zustand
+store and re-render only the product grid. The filter hierarchy is Component Type → Device Type →
+Brand → Series → Model.
+
+Customers have a wholesale account. Three things follow from that:
+
+1. **Prices are private.** Nobody sees a price until the business approves their account, and the
+   gate is on the server: the price is absent from the API response, not blurred.
+2. **Buying can happen on credit.** An approved account can carry a credit limit and terms (Net 30
+   and so on).
+3. **A pending account can sign in and fill a cart,** and is told it is still under review rather
+   than given a credential error. Ordering needs approval.
+
+### ERP
+
+Sales, Purchase, Inventory, Reports, Marketing, Outlets, Staff and Roles, Settings. Compact by design
+(36px fields, a command palette on `Ctrl`/`⌘ K`), with one list component behind every list screen.
+Staff reach the website from the ERP's top bar through a single-use link.
+
+### Console
+
+Tenants, business slots and plans, web addresses, the per-business feature grid, support sessions
+and Kelinto's own brand.
+
+### Supplier portal and kiosk
+
+A supplier's login belongs to **one** business and lives at that business's website. Invite only;
+suppliers sign their agreements once, then quote on purchase orders.
+
+The kiosk has three doors: **Repair** (opens a partial ticket for the counter to finish), **Sell your
+phone** (a buyback for staff to price) and **Buy parts** (signs the customer into the website with
+pay-at-the-counter checkout).
 
 ---
 
@@ -67,40 +99,48 @@ promo codes that can be single-use or open, and offers restricted to named accou
 
 ```bash
 npm install                 # root + both workspaces
-cp .env.example .env        # then fill in MONGODB_URI and JWT_SECRET
-npm run seed                # wipes and populates whichever DB MONGODB_URI names
+cp .env.example .env        # fill in MONGODB_URI (with its database path) and JWT_SECRET
+npm run seed                # WIPES and rebuilds whatever MONGODB_URI names
+npm run seed:superadmin     # the console's super admin
+npm run seed:demo           # additive demo data: tickets, quotes, suppliers, content
 npm run dev                 # client on :5173, API on :4000
 ```
 
-Open <http://localhost:5173>. The Vite dev server proxies `/api` to `:4000`, so the app is
-same-origin in development and the httpOnly session cookie travels without CORS credential
-handling.
+The Vite dev server proxies `/api` to `:4000`, so the app is same-origin in development and the
+httpOnly session cookie travels without CORS credential handling.
 
 ### Demo accounts
 
-Password for all three: `Cellvix123!`
+Every password is `Cellvix123!`. All of it is dummy data.
 
-| Email | What it demonstrates |
-| --- | --- |
-| `buyer@cellvix.ca` | Approved business — wholesale pricing, Net 30 terms, order and invoice history |
-| `pending@cellvix.ca` | Awaiting approval — can browse and hold a cart, cannot see prices or order |
-| `admin@cellvix.ca` | Admin — approvals queue, product/order/customer management, editorial consoles |
+| Who | Email | Signs in at |
+|---|---|---|
+| Super admin | `super@kelinto.com` (`super@cellvix.ca` on older installs) | Console |
+| Tenant owner | `admin@cellvix.ca` | ERP |
+| Staff | `priya@cellvix.ca`, `marcus@cellvix.ca`, `dana@cellvix.ca`, `nadia@cellshoppe.ca`, `eli@cellshoppe.ca`, `jun@cellshoppe.ca` | ERP |
+| Customer, approved | `buyer@cellvix.ca` (Net 30), `amrit@westcoastscreen.ca` (Net 15) | Website |
+| Customer, pending | `pending@cellvix.ca` | Website |
+| Supplier | `orders@northbridgeparts.example`, `signup@harbourpoint.example` (nothing signed yet) | Supplier portal |
+| Kiosk | PIN `1234` (enable it in ERP › Settings first) | Kiosk |
 
-Sign in as `pending@cellvix.ca` to see the price gate from the outside: the same pages, with prices
-replaced by a prompt to finish approval. That is not CSS — the numbers are not in the payload.
+The full list, with what each account is for, is in [CLAUDE.md](CLAUDE.md).
 
 ---
 
 ## How it works
 
-### The shop page is the homepage
+### The request pipeline
 
-There is no separate landing page and no category routes. `/` is the catalogue.
+```
+resolveBusiness ─▶ openBusinessDb ─▶ authenticate ─▶ route
+(host, header or     (a handle onto     (User lives in the
+ ?business=)          the same pool)     business database)
+```
 
-A sidebar accordion, a three-panel mega menu and a step-by-step tab wizard all read and write
-**one** Zustand store (`client/src/store/filterStore.js`). Selecting a brand in the mega menu
-updates the sidebar and the wizard, mirrors into the URL so the view is shareable, and re-renders
-**only the product grid** over AJAX. Nothing navigates. Three UIs, one truth.
+The order is load-bearing: a session cannot be read out of a database nobody has opened yet. A
+request that resolves no business is refused with **503 `BUSINESS_UNRESOLVED`** rather than served
+an empty catalogue with a 200. Exactly one business carries `isDefault` and serves any host that
+names none; the server **refuses to start** without one. `/superadmin/*` and `/health` are exempt.
 
 ### From cart to invoice
 
@@ -111,32 +151,36 @@ add to cart ─▶ checkout quote ─▶ place order ─▶ invoice ─▶ email
    only          the whole cart    it again        the order
 ```
 
-The client never sends a price, a subtotal or a discount — it sends SKUs and quantities. The cart
-badge, the checkout total and the amount actually charged all come from **one** function,
-`pricingService.priceCart()`, run against live product records. A stale price in a week-old browser
-tab cannot become a cheap order.
+The client never sends a price or a discount, only SKUs and quantities. Money is stored in **integer
+cents**. Three services each own one rule outright:
 
-When the order is written, an invoice is created with it and **emailed to the buyer**. The same
-document is served at `GET /api/invoices/:number/document` for print-to-PDF from the dashboard.
-With no `SMTP_URL` configured the mailer writes each message to `server/.mail/` and logs it —
-delivery is a side effect of ordering and is never allowed to fail one.
+- **`productService.effectivePrice`** is the only place a unit price is decided (a clearance part
+  sells at its clearance price everywhere).
+- **`pricingService.js`** is the only place a discount is decided. Offers never stack, one offer per
+  product, a promo code never reaches inside a combo bundle.
+- **`storeCreditService.js`** is the only place a store-credit balance moves, always with a
+  `CreditTransaction` behind it.
 
-### Two kinds of credit, deliberately kept apart
+The **line of credit** (what the business lends a customer) and **store credit** (what the customer
+already holds) are kept apart; only store credit spends itself at checkout.
 
-| | What it is | Who moves it |
-| --- | --- | --- |
-| **Line of credit** | What Cellvix *lends* the business — `creditLimit`, `balance`, `terms` | An admin sets the limit; orders on terms draw against it |
-| **Store credit** | What the business *already holds* — refunds, prepaid top-ups, admin allocations | `storeCreditService.js`, always with a `CreditTransaction` behind it |
+### Documents are sent by a business
 
-Only store credit spends itself at checkout. They were one number early on, which made a refund and
-a credit limit look like the same thing on the dashboard. They are not.
+Every invoice and email names the business that sent it, through `services/sendingBusiness.js`. The
+envelope sender is one SMTP account for the installation; who a message is *from* is per business.
 
-### Approval, and what it gates
+### Files
 
-Signing up creates a **pending** business. A pending account can sign in (and is told it is under
-review — not given a credential error), browse the catalogue and fill a cart. It cannot see prices
-and cannot order. An admin approves it, sets a credit limit and terms, and everything unlocks. The
-cart it was holding is still there.
+Uploads live in Cloudflare R2, under their owner: `businesses/<code>/<kind>/` or `kelinto/<kind>/`.
+Records store the **key**, never the URL; the server adds `R2_PUBLIC_URL` on the way out. Every file
+is optimised once, on upload (WebP for pictures, H.264 MP4 for video). Personal files, such as a
+kiosk seller's photo, go to a second bucket with public access off.
+
+### Payments
+
+The gateway is a **mock** (`payment.js`, the only gateway-aware file). It succeeds unless asked not
+to: a delivery note starting `DECLINE`, or `MOCK_PAYMENT_DECLINE=true`, routes checkout to
+`/payment-failed`.
 
 ---
 
@@ -145,75 +189,57 @@ cart it was holding is still there.
 ```
 client/           React app (Vite)
   src/
-    components/   ui/ primitives, plus filters, cart, checkout, product,
-                  account, blog, layout, search, and admin/ — which carries
-                  its own shell/, charts/ and list kit for the ERP console
-    pages/        one file per route; account/ and admin/ are sub-consoles
+    components/   ui/ primitives, website pieces, admin/ (the ERP shell and
+                  list kit), superadmin/ (the console)
+    pages/        one file per route; account/, admin/, superadmin/, supplier/
     store/        Zustand: filterStore, cartStore, uiStore
     hooks/        data fetching (TanStack Query) and DOM behaviour
-    lib/          api client, formatters, rich-text renderer
+    lib/          api client, formatters, rich-text renderer, media sizes
 server/           Express API
   src/
-    routes/       one router; every route names its middleware
-    controllers/  request/response only — no Mongoose in here
+    routes/       every route names its middleware
+    controllers/  request and response only, no Mongoose
     services/     all business logic and queries
     models/       Mongoose schemas
-    seed/         deterministic catalogue and demo data
-shared/           Zod schemas + business details, imported by BOTH sides
+    db/           connections.js: the control database and one handle per business
+    seed/         seeds, backfills, migrations and one-off moves
+shared/           Zod schemas, catalogue data and host rules, imported by BOTH sides
 scripts/          smoke, a11y and screenshot runners
-docs/             ERP integration notes, screenshots
+docs/             the rules, the plans, the progress board, deployment notes
 ```
 
-`shared/` is the point of the layout: `shared/schemas/*.js` holds the Zod schema that the client
-form validates against **and** the server route validates against, so the two cannot disagree about
-what a valid order looks like. `shared/business.js` holds the company's own details, which both the
-footer and the server-rendered invoice read.
-
-### Server layering
-
-```
-route ─▶ controller ─▶ service ─▶ model
-```
-
-Controllers never touch Mongoose. Three services own an invariant outright:
-
-- **`pricingService.js`** is the only place a discount is decided. Offers never stack, a product
-  carries at most one offer, a promo code cannot reach inside a combo bundle, single-use codes are
-  checked against order history rather than a counter, and account-restricted offers answer
-  `OFFER_NOT_FOUND` to everyone else.
-- **`storeCreditService.js`** is the only place a store-credit balance moves. Every change writes a
-  `CreditTransaction`; no balance is ever set by hand.
-- **`payment.js`** is the only gateway-aware file. It is a **mock** — swapping in Stripe or Moneris
-  is a change to this one file. A PO number beginning `DECLINE` routes checkout to
-  `/payment-failed`, so the failure path is reachable without touching config.
-
-### Money
-
-Stored as **integer cents**, everywhere, with no exceptions. Formatting to `$1,234.56` happens once,
-at the edge, in `client/src/lib/format.js`.
+`shared/schemas/*.js` holds the Zod schema the client form validates against **and** the server
+route validates against, so the two cannot disagree.
 
 ---
 
 ## Environment
 
-Both workspaces read one `.env` at the repo root. `server/src/config/env.js` validates it with Zod
-and **exits at boot** with a named error if anything is missing or malformed — a half-configured
-server is worse than none.
+One `.env` at the repo root serves both workspaces. `server/src/config/env.js` validates it with Zod
+and **exits at boot** with a named error if anything is missing or malformed.
+[.env.example](.env.example) is the reference: a development block that works as-is once
+`MONGODB_URI` is filled in, and a commented production block for the VPS.
 
 | Variable | Required | Notes |
-| --- | --- | --- |
-| `MONGODB_URI` | **yes** | No in-memory fallback. Prefer a replica set (any Atlas cluster is one) — the planned transactional order write needs one. |
-| `JWT_SECRET` | **yes** | Minimum 16 characters. The server refuses to start in production if this is still the development placeholder. |
-| `NODE_ENV` | no | `development`, `test` or `production` |
-| `PORT` | no | Defaults to `4000` |
-| `JWT_EXPIRES_IN` | no | Defaults to `7d`. "Remember me" issues 90d instead; without it the cookie is a session cookie. |
-| `COOKIE_NAME` | no | Defaults to `cellvix_session` |
-| `CLIENT_ORIGIN` | no | Comma-separated list of origins allowed to send credentialed requests |
-| `SMTP_URL` | no | Where invoice mail goes. Unset, messages are written to `server/.mail/` instead of sent. Real delivery also needs `npm i nodemailer -w server`. |
-| `MAIL_FROM` | no | Envelope sender. Defaults to `Cellvix <billing@cellvix.ca>` |
-| `PUBLIC_ORIGIN` | no | Where links in an email point. Defaults to the first `CLIENT_ORIGIN` |
-| `MOCK_PAYMENT_DECLINE` | no | Forces the mock gateway to refuse every charge, so `/payment-failed` can be exercised |
-| `VITE_API_URL` | no | Defaults to `/api` |
+|---|---|---|
+| `MONGODB_URI` | **yes** | Its path names the **control** database (`.../kelinto_control`). Without a path, the control plane lands in `test`. |
+| `JWT_SECRET` | **yes** | At least 16 characters. Changing it signs everyone out. |
+| `DB_PREFIX` | no | Defaults to `kelinto`. Business databases are `<prefix>_biz_<code>`. **Pinned on a live install.** |
+| `COOKIE_NAME` | no | Defaults to `kelinto_session`. **Pinned on a live install.** |
+| `SECRETS_KEY` | no | Encrypts provider credentials at rest. Empty derives one from `JWT_SECRET`. |
+| `CLIENT_ORIGIN` | no | Comma-separated origins allowed to send credentialed requests. |
+| `CORS_WILDCARD_ORIGINS` | no | `https://*.kelinto.com`: one subdomain label, so a new business needs no env edit. |
+| `PANEL_HOST` / `SUPERADMIN_HOST` | no | The ERP and console hosts. Empty keeps every route on one host. |
+| `ORIGIN_IPV4` | no | The VPS's IPv4. The console tells a business to point its own domain here with an A record. |
+| `PUBLIC_ORIGIN` | no | Where email links point with no business in context. |
+| `SMTP_URL` | no | Empty: every message is logged as not sent. |
+| `MAIL_FROM` / `MAIL_FROM_ADMIN` / `MAIL_FROM_PLATFORM` | no | Envelope senders. **Pinned on a live install.** |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_URL` | no | All empty: uploads are off and everything shows its placeholder. |
+| `R2_PRIVATE_BUCKET` | no | Bucket with public access off. Empty: the kiosk refuses a phone sale rather than store a face publicly. |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `WHATSAPP_TOKEN` | no | Messaging providers. |
+| `FFMPEG_PATH` | no | A system ffmpeg, if the bundled one will not run. |
+| `MOCK_PAYMENT_DECLINE` | no | Forces the mock gateway to decline. Must stay `false` in production. |
+| `VITE_API_URL` | no | Defaults to `/api`. Read at build time. |
 
 `.env` is gitignored. Only `.env.example` is tracked.
 
@@ -222,111 +248,101 @@ server is worse than none.
 ## Scripts
 
 ```bash
-npm run dev            # client + server together
-npm run build          # production client bundle
-npm run seed           # WIPES taxonomy, products, users, orders, invoices, then reseeds
-npm run seed:demo      # the additive demo seeds in order; `-- <name>` runs one, `-- --list` names them
-npm run backfill       # the one-off migrations; no args lists them, `-- <name>` runs one
-npm run smoke          # 208 end-to-end API assertions
-npm run a11y           # axe-core WCAG 2.1 AA audit across 39 surfaces
-npm run shoot          # Playwright screenshot set -> docs/screenshots/
+npm run dev               # client + server together
+npm run build             # production client bundle; the cheap default check
+npm start                 # the API, which also serves the built client in production
+
+npm run seed              # WIPES every business database and rebuilds the one CellShoppe business
+npm run seed:superadmin   # the console's super admin; finds an existing one, never makes a second
+npm run seed:demo         # the additive demo seeds in order
+                          #   -- <name> [args]   one step   ·   -- --list   name them
+npm run seed:articles     # per-product SEO articles; additive
+npm run seed:reviews      # reviews AND the delivered orders behind them; moves revenue
+
+npm run migrate           # outstanding schema migrations, every database (--dry-run first)
+npm run backfill          # one-off data fixes; no args lists them, -- <name> runs one
+npm run purge:business -- '#000002' [--dry-run]   # delete a soft-deleted business for good
+npm run move:kelinto      # the 2026-10-06 cellvix -> kelinto database move (done on the VPS)
+
+npm run smoke             # 208 end-to-end API assertions; cleans up after itself
+npm run smoke:clean       # clear smoke leftovers by hand (--dry-run to look first)
+npm run a11y              # WCAG 2.1 AA audit across 39 surfaces
+npm run shoot             # Playwright screenshots -> docs/screenshots/
 ```
 
-> `smoke`, `a11y` and `shoot` all **write real data** — `shoot` places an actual order, moving
-> stock, invoices and credit. They run against the `cellvix` development database, which holds only
-> dummy data; re-seed whenever the residue gets in the way:
->
-> ```bash
-> npm run seed
-> npm run smoke
-> ```
+> `seed`, `smoke`, `a11y` and `shoot` all **write real data**. `seed` drops every business
+> database; `shoot` places a real order, moving stock, invoices and credit. Run them only against a
+> database of dummy data, and never as a routine check after a change: `npm run build` is that.
 
-The seed is deterministic — a seeded PRNG produces the same taxonomy and the same 420 SKUs on every
-run, so screenshots and assertions stay stable.
+---
 
-In production the API also serves the built client, so the whole site is one origin and one process:
+## Deployment
+
+Kelinto runs on a **Hostinger VPS** under Passenger, behind Caddy, against MongoDB Atlas.
+[docs/SUBDOMAIN_SETUP.md](docs/SUBDOMAIN_SETUP.md) covers DNS, certificates and custom domains;
+[docs/Caddyfile](docs/Caddyfile) is the web server config.
 
 ```bash
+npm install
 npm run build
 NODE_ENV=production npm start
 ```
+
+In production the API serves the built client, so the whole site is one origin and one process.
+
+**Pinned on the VPS, never "fixed" to the defaults:** `DB_PREFIX`, the database path in
+`MONGODB_URI`, `COOKIE_NAME`, `MAIL_FROM` and `MAIL_FROM_ADMIN`. Changing the first two opens empty
+databases beside the full ones; changing the cookie name signs everyone out at once.
+
+**Every change states its deploy step.** A new env var, a migration, a DNS record or a restart beyond
+the usual is named in the write-up, because a correct change whose env var was never set on the VPS
+does not work.
 
 ---
 
 ## Security posture
 
-- **The price gate is server-side.** For anyone who is not an approved buyer the serializer omits
-  `price` from the payload entirely — not blurred, not zeroed. The client's blur is cosmetic. The
-  same gate covers a combo offer's bundle price.
-- **Availability leaves as a boolean.** The storefront says in stock or out of stock. On-hand counts
-  and shipment dates are wholesale-operations numbers and stay in the admin payload.
-- **Sessions are httpOnly JWT cookies**, `sameSite: lax`, `secure` in production. A cookie that no
-  longer resolves to a user is actively cleared rather than left to expire.
-- **Approval gate, not a credential error.** A pending account signs in successfully and is told it
-  is still under review. Pricing and ordering are blocked separately by `requireApproved`.
-- **Query values can never become Mongo operators.** Express's default `qs` parser turns
-  `?brand[$ne]=x` into a nested object; `app.js` selects the `simple` parser so query values arrive
-  as strings and arrays only, and every equality assignment is coerced with `String()`.
-- **Every mutating route validates through a shared Zod schema** in `shared/schemas/`, used by the
-  client form and the server route alike.
-- **Rate limiting** on credential endpoints and the unauthenticated contact form.
-- **No `dangerouslySetInnerHTML` anywhere.** Admin-authored copy — blog, FAQ, offers — renders
-  through `client/src/lib/richText.jsx`. The one page that needs an inline script, the printable
-  invoice, ships its own `default-src 'none'` policy with a per-request nonce rather than loosening
-  the app's.
-- Helmet, `x-powered-by` disabled, stack traces suppressed in production, and payment methods stored
-  as brand plus last four digits only.
+- **The price gate is server-side**, in the catalogue and in a combo offer's bundle price.
+- **Availability leaves as a boolean.** The website says in stock or out of stock, never a count or
+  a shipment date.
+- **Sessions are httpOnly JWT cookies**, each with a `sid` that sign-out revokes server-side. Each
+  sign-in door admits only its own kind of account, and a wrong-kind account fails exactly like a
+  wrong password.
+- **Query values can never become Mongo operators.** `app.js` uses the `simple` query parser and
+  every equality is coerced with `String()`.
+- **Every mutating route validates through a shared Zod schema** in `shared/schemas/`.
+- **Uploads are sniffed from their bytes**, SVG is refused, and a record accepts only its owner's
+  own R2 URL, never a hotlink.
+- **No `dangerouslySetInnerHTML` anywhere.** Admin-authored copy renders through
+  `client/src/lib/richText.jsx`.
+- Rate limiting on credential endpoints and public forms, Helmet, provider secrets encrypted at rest,
+  payment methods stored as brand plus last four only.
 
 ---
 
 ## Conventions
 
-- Canadian throughout — CAD, provinces, `A1A 1A1` postal codes, GST/HST.
-- The brand gradient `#CF3429` to `#000000` is an **accent** — CTAs, active states, progress. Never
-  a page or card background.
-- **Responsive is a requirement, not a polish pass.** 320–767, 768–1023, 1024–1439 and 1440+ are
-  each designed, never a shrunk desktop layout. No horizontal page scroll at any of them.
-- One `StepIndicator` component serves the tab wizard, checkout and order tracking.
-- One dropdown: `components/ui/SelectMenu`. There is no native `<select>` in the app — form fields
-  bind to it through `SelectField`, which wraps a react-hook-form `Controller`.
-- History is append-only. Catalogue entries deactivate rather than delete, because orders reference
-  products by id.
-- A cart needs only sign-in; **ordering** needs approval. A pending business keeps its cart while it
-  waits.
+- Canadian throughout: CAD, provinces, `A1A 1A1` postal codes, GST/HST.
+- In anything a person reads: **website** (not "storefront"), **ERP** (not "panel"), **Kelinto**
+  (not "the platform"), and customers are **customers**, never "shops".
+- No em dashes anywhere in the project, and a short list of banned words (Instructions §10).
+- The brand gradient is the brand: three ramps picked by surface, never a page or card background.
+- Every mutation confirms; deletes, payments and anything sent to a third party confirm twice.
+- Responsive is a requirement: 320, 768, 1024 and 1440 widths are each designed.
+
+The full rules are in [docs/PROJECT_INSTRUCTIONS.md](docs/PROJECT_INSTRUCTIONS.md).
 
 ---
 
 ## Project documentation
 
-Everything except this README and `CLAUDE.md` lives in [docs/](docs/).
-
 | File | What it is |
-| --- | --- |
-| [PROJECT_INSTRUCTIONS.md](docs/PROJECT_INSTRUCTIONS.md) | The rules — design tokens, filter architecture, data model, full API contract, definition of done. Binding. |
-| [SAAS_PLATFORM.md](docs/SAAS_PLATFORM.md) | The multi-tenant end state — super admin, per-tenant databases, feature flags. Binding for tenancy work. |
-| [ADMIN_ERP_REWORK.md](docs/ADMIN_ERP_REWORK.md) | Plan for rebuilding `/admin` as a full ERP console. Cellvix is the ERP — there is no external system of record. |
-| [PROGRESS.md](docs/PROGRESS.md) | Phase board, decisions log, session log, known gaps, open questions. |
+|---|---|
+| [CLAUDE.md](CLAUDE.md) | Session primer: the non-negotiables, deployment, every demo account. Stays at the root so it auto-loads. |
+| [PROJECT_INSTRUCTIONS.md](docs/PROJECT_INSTRUCTIONS.md) | The rules: design tokens, filter architecture, data model, API contract, definition of done. Binding. |
+| [SAAS_PLATFORM.md](docs/SAAS_PLATFORM.md) | The multi-tenant model: super admin, per-business databases, feature flags. Binding for tenancy work. |
+| [ADMIN_ERP_REWORK.md](docs/ADMIN_ERP_REWORK.md) | The ERP spec. Binding for any `/admin` work. |
+| [PROGRESS.md](docs/PROGRESS.md) | What is built, what is next, decisions, open questions. |
+| [SESSION_ARCHIVE.md](docs/SESSION_ARCHIVE.md) | Past session write-ups. History, read only to trace a decision. |
+| [SUBDOMAIN_SETUP.md](docs/SUBDOMAIN_SETUP.md) | DNS, certificates, custom domains, Caddy. |
 | [cellvix-project-brief.md](docs/cellvix-project-brief.md) | The client's original brief. Read-only reference. |
-| [CLAUDE.md](CLAUDE.md) | Session primer for AI coding agents. Stays at the root so it auto-loads. |
-
----
-
-## Status
-
-**The brief is delivered.** All nine build phases are complete — foundation and design system, data
-layer, shop page, cart and checkout, accounts, admin, static pages, editorial surfaces, and the
-offers engine.
-
-On top of it, the **admin ERP rework** is 12 of 13 phases in: shell and component kit, dashboard,
-sales depth, purchase, reports, quotes and RMA, outlet/staff/roles, marketing, referrals, settings,
-and the search/profile/export/notification layer. **No admin route renders a stub and nothing in the
-shell is unwired.** Phase 13 wires the remaining §6b shells. `docs/ADMIN_ERP_REWORK.md` is the plan;
-`PROGRESS.md` is the board.
-
-`npm run smoke` runs 208 end-to-end API assertions. `npm run a11y` audits 39 surfaces against WCAG
-2.1 AA.
-
-Outstanding work is either hardening or blocked on the client. The largest open items: order
-creation still writes its four documents outside a transaction, and approval, rejection and
-forgot-password emails are not written yet — the mail transport exists, but a provider still has to
-be chosen and configured. `PROGRESS.md` tracks both lists in full.
